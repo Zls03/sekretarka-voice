@@ -84,20 +84,20 @@ def generate_response(intent: str) -> str:
 # TTS - ElevenLabs → mulaw 8000
 # ==========================================
 async def text_to_speech(text: str) -> bytes:
-    """ElevenLabs TTS - format ulaw_8000 dla Twilio"""
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    """ElevenLabs TTS - STREAMING endpoint z optimize_streaming_latency"""
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream?output_format=ulaw_8000&optimize_streaming_latency=3"
     
     async with aiohttp.ClientSession() as session:
         async with session.post(
             url,
             headers={
                 "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "accept": "audio/wav"  # ← WAŻNE!
             },
             json={
                 "text": text,
-                "model_id": "eleven_flash_v2_5",
-                "output_format": "ulaw_8000"
+                "model_id": "eleven_flash_v2_5"
             }
         ) as response:
             if response.status == 200:
@@ -105,9 +105,9 @@ async def text_to_speech(text: str) -> bytes:
                 logger.info(f"🔊 TTS: {len(audio)} bytes")
                 return audio
             else:
-                logger.error(f"TTS error: {response.status}")
+                error = await response.text()
+                logger.error(f"TTS error: {response.status} - {error}")
                 return b""
-
 # ==========================================
 # DEEPGRAM STT - Nova-3 General
 # ==========================================
