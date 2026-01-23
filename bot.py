@@ -263,6 +263,64 @@ async def detect_intent(text: str) -> str:
 
 
 # ==========================================
+# HELPERS - FORMATOWANIE PO POLSKU (dla TTS)
+# ==========================================
+def format_hour_polish(time_str: str) -> str:
+    """09:00 → dziewiątej (dla TTS)"""
+    hour_words = {
+        6: "szóstej", 7: "siódmej", 8: "ósmej", 9: "dziewiątej",
+        10: "dziesiątej", 11: "jedenastej", 12: "dwunastej",
+        13: "trzynastej", 14: "czternastej", 15: "piętnastej",
+        16: "szesnastej", 17: "siedemnastej", 18: "osiemnastej",
+        19: "dziewiętnastej", 20: "dwudziestej", 21: "dwudziestej pierwszej",
+        22: "dwudziestej drugiej", 23: "dwudziestej trzeciej"
+    }
+    if not time_str:
+        return ""
+    try:
+        hour = int(time_str.split(":")[0])
+        return hour_words.get(hour, time_str)
+    except:
+        return time_str
+
+
+def format_price_polish(price: float) -> str:
+    """50 → pięćdziesiąt złotych (dla TTS)"""
+    price = int(price)
+    
+    # Podstawowe liczby
+    ones = ["", "jeden", "dwa", "trzy", "cztery", "pięć", "sześć", "siedem", "osiem", "dziewięć"]
+    teens = ["dziesięć", "jedenaście", "dwanaście", "trzynaście", "czternaście", 
+             "piętnaście", "szesnaście", "siedemnaście", "osiemnaście", "dziewiętnaście"]
+    tens = ["", "dziesięć", "dwadzieścia", "trzydzieści", "czterdzieści", 
+            "pięćdziesiąt", "sześćdziesiąt", "siedemdziesiąt", "osiemdziesiąt", "dziewięćdziesiąt"]
+    hundreds = ["", "sto", "dwieście", "trzysta", "czterysta", 
+                "pięćset", "sześćset", "siedemset", "osiemset", "dziewięćset"]
+    
+    if price == 0:
+        return "zero złotych"
+    
+    result = []
+    
+    # Setki
+    if price >= 100:
+        result.append(hundreds[price // 100])
+        price %= 100
+    
+    # Dziesiątki i jedności
+    if price >= 20:
+        result.append(tens[price // 10])
+        if price % 10 > 0:
+            result.append(ones[price % 10])
+    elif price >= 10:
+        result.append(teens[price - 10])
+    elif price > 0:
+        result.append(ones[price])
+    
+    return " ".join(result) + " złotych"
+
+
+# ==========================================
 # RESPONSE GENERATOR (Backend - ZERO GPT!)
 # ==========================================
 def generate_response(conv: Conversation, intent: str, user_text: str) -> str:
@@ -284,19 +342,19 @@ def generate_response(conv: Conversation, intent: str, user_text: str) -> str:
         
         weekday = hours.get(0)
         if weekday:
-            open_h = weekday['open'].replace(':00', '') if weekday['open'] else ''
-            close_h = weekday['close'].replace(':00', '') if weekday['close'] else ''
+            open_h = format_hour_polish(weekday['open'])
+            close_h = format_hour_polish(weekday['close'])
             parts.append(f"od poniedziałku do piątku od {open_h} do {close_h}")
         
         thursday = hours.get(3)
         if thursday and weekday and thursday.get("close") != weekday.get("close"):
-            close_h = thursday['close'].replace(':00', '')
+            close_h = format_hour_polish(thursday['close'])
             parts.append(f"w czwartki dłużej do {close_h}")
         
         saturday = hours.get(5)
         if saturday:
-            open_h = saturday['open'].replace(':00', '')
-            close_h = saturday['close'].replace(':00', '')
+            open_h = format_hour_polish(saturday['open'])
+            close_h = format_hour_polish(saturday['close'])
             parts.append(f"w soboty od {open_h} do {close_h}")
         
         if hours.get(6) is None:
@@ -310,7 +368,7 @@ def generate_response(conv: Conversation, intent: str, user_text: str) -> str:
         if not services:
             return "Przepraszam, nie mam informacji o usługach."
         
-        svc_list = [f"{s['name']} za {int(s['price'])} złotych" for s in services]
+        svc_list = [f"{s['name']} za {format_price_polish(s['price'])}" for s in services]
         conv.state = State.LISTENING
         return "Oferujemy: " + ", ".join(svc_list) + ". Czym mogę służyć?"
     
@@ -337,7 +395,7 @@ def generate_response(conv: Conversation, intent: str, user_text: str) -> str:
             if svc_name_lower in user_lower or any(word in user_lower for word in svc_name_lower.split() if len(word) > 3):
                 conv.selected_service = svc
                 conv.state = State.ASK_DATE
-                return f"Świetnie, {svc['name']} za {int(svc['price'])} złotych. Na kiedy zarezerwować?"
+                return f"Świetnie, {svc['name']} za {format_price_polish(svc['price'])}. Na kiedy zarezerwować?"
         
         svc_names = [s['name'] for s in services]
         return f"Nie rozpoznałam usługi. Mamy: {', '.join(svc_names)}. Którą wybrać?"
