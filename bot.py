@@ -273,10 +273,17 @@ async def redirect_twilio_call(call_sid: str, url: str):
     twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
     twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
     
+    logger.info(f"🔄 Redirect: SID={twilio_sid[:10]}..., CallSid={call_sid}")
+    
+    if not twilio_sid or not twilio_token:
+        logger.error("❌ Brak TWILIO_ACCOUNT_SID lub TWILIO_AUTH_TOKEN!")
+        return
+    
     async with aiohttp.ClientSession() as session:
+        auth = aiohttp.BasicAuth(twilio_sid, twilio_token)
         async with session.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Calls/{call_sid}.json",
-            auth=aiohttp.BasicAuth(twilio_sid, twilio_token),
+            auth=auth,
             data={"Url": url, "Method": "POST"}
         ) as response:
             if response.status == 200:
@@ -284,6 +291,7 @@ async def redirect_twilio_call(call_sid: str, url: str):
             else:
                 error = await response.text()
                 logger.error(f"❌ Redirect failed: {response.status} - {error}")
+                logger.error(f"❌ URL: https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Calls/{call_sid}.json")
 
 
 @app.post("/twilio/play/{audio_id}/{call_sid}")
