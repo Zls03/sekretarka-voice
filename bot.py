@@ -121,7 +121,7 @@ class DeepgramTranscriber:
         
     async def connect(self):
         """Połącz z Deepgram WebSocket"""
-        url = "wss://api.deepgram.com/v1/listen?model=nova-2&language=pl&encoding=mulaw&sample_rate=8000&punctuate=true&interim_results=false&endpointing=300"
+        url = "wss://api.deepgram.com/v1/listen?model=nova-3-general&language=pl&encoding=mulaw&sample_rate=8000&punctuate=true&interim_results=false&endpointing=300"
         
         session = aiohttp.ClientSession()
         self.ws = await session.ws_connect(
