@@ -12,6 +12,9 @@ import openai
 
 load_dotenv()
 
+# ==========================================
+# KONFIGURACJA
+# ==========================================
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "NacdHGUYR1k3M0FAbAia")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -21,95 +24,67 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 oai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-conversations = {}
 
 # ==========================================
-# ŹRÓDŁO PRAWDY - dane firmy
+# ŹRÓDŁO PRAWDY - dane firmy (później z bazy)
 # ==========================================
 BUSINESS_DATA = {
     "name": "Salon Fryzjerski Anna",
-    "working_hours": {
-        "monday": {"open": "09:00", "close": "17:00"},
-        "tuesday": {"open": "09:00", "close": "17:00"},
-        "wednesday": {"open": "09:00", "close": "17:00"},
-        "thursday": {"open": "09:00", "close": "19:00"},
-        "friday": {"open": "09:00", "close": "17:00"},
-        "saturday": {"open": "10:00", "close": "14:00"},
-        "sunday": None
-    },
+    "working_hours": "od poniedziałku do piątku od dziewiątej do siedemnastej, w czwartki do dziewiętnastej, w soboty od dziesiątej do czternastej",
     "services": [
-        {"name": "Strzyżenie damskie", "duration": 60, "price": 80},
-        {"name": "Strzyżenie męskie", "duration": 30, "price": 50},
-        {"name": "Koloryzacja", "duration": 120, "price": 200},
-        {"name": "Modelowanie", "duration": 45, "price": 60},
+        {"name": "Strzyżenie damskie", "price": 80},
+        {"name": "Strzyżenie męskie", "price": 50},
+        {"name": "Koloryzacja", "price": 200},
+        {"name": "Modelowanie", "price": 60},
     ],
-    "address": "ul. Kwiatowa 15, Warszawa",
+    "address": "ulica Kwiatowa 15, Warszawa",
 }
 
 # ==========================================
-# INTENTY
+# INTENT DETECTION (GPT → JSON only)
 # ==========================================
-INTENT_PROMPT = """Określ intent użytkownika. Odpowiedz TYLKO jednym słowem.
+INTENT_PROMPT = """Rozpoznaj intencję użytkownika. Odpowiedz TYLKO jednym słowem z listy:
+GREETING, ASK_HOURS, ASK_SERVICES, ASK_ADDRESS, BOOK, GOODBYE, OTHER
 
-Możliwe intenty:
-- GREETING: powitanie (cześć, dzień dobry, halo, witam)
-- ASK_HOURS: pytanie o godziny otwarcia
-- ASK_SERVICES: pytanie o usługi/cennik
-- ASK_ADDRESS: pytanie o adres
-- BOOK_APPOINTMENT: chce umówić wizytę
-- GOODBYE: pożegnanie (do widzenia, dziękuję)
-- OTHER: inne
-
-Wypowiedź: "{text}"
-Intent:"""
-
+Tekst: "{text}"
+Intencja:"""
 
 async def detect_intent(text: str) -> str:
-    response = oai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": INTENT_PROMPT.format(text=text)}],
-        max_tokens=20
-    )
-    intent = response.choices[0].message.content.strip().upper()
-    logger.info(f"🎯 Intent: {intent}")
-    return intent
-
-
-def get_response_for_intent(intent: str, user_text: str) -> str:
-    if intent == "GREETING":
-        return f"Witam! Tu {BUSINESS_DATA['name']}. W czym mogę pomóc?"
-    
-    elif intent == "ASK_HOURS":
-        return "Pracujemy od poniedziałku do piątku od dziewiątej do siedemnastej. W czwartki dłużej, do dziewiętnastej. W soboty od dziesiątej do czternastej. W niedziele zamknięte."
-    
-    elif intent == "ASK_SERVICES":
-        services = BUSINESS_DATA["services"]
-        parts = [f"{s['name']} za {s['price']} złotych" for s in services]
-        return "Oferujemy: " + ", ".join(parts) + ". Czym mogę służyć?"
-    
-    elif intent == "ASK_ADDRESS":
-        return f"Znajdujemy się pod adresem {BUSINESS_DATA['address']}. Zapraszamy!"
-    
-    elif intent == "BOOK_APPOINTMENT":
-        return "Chętnie umówię wizytę. Na jaką usługę i na kiedy?"
-    
-    elif intent == "GOODBYE":
-        return "Dziękuję za telefon. Do usłyszenia!"
-    
-    else:
-        return "Przepraszam, nie zrozumiałam. Mogę pomóc z godzinami otwarcia, cennikiem lub umówieniem wizyty."
-
-
-async def process_user_input(user_text: str) -> str:
-    intent = await detect_intent(user_text)
-    return get_response_for_intent(intent, user_text)
-
+    try:
+        response = oai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": INTENT_PROMPT.format(text=text)}],
+            max_tokens=10,
+            temperature=0
+        )
+        return response.choices[0].message.content.strip().upper()
+    except Exception as e:
+        logger.error(f"Intent error: {e}")
+        return "OTHER"
 
 # ==========================================
-# TTS - ElevenLabs mulaw (oficjalny format dla Twilio)
+# BACKEND GENERUJE TEKST (nie GPT!)
 # ==========================================
-async def text_to_speech_mulaw(text: str) -> bytes:
-    """ElevenLabs TTS -> ulaw_8000 dla Twilio bidirectional"""
+def generate_response(intent: str) -> str:
+    """Backend generuje odpowiedź - ZERO halucynacji"""
+    
+    responses = {
+        "GREETING": f"Dzień dobry, tu {BUSINESS_DATA['name']}. W czym mogę pomóc?",
+        "ASK_HOURS": f"Pracujemy {BUSINESS_DATA['working_hours']}. W niedziele zamknięte.",
+        "ASK_SERVICES": "Oferujemy: " + ", ".join([f"{s['name']} za {s['price']} złotych" for s in BUSINESS_DATA['services']]) + ". Którą usługą jest Pan zainteresowany?",
+        "ASK_ADDRESS": f"Znajdujemy się pod adresem {BUSINESS_DATA['address']}.",
+        "BOOK": "Chętnie umówię wizytę. Na jaką usługę i kiedy?",
+        "GOODBYE": "Dziękuję za telefon. Do widzenia!",
+        "OTHER": "Przepraszam, czy mógłby Pan powtórzyć? Mogę pomóc z godzinami, cennikiem lub rezerwacją."
+    }
+    
+    return responses.get(intent, responses["OTHER"])
+
+# ==========================================
+# TTS - ElevenLabs → mulaw 8000
+# ==========================================
+async def text_to_speech(text: str) -> bytes:
+    """ElevenLabs TTS - format ulaw_8000 dla Twilio"""
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
     
     async with aiohttp.ClientSession() as session:
@@ -122,195 +97,173 @@ async def text_to_speech_mulaw(text: str) -> bytes:
             json={
                 "text": text,
                 "model_id": "eleven_flash_v2_5",
-                "output_format": "ulaw_8000"  # RAW mulaw bez headerów!
+                "output_format": "ulaw_8000"
             }
         ) as response:
             if response.status == 200:
-                audio_data = await response.read()
-                logger.info(f"🔊 ElevenLabs: {len(audio_data)} bytes mulaw")
-                return audio_data
+                audio = await response.read()
+                logger.info(f"🔊 TTS: {len(audio)} bytes")
+                return audio
             else:
-                error = await response.text()
-                logger.error(f"ElevenLabs error: {response.status} - {error}")
+                logger.error(f"TTS error: {response.status}")
                 return b""
 
-
-async def send_audio_to_twilio(websocket: WebSocket, audio_data: bytes, stream_sid: str):
-    """Wyślij CAŁY payload na raz (jak w oficjalnej dokumentacji ElevenLabs)"""
-    
-    # Oficjalny sposób - cały payload base64 encoded, wysłany na raz
-    media_message = {
-        "event": "media",
-        "streamSid": stream_sid,
-        "media": {
-            "payload": base64.b64encode(audio_data).decode("ascii")
-        }
-    }
-    
-    await websocket.send_text(json.dumps(media_message))
-    logger.info(f"📤 Sent {len(audio_data)} bytes to Twilio")
-
-
 # ==========================================
-# DEEPGRAM WebSocket STT - Nova-3
+# DEEPGRAM STT - Nova-3 General
 # ==========================================
-class DeepgramTranscriber:
+class DeepgramSTT:
     def __init__(self, on_transcript):
         self.on_transcript = on_transcript
         self.ws = None
         self.session = None
-        self.is_connected = False
         
     async def connect(self):
+        # Nova-3 General dla polskiego!
         url = (
             "wss://api.deepgram.com/v1/listen"
-            "?model=nova-3-general"  # nova-3 może nie być dostępny, używamy nova-2
+            "?model=nova-2-general"  # zmień na nova-3-general jak będzie dostępny
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
-            "&endpointing=300"
+            "&endpointing=400"
             "&interim_results=false"
-            "&punctuate=true"
         )
         
         self.session = aiohttp.ClientSession()
-        self.ws = await self.session.ws_connect(
-            url,
-            headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-        )
-        self.is_connected = True
-        logger.info("🎤 Deepgram connected")
-        
-        asyncio.create_task(self._listen())
-        
+        try:
+            self.ws = await self.session.ws_connect(
+                url,
+                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+            )
+            logger.info("🎤 Deepgram connected")
+            asyncio.create_task(self._listen())
+        except Exception as e:
+            logger.error(f"Deepgram connect error: {e}")
+            
     async def _listen(self):
         try:
             async for msg in self.ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
-                    
                     if data.get("type") == "Results":
-                        channel = data.get("channel", {})
-                        alternatives = channel.get("alternatives", [{}])
-                        transcript = alternatives[0].get("transcript", "")
-                        is_final = data.get("is_final", False)
-                        
-                        if transcript and is_final:
-                            logger.info(f"📝 Deepgram: {transcript}")
+                        alt = data.get("channel", {}).get("alternatives", [{}])[0]
+                        transcript = alt.get("transcript", "")
+                        if transcript and data.get("is_final"):
+                            logger.info(f"📝 STT: {transcript}")
                             await self.on_transcript(transcript)
-                            
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"Deepgram error")
-                    break
         except Exception as e:
             logger.error(f"Deepgram listen error: {e}")
-        finally:
-            self.is_connected = False
             
-    async def send_audio(self, audio_data: bytes):
-        if self.ws and self.is_connected:
-            await self.ws.send_bytes(audio_data)
+    async def send(self, audio: bytes):
+        if self.ws:
+            await self.ws.send_bytes(audio)
             
     async def close(self):
         if self.ws:
             await self.ws.close()
         if self.session:
             await self.session.close()
-        self.is_connected = False
 
+# ==========================================
+# TWILIO AUDIO - wysyłanie do klienta
+# ==========================================
+async def send_to_twilio(ws: WebSocket, audio: bytes, stream_sid: str):
+    """Wyślij audio do Twilio - cały payload na raz"""
+    if not audio or not stream_sid:
+        return
+        
+    message = {
+        "event": "media",
+        "streamSid": stream_sid,
+        "media": {
+            "payload": base64.b64encode(audio).decode("ascii")
+        }
+    }
+    await ws.send_text(json.dumps(message))
+    logger.info(f"📤 Sent to Twilio: {len(audio)} bytes")
 
 # ==========================================
 # ENDPOINTS
 # ==========================================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "business": BUSINESS_DATA["name"]}
-
+    return {"status": "ok", "service": "Voice AI"}
 
 @app.post("/twilio/incoming")
-async def twilio_incoming(request: Request):
+async def incoming(request: Request):
     host = request.headers.get("host", "localhost")
-    form = await request.form()
-    call_sid = form.get("CallSid", "unknown")
-    
-    logger.info(f"📞 Incoming call: {call_sid}")
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="wss://{host}/ws/voice" />
+        <Stream url="wss://{host}/ws" />
     </Connect>
 </Response>"""
     
+    logger.info("📞 Incoming call")
     return Response(content=twiml, media_type="application/xml")
 
-
-@app.websocket("/ws/voice")
-async def voice_websocket(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("🎤 Twilio WebSocket connected")
+@app.websocket("/ws")
+async def websocket(ws: WebSocket):
+    await ws.accept()
+    logger.info("🔌 WebSocket connected")
     
     stream_sid = None
-    call_sid = None
     
-    async def on_transcript(transcript: str):
-        if not transcript or len(transcript.strip()) < 2:
+    async def on_transcript(text: str):
+        if len(text.strip()) < 2:
             return
+            
+        # 1. Intent detection (GPT → JSON)
+        intent = await detect_intent(text)
+        logger.info(f"🎯 Intent: {intent}")
         
-        logger.info(f"💬 Processing: {transcript}")
+        # 2. Backend generuje odpowiedź (ZERO halucynacji)
+        response_text = generate_response(intent)
+        logger.info(f"💬 Response: {response_text}")
         
-        # Intent-based response
-        response = await process_user_input(transcript)
-        logger.info(f"📤 Response: {response}")
+        # 3. TTS
+        audio = await text_to_speech(response_text)
         
-        # TTS
-        audio = await text_to_speech_mulaw(response)
-        
-        if audio and stream_sid:
-            await send_audio_to_twilio(websocket, audio, stream_sid)
+        # 4. Wyślij do Twilio
+        if audio:
+            await send_to_twilio(ws, audio, stream_sid)
     
-    deepgram = DeepgramTranscriber(on_transcript)
+    stt = DeepgramSTT(on_transcript)
     
     try:
         while True:
-            message = await websocket.receive_text()
-            data = json.loads(message)
+            msg = await ws.receive_text()
+            data = json.loads(msg)
             event = data.get("event")
             
-            if event == "connected":
-                logger.info("✅ Stream connected")
-                
-            elif event == "start":
+            if event == "start":
                 stream_sid = data.get("streamSid")
-                start_data = data.get("start", {})
-                call_sid = start_data.get("callSid", "unknown")
-                logger.info(f"📞 Stream: {stream_sid}")
+                logger.info(f"▶️ Stream started: {stream_sid}")
                 
-                # Connect Deepgram
-                await deepgram.connect()
+                # Połącz z Deepgram
+                await stt.connect()
                 
                 # Powitanie
                 greeting = f"Dzień dobry, tu {BUSINESS_DATA['name']}. W czym mogę pomóc?"
-                audio = await text_to_speech_mulaw(greeting)
+                audio = await text_to_speech(greeting)
                 if audio:
-                    await send_audio_to_twilio(websocket, audio, stream_sid)
-                    logger.info("✅ Greeting sent")
-                
+                    await send_to_twilio(ws, audio, stream_sid)
+                    
             elif event == "media":
                 payload = data.get("media", {}).get("payload", "")
-                audio_chunk = base64.b64decode(payload)
-                await deepgram.send_audio(audio_chunk)
+                audio = base64.b64decode(payload)
+                await stt.send(audio)
                 
             elif event == "stop":
-                logger.info("📞 Stream stop")
+                logger.info("⏹️ Stream stopped")
                 break
                 
     except Exception as e:
         logger.error(f"❌ Error: {e}")
     finally:
-        await deepgram.close()
+        await stt.close()
         logger.info("👋 Closed")
-
 
 if __name__ == "__main__":
     import uvicorn
