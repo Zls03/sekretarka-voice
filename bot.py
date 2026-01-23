@@ -12,6 +12,12 @@ import openai
 
 load_dotenv()
 
+# DEBUG - sprawdź klucze
+twilio_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+logger.info(f"🔑 TWILIO_SID starts with: {twilio_sid[:10] if twilio_sid else 'EMPTY'}")
+logger.info(f"🔑 TWILIO_TOKEN starts with: {twilio_token[:10] if twilio_token else 'EMPTY'}")
+
 SYSTEM_PROMPT = """Jesteś asystentką AI odbierającą telefony dla firmy. 
 Mówisz po polsku, jesteś uprzejma i pomocna.
 Odpowiadaj krótko i zwięźle - max 2-3 zdania.
