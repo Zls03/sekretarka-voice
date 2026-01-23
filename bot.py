@@ -95,8 +95,12 @@ async def text_to_speech(text: str) -> bytes:
 
 async def send_audio_to_twilio(websocket: WebSocket, audio_data: bytes, stream_sid: str):
     """Wyślij audio do Twilio"""
-    # Podziel na chunki po 640 bajtów (20ms audio)
-    chunk_size = 640
+    logger.info(f"📤 Wysyłam {len(audio_data)} bytes do Twilio, stream: {stream_sid}")
+    
+    # Twilio oczekuje chunków base64 mulaw
+    chunk_size = 160  # 20ms przy 8kHz
+    chunks_sent = 0
+    
     for i in range(0, len(audio_data), chunk_size):
         chunk = audio_data[i:i + chunk_size]
         payload = base64.b64encode(chunk).decode("utf-8")
@@ -108,28 +112,19 @@ async def send_audio_to_twilio(websocket: WebSocket, audio_data: bytes, stream_s
                 "payload": payload
             }
         }
-        await websocket.send_text(json.dumps(message))
-        await asyncio.sleep(0.02)  # 20ms między chunkami
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.post("/twilio/incoming")
-async def twilio_incoming(request: Request):
-    host = request.headers.get("host", "localhost")
+        
+        try:
+            await websocket.send_text(json.dumps(message))
+            chunks_sent += 1
+        except Exception as e:
+            logger.error(f"❌ Błąd wysyłania chunk {chunks_sent}: {e}")
+            break
+            
+        # Małe opóźnienie żeby nie zalać Twilio
+        if chunks_sent % 50 == 0:
+            await asyncio.sleep(0.01)
     
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="wss://{host}/ws/twilio" />
-    </Connect>
-</Response>"""
-    
-    logger.info(f"📞 Incoming call")
-    return Response(content=twiml, media_type="application/xml")
+    logger.info(f"✅ Wysłano {chunks_sent} chunków audio")
 
 
 @app.websocket("/ws/twilio")
