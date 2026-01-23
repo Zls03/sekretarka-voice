@@ -4,3 +4,4 @@ fastapi
 uvicorn
 aiohttp
 websockets
+python-multipart
