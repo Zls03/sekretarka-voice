@@ -17,7 +17,7 @@ Mówisz po polsku, jesteś uprzejma i pomocna.
 Odpowiadaj krótko i zwięźle - max 2-3 zdania.
 """
 
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "NacdHGUYR1k3M0FAbAia")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -67,7 +67,7 @@ async def get_ai_response(conversation: list, user_message: str) -> str:
 
 
 async def text_to_speech(text: str) -> bytes:
-    """Synteza mowy przez ElevenLabs - zwraca mulaw 8kHz dla Twilio"""
+    """Synteza mowy przez ElevenLabs"""
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
     
     async with aiohttp.ClientSession() as session:
@@ -97,8 +97,7 @@ async def send_audio_to_twilio(websocket: WebSocket, audio_data: bytes, stream_s
     """Wyślij audio do Twilio"""
     logger.info(f"📤 Wysyłam {len(audio_data)} bytes do Twilio, stream: {stream_sid}")
     
-    # Twilio oczekuje chunków base64 mulaw
-    chunk_size = 160  # 20ms przy 8kHz
+    chunk_size = 160
     chunks_sent = 0
     
     for i in range(0, len(audio_data), chunk_size):
@@ -120,11 +119,30 @@ async def send_audio_to_twilio(websocket: WebSocket, audio_data: bytes, stream_s
             logger.error(f"❌ Błąd wysyłania chunk {chunks_sent}: {e}")
             break
             
-        # Małe opóźnienie żeby nie zalać Twilio
         if chunks_sent % 50 == 0:
             await asyncio.sleep(0.01)
     
     logger.info(f"✅ Wysłano {chunks_sent} chunków audio")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.post("/twilio/incoming")
+async def twilio_incoming(request: Request):
+    host = request.headers.get("host", "localhost")
+    
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="wss://{host}/ws/twilio" />
+    </Connect>
+</Response>"""
+    
+    logger.info(f"📞 Incoming call")
+    return Response(content=twiml, media_type="application/xml")
 
 
 @app.websocket("/ws/twilio")
@@ -152,7 +170,6 @@ async def twilio_websocket(websocket: WebSocket):
                 stream_sid = data.get("streamSid")
                 logger.info(f"📞 Stream: {stream_sid}")
                 
-                # Wyślij powitanie
                 if not greeting_sent and stream_sid:
                     greeting_sent = True
                     logger.info("🎙️ Wysyłam powitanie...")
@@ -166,7 +183,6 @@ async def twilio_websocket(websocket: WebSocket):
                 chunk = base64.b64decode(payload)
                 audio_buffer += chunk
                 
-                # Sprawdź czy to cisza (mulaw 0xFF = cisza)
                 silence_threshold = 0.9
                 silence_bytes = chunk.count(b'\xff') + chunk.count(b'\x7f')
                 is_silence = silence_bytes / len(chunk) > silence_threshold if chunk else True
@@ -177,12 +193,10 @@ async def twilio_websocket(websocket: WebSocket):
                     silence_count = 0
                     is_speaking = True
                 
-                # Po ~1.5 sekundy ciszy (750ms * 2), przetwórz audio
                 if is_speaking and silence_count > 75 and len(audio_buffer) > 3200:
                     is_speaking = False
                     logger.info(f"🎵 Przetwarzam audio: {len(audio_buffer)} bytes")
                     
-                    # Transkrypcja
                     transcript = await transcribe_audio(audio_buffer)
                     audio_buffer = b""
                     silence_count = 0
@@ -190,11 +204,9 @@ async def twilio_websocket(websocket: WebSocket):
                     if transcript and len(transcript.strip()) > 0:
                         logger.info(f"📝 Transkrypcja: {transcript}")
                         
-                        # Odpowiedź AI
                         response = await get_ai_response(conversation, transcript)
                         logger.info(f"🤖 Odpowiedź: {response}")
                         
-                        # Synteza i wysyłka
                         audio = await text_to_speech(response)
                         if audio and stream_sid:
                             await send_audio_to_twilio(websocket, audio, stream_sid)
