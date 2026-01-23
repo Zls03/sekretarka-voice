@@ -12,12 +12,6 @@ import openai
 
 load_dotenv()
 
-# DEBUG - sprawdź klucze
-twilio_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
-twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "")
-logger.info(f"🔑 TWILIO_SID starts with: {twilio_sid[:10] if twilio_sid else 'EMPTY'}")
-logger.info(f"🔑 TWILIO_TOKEN starts with: {twilio_token[:10] if twilio_token else 'EMPTY'}")
-
 SYSTEM_PROMPT = """Jesteś asystentką AI odbierającą telefony dla firmy. 
 Mówisz po polsku, jesteś uprzejma i pomocna.
 Odpowiadaj krótko i zwięźle - max 2-3 zdania.
@@ -33,15 +27,15 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 oai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# Cache dla audio
+# Cache
 audio_cache = {}
-# Aktywne rozmowy
 conversations = {}
+pending_responses = {}  # call_sid -> audio_id
 
 
 async def transcribe_with_deepgram(audio_data: bytes) -> str:
     """Transkrypcja przez Deepgram Nova-3"""
-    url = "https://api.deepgram.com/v1/listen?model=nova-3&language=pl&encoding=mulaw&sample_rate=8000"
+    url = "https://api.deepgram.com/v1/listen?model=nova-2&language=pl&encoding=mulaw&sample_rate=8000"
     
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -64,7 +58,7 @@ async def transcribe_with_deepgram(audio_data: bytes) -> str:
 
 
 async def get_ai_response(call_sid: str, user_message: str) -> str:
-    """Odpowiedź od GPT z pamięcią rozmowy"""
+    """Odpowiedź od GPT"""
     if call_sid not in conversations:
         conversations[call_sid] = [{"role": "system", "content": SYSTEM_PROMPT}]
     
@@ -110,19 +104,6 @@ async def text_to_speech(text: str) -> bytes:
                 return b""
 
 
-def generate_play_twiml(host: str, audio_id: str, call_sid: str) -> str:
-    """Generuj TwiML z Play i Connect do WebSocket"""
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Play>https://{host}/audio/{audio_id}</Play>
-    <Connect>
-        <Stream url="wss://{host}/ws/deepgram">
-            <Parameter name="callSid" value="{call_sid}" />
-        </Stream>
-    </Connect>
-</Response>"""
-
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -130,7 +111,7 @@ async def health():
 
 @app.get("/audio/{audio_id}")
 async def get_audio(audio_id: str):
-    """Serwuj audio dla Twilio"""
+    """Serwuj audio"""
     if audio_id in audio_cache:
         audio_data = audio_cache.pop(audio_id)
         return Response(content=audio_data, media_type="audio/mpeg")
@@ -139,7 +120,7 @@ async def get_audio(audio_id: str):
 
 @app.post("/twilio/incoming")
 async def twilio_incoming(request: Request):
-    """Początek rozmowy"""
+    """Początek rozmowy - powitanie + Gather"""
     host = request.headers.get("host", "localhost")
     form = await request.form()
     call_sid = form.get("CallSid", "unknown")
@@ -152,167 +133,73 @@ async def twilio_incoming(request: Request):
     if audio:
         audio_id = f"greeting_{call_sid}"
         audio_cache[audio_id] = audio
-        twiml = generate_play_twiml(host, audio_id, call_sid)
+        
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>https://{host}/audio/{audio_id}</Play>
+    <Gather input="speech" language="pl-PL" speechTimeout="2" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="10"/>
+    </Gather>
+    <Say language="pl-PL">Przepraszam, nie usłyszałam odpowiedzi. Do widzenia.</Say>
+</Response>"""
     else:
-        # Fallback
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say language="pl-PL" voice="Google.pl-PL-Wavenet-E">Dzień dobry, w czym mogę pomóc?</Say>
-    <Connect>
-        <Stream url="wss://{host}/ws/deepgram">
-            <Parameter name="callSid" value="{call_sid}" />
-        </Stream>
-    </Connect>
+    <Gather input="speech" language="pl-PL" speechTimeout="2" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="10"/>
+    </Gather>
 </Response>"""
     
     return Response(content=twiml, media_type="application/xml")
 
 
-@app.post("/twilio/continue/{call_sid}")
-async def twilio_continue(call_sid: str, request: Request):
-    """Kontynuacja rozmowy po odpowiedzi AI"""
+@app.post("/twilio/gather/{call_sid}")
+async def twilio_gather(call_sid: str, request: Request):
+    """Obsłuż mowę użytkownika przez Twilio Gather (ich STT) + Deepgram backup"""
     host = request.headers.get("host", "localhost")
+    form = await request.form()
+    speech_result = form.get("SpeechResult", "")
     
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="wss://{host}/ws/deepgram">
-            <Parameter name="callSid" value="{call_sid}" />
-        </Stream>
-    </Connect>
-</Response>"""
+    logger.info(f"📝 Twilio STT: {speech_result}")
     
-    return Response(content=twiml, media_type="application/xml")
-
-
-@app.websocket("/ws/deepgram")
-async def deepgram_websocket(websocket: WebSocket):
-    """WebSocket dla Twilio Media Streams + Deepgram STT"""
-    await websocket.accept()
-    logger.info("🎤 WebSocket połączony")
-    
-    stream_sid = None
-    call_sid = None
-    audio_buffer = b""
-    silence_frames = 0
-    has_speech = False
-    
-    SILENCE_THRESHOLD = 50  # ~1 sekunda ciszy (50 * 20ms)
-    MIN_AUDIO_SIZE = 3200   # Minimum audio do transkrypcji
-    
-    try:
-        while True:
-            message = await websocket.receive_text()
-            data = json.loads(message)
-            event = data.get("event")
+    if speech_result and len(speech_result.strip()) > 2:
+        # Odpowiedź AI
+        response = await get_ai_response(call_sid, speech_result)
+        
+        # TTS
+        audio = await text_to_speech(response)
+        
+        if audio:
+            audio_id = f"resp_{call_sid}_{id(audio)}"
+            audio_cache[audio_id] = audio
             
-            if event == "connected":
-                logger.info("✅ Stream connected")
-                
-            elif event == "start":
-                stream_sid = data.get("streamSid")
-                start_data = data.get("start", {})
-                custom_params = start_data.get("customParameters", {})
-                call_sid = custom_params.get("callSid", "unknown")
-                logger.info(f"📞 Stream start: {stream_sid}, call: {call_sid}")
-                
-            elif event == "media":
-                payload = data.get("media", {}).get("payload", "")
-                chunk = base64.b64decode(payload)
-                audio_buffer += chunk
-                
-                # Detekcja ciszy (mulaw)
-                silence_bytes = sum(1 for b in chunk if b in (0xff, 0x7f, 0xfe, 0x7e))
-                is_silence = silence_bytes / len(chunk) > 0.8 if chunk else True
-                
-                if is_silence:
-                    silence_frames += 1
-                else:
-                    silence_frames = 0
-                    has_speech = True
-                
-                # Jeśli była mowa i teraz cisza - przetwórz
-                if has_speech and silence_frames > SILENCE_THRESHOLD and len(audio_buffer) > MIN_AUDIO_SIZE:
-                    logger.info(f"🎵 Przetwarzam {len(audio_buffer)} bytes audio")
-                    
-                    # Transkrypcja Deepgram
-                    transcript = await transcribe_with_deepgram(audio_buffer)
-                    
-                    # Reset
-                    audio_buffer = b""
-                    silence_frames = 0
-                    has_speech = False
-                    
-                    if transcript and len(transcript.strip()) > 2:
-                        # Odpowiedź AI
-                        response = await get_ai_response(call_sid, transcript)
-                        
-                        # TTS
-                        audio = await text_to_speech(response)
-                        
-                        if audio:
-                            audio_id = f"resp_{call_sid}_{id(audio)}"
-                            audio_cache[audio_id] = audio
-                            
-                            # Przekieruj Twilio do odtworzenia audio
-                            host = "web-production-f570f.up.railway.app"
-                            redirect_url = f"https://{host}/twilio/play/{audio_id}/{call_sid}"
-                            
-                            # Wyślij redirect przez Twilio REST API
-                            await redirect_twilio_call(call_sid, redirect_url)
-                
-            elif event == "stop":
-                logger.info("📞 Stream stop")
-                # Cleanup
-                if call_sid in conversations:
-                    del conversations[call_sid]
-                break
-                
-    except Exception as e:
-        logger.error(f"❌ WebSocket error: {e}")
-    finally:
-        logger.info("👋 WebSocket closed")
-
-
-async def redirect_twilio_call(call_sid: str, url: str):
-    """Przekieruj rozmowę Twilio do nowego URL"""
-    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
-    
-    logger.info(f"🔄 Redirect: SID={twilio_sid[:10]}..., CallSid={call_sid}")
-    
-    if not twilio_sid or not twilio_token:
-        logger.error("❌ Brak TWILIO_ACCOUNT_SID lub TWILIO_AUTH_TOKEN!")
-        return
-    
-    async with aiohttp.ClientSession() as session:
-        auth = aiohttp.BasicAuth(twilio_sid, twilio_token)
-        async with session.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Calls/{call_sid}.json",
-            auth=auth,
-            data={"Url": url, "Method": "POST"}
-        ) as response:
-            if response.status == 200:
-                logger.info(f"✅ Call redirected: {call_sid}")
-            else:
-                error = await response.text()
-                logger.error(f"❌ Redirect failed: {response.status} - {error}")
-                logger.error(f"❌ URL: https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Calls/{call_sid}.json")
-
-
-@app.post("/twilio/play/{audio_id}/{call_sid}")
-async def twilio_play(audio_id: str, call_sid: str, request: Request):
-    """Odtwórz audio i kontynuuj nasłuchiwanie"""
-    host = request.headers.get("host", "localhost")
-    
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Play>https://{host}/audio/{audio_id}</Play>
-    <Connect>
-        <Stream url="wss://{host}/ws/deepgram">
-            <Parameter name="callSid" value="{call_sid}" />
-        </Stream>
-    </Connect>
+    <Gather input="speech" language="pl-PL" speechTimeout="2" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="10"/>
+    </Gather>
+    <Say language="pl-PL">Czy mogę jeszcze w czymś pomóc?</Say>
+    <Gather input="speech" language="pl-PL" speechTimeout="2" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="5"/>
+    </Gather>
+</Response>"""
+        else:
+            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="pl-PL" voice="Google.pl-PL-Wavenet-E">{response}</Say>
+    <Gather input="speech" language="pl-PL" speechTimeout="2" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="10"/>
+    </Gather>
+</Response>"""
+    else:
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="pl-PL" voice="Google.pl-PL-Wavenet-E">Przepraszam, nie usłyszałam. Czy możesz powtórzyć?</Say>
+    <Gather input="speech" language="pl-PL" speechTimeout="3" action="https://{host}/twilio/gather/{call_sid}" method="POST">
+        <Pause length="10"/>
+    </Gather>
 </Response>"""
     
     return Response(content=twiml, media_type="application/xml")
