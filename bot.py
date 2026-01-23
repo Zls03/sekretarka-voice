@@ -17,7 +17,7 @@ Mówisz po polsku, jesteś uprzejma i pomocna.
 Odpowiadaj krótko i zwięźle - max 2-3 zdania.
 """
 
-ELEVENLABS_VOICE_ID = "NacdHGUYR1k3M0FAbAia"  # Polski głos
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -80,15 +80,13 @@ async def text_to_speech(text: str) -> bytes:
             json={
                 "text": text,
                 "model_id": "eleven_flash_v2_5",
-                "output_format": "ulaw_8000",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75
-                }
+                "output_format": "ulaw_8000"
             }
         ) as response:
             if response.status == 200:
-                return await response.read()
+                audio_data = await response.read()
+                logger.info(f"🔊 ElevenLabs zwrócił {len(audio_data)} bytes audio")
+                return audio_data
             else:
                 error = await response.text()
                 logger.error(f"ElevenLabs error: {response.status} - {error}")
