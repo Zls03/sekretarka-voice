@@ -121,7 +121,7 @@ class DeepgramSTT:
         # Nova-3 General dla polskiego!
         url = (
             "wss://api.deepgram.com/v1/listen"
-            "?model=nova-2-general"  # zmień na nova-3-general jak będzie dostępny
+            "?model=nova-3-general"  # zmień na nova-3-general jak będzie dostępny
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
