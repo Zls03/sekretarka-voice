@@ -1,8 +1,26 @@
+"""
+VOICE AI - MULTI-TENANT SYSTEM
+==============================
+Uniwersalny silnik głosowy z bazą Turso.
+
+Stack:
+- Twilio Media Streams (bidirectional)
+- Deepgram Nova-2 (STT polski)
+- ElevenLabs Flash 2.5 (TTS)
+- GPT-4o-mini (tylko intent → JSON)
+- Turso/libSQL (baza danych)
+- State Machine (kontrola rozmowy)
+"""
+
 import os
 import json
 import base64
 import asyncio
 import aiohttp
+import httpx
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass, field
+from enum import Enum
 from dotenv import load_dotenv
 from loguru import logger
 from fastapi import FastAPI, WebSocket, Request
@@ -19,35 +37,215 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "NacdHGUYR1k3M0FAbAia")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 
-app = FastAPI()
+app = FastAPI(title="Voice AI Multi-Tenant")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 oai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# ==========================================
-# ŹRÓDŁO PRAWDY - dane firmy (później z bazy)
-# ==========================================
-BUSINESS_DATA = {
-    "name": "Salon Fryzjerski Anna",
-    "working_hours": "od poniedziałku do piątku od dziewiątej do siedemnastej, w czwartki do dziewiętnastej, w soboty od dziesiątej do czternastej",
-    "services": [
-        {"name": "Strzyżenie damskie", "price": 80},
-        {"name": "Strzyżenie męskie", "price": 50},
-        {"name": "Koloryzacja", "price": 200},
-        {"name": "Modelowanie", "price": 60},
-    ],
-    "address": "ulica Kwiatowa 15, Warszawa",
-}
 
 # ==========================================
-# INTENT DETECTION (GPT → JSON only)
+# TURSO DATABASE (HTTP API)
 # ==========================================
-INTENT_PROMPT = """Rozpoznaj intencję użytkownika. Odpowiedz TYLKO jednym słowem z listy:
-GREETING, ASK_HOURS, ASK_SERVICES, ASK_ADDRESS, BOOK, GOODBYE, OTHER
+class TursoDB:
+    """Prosty klient Turso przez HTTP API"""
+    
+    def __init__(self):
+        # Konwertuj libsql:// na https://
+        self.url = TURSO_DATABASE_URL.replace("libsql://", "https://")
+        self.token = TURSO_AUTH_TOKEN
+        
+    async def execute(self, sql: str, args: List = None) -> List[Dict]:
+        """Wykonaj zapytanie SQL"""
+        if not self.url or not self.token:
+            logger.warning("⚠️ Turso not configured, using fallback data")
+            return []
+            
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.url}/v2/pipeline",
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "requests": [
+                            {
+                                "type": "execute",
+                                "stmt": {
+                                    "sql": sql,
+                                    "args": [{"type": "text", "value": str(a)} for a in (args or [])]
+                                }
+                            },
+                            {"type": "close"}
+                        ]
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get("results", [])
+                    if results and results[0].get("type") == "ok":
+                        result = results[0].get("response", {}).get("result", {})
+                        cols = [c.get("name") for c in result.get("cols", [])]
+                        rows = []
+                        for row in result.get("rows", []):
+                            row_dict = {}
+                            for i, col in enumerate(cols):
+                                val = row[i]
+                                row_dict[col] = val.get("value") if isinstance(val, dict) else val
+                            rows.append(row_dict)
+                        return rows
+                    return []
+                else:
+                    logger.error(f"Turso error: {response.status_code} - {response.text}")
+                    return []
+        except Exception as e:
+            logger.error(f"Turso exception: {e}")
+            return []
+
+db = TursoDB()
+
+
+# ==========================================
+# FALLBACK DATA (gdy brak Turso)
+# ==========================================
+FALLBACK_TENANTS = {
+    "+48732071272": {
+        "id": "tenant_001",
+        "name": "Salon Fryzjerski Anna",
+        "phone_number": "+48732071272",
+        "address": "ul. Kwiatowa 15, Warszawa",
+        "working_hours": {
+            0: {"open": "09:00", "close": "17:00"},
+            1: {"open": "09:00", "close": "17:00"},
+            2: {"open": "09:00", "close": "17:00"},
+            3: {"open": "09:00", "close": "19:00"},
+            4: {"open": "09:00", "close": "17:00"},
+            5: {"open": "10:00", "close": "14:00"},
+            6: None
+        },
+        "services": [
+            {"id": "svc1", "name": "Strzyżenie damskie", "duration": 60, "price": 80},
+            {"id": "svc2", "name": "Strzyżenie męskie", "duration": 30, "price": 50},
+            {"id": "svc3", "name": "Koloryzacja", "duration": 120, "price": 200},
+            {"id": "svc4", "name": "Modelowanie", "duration": 45, "price": 60},
+        ],
+        "staff": [
+            {"id": "staff1", "name": "Anna Kowalska"},
+            {"id": "staff2", "name": "Maria Nowak"},
+        ]
+    }
+}
+
+
+async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
+    """Znajdź firmę po numerze telefonu"""
+    
+    # Normalizuj numer
+    phone_clean = phone.replace(" ", "").replace("-", "")
+    phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
+    
+    # Próbuj z bazy Turso
+    rows = await db.execute(
+        "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
+        [f"%{phone_suffix}"]
+    )
+    
+    if rows:
+        tenant = rows[0]
+        tenant_id = tenant["id"]
+        
+        # Pobierz usługi
+        services = await db.execute(
+            "SELECT id, name, duration_minutes as duration, price FROM services WHERE tenant_id = ? AND is_active = 1",
+            [tenant_id]
+        )
+        
+        # Pobierz godziny
+        hours_rows = await db.execute(
+            "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?",
+            [tenant_id]
+        )
+        working_hours = {}
+        for h in hours_rows:
+            day = int(h["day_of_week"])
+            if h["open_time"]:
+                working_hours[day] = {"open": h["open_time"], "close": h["close_time"]}
+            else:
+                working_hours[day] = None
+        
+        # Pobierz pracowników
+        staff = await db.execute(
+            "SELECT id, name, role FROM staff WHERE tenant_id = ? AND is_active = 1",
+            [tenant_id]
+        )
+        
+        return {
+            **tenant,
+            "services": services,
+            "working_hours": working_hours,
+            "staff": staff
+        }
+    
+    # Fallback na hardcoded dane
+    for tenant_phone, tenant_data in FALLBACK_TENANTS.items():
+        if phone_clean.endswith(tenant_phone[-9:]):
+            logger.info("📦 Using fallback data")
+            return tenant_data
+    
+    return None
+
+
+# ==========================================
+# STATE MACHINE
+# ==========================================
+class State(Enum):
+    START = "start"
+    LISTENING = "listening"
+    ASK_SERVICE = "ask_service"
+    ASK_DATE = "ask_date"
+    ASK_TIME = "ask_time"
+    CONFIRM = "confirm"
+    DONE = "done"
+    END = "end"
+
+
+@dataclass
+class Conversation:
+    """Kontekst rozmowy"""
+    tenant: Dict[str, Any]
+    call_sid: str = ""
+    caller_phone: str = ""
+    state: State = State.START
+    
+    # Zbierane dane do rezerwacji
+    selected_service: Optional[Dict] = None
+    selected_date: Optional[str] = None
+    selected_time: Optional[str] = None
+    customer_name: Optional[str] = None
+    
+    # Historia
+    transcript: List[str] = field(default_factory=list)
+
+
+# Aktywne rozmowy (w produkcji: Redis)
+conversations: Dict[str, Conversation] = {}
+
+
+# ==========================================
+# INTENT DETECTION (GPT → tylko słowo)
+# ==========================================
+INTENT_PROMPT = """Rozpoznaj intencję użytkownika. Odpowiedz JEDNYM słowem z listy:
+GREETING, ASK_HOURS, ASK_SERVICES, ASK_ADDRESS, BOOK, SELECT_SERVICE, SELECT_DATE, SELECT_TIME, CONFIRM, DENY, GOODBYE, OTHER
 
 Tekst: "{text}"
 Intencja:"""
+
 
 async def detect_intent(text: str) -> str:
     try:
@@ -57,34 +255,133 @@ async def detect_intent(text: str) -> str:
             max_tokens=10,
             temperature=0
         )
-        return response.choices[0].message.content.strip().upper()
+        intent = response.choices[0].message.content.strip().upper()
+        return intent.split()[0] if intent else "OTHER"
     except Exception as e:
         logger.error(f"Intent error: {e}")
         return "OTHER"
 
-# ==========================================
-# BACKEND GENERUJE TEKST (nie GPT!)
-# ==========================================
-def generate_response(intent: str) -> str:
-    """Backend generuje odpowiedź - ZERO halucynacji"""
-    
-    responses = {
-        "GREETING": f"Dzień dobry, tu {BUSINESS_DATA['name']}. W czym mogę pomóc?",
-        "ASK_HOURS": f"Pracujemy {BUSINESS_DATA['working_hours']}. W niedziele zamknięte.",
-        "ASK_SERVICES": "Oferujemy: " + ", ".join([f"{s['name']} za {s['price']} złotych" for s in BUSINESS_DATA['services']]) + ". Którą usługą jest Pan zainteresowany?",
-        "ASK_ADDRESS": f"Znajdujemy się pod adresem {BUSINESS_DATA['address']}.",
-        "BOOK": "Chętnie umówię wizytę. Na jaką usługę i kiedy?",
-        "GOODBYE": "Dziękuję za telefon. Do widzenia!",
-        "OTHER": "Przepraszam, czy mógłby Pan powtórzyć? Mogę pomóc z godzinami, cennikiem lub rezerwacją."
-    }
-    
-    return responses.get(intent, responses["OTHER"])
 
 # ==========================================
-# TTS - ElevenLabs → mulaw 8000
+# RESPONSE GENERATOR (Backend - ZERO GPT!)
+# ==========================================
+def generate_response(conv: Conversation, intent: str, user_text: str) -> str:
+    """
+    Backend generuje odpowiedź z DANYCH firmy.
+    GPT NIE generuje tekstu do klienta!
+    """
+    
+    tenant = conv.tenant
+    
+    # === GREETING ===
+    if intent == "GREETING":
+        return f"Dzień dobry, tu {tenant['name']}. W czym mogę pomóc?"
+    
+    # === ASK_HOURS ===
+    if intent == "ASK_HOURS":
+        hours = tenant.get("working_hours", {})
+        parts = []
+        
+        weekday = hours.get(0)
+        if weekday:
+            open_h = weekday['open'].replace(':00', '') if weekday['open'] else ''
+            close_h = weekday['close'].replace(':00', '') if weekday['close'] else ''
+            parts.append(f"od poniedziałku do piątku od {open_h} do {close_h}")
+        
+        thursday = hours.get(3)
+        if thursday and weekday and thursday.get("close") != weekday.get("close"):
+            close_h = thursday['close'].replace(':00', '')
+            parts.append(f"w czwartki dłużej do {close_h}")
+        
+        saturday = hours.get(5)
+        if saturday:
+            open_h = saturday['open'].replace(':00', '')
+            close_h = saturday['close'].replace(':00', '')
+            parts.append(f"w soboty od {open_h} do {close_h}")
+        
+        if hours.get(6) is None:
+            parts.append("w niedziele zamknięte")
+        
+        return "Pracujemy " + ", ".join(parts) + "." if parts else "Przepraszam, nie mam informacji o godzinach."
+    
+    # === ASK_SERVICES ===
+    if intent == "ASK_SERVICES":
+        services = tenant.get("services", [])
+        if not services:
+            return "Przepraszam, nie mam informacji o usługach."
+        
+        svc_list = [f"{s['name']} za {int(s['price'])} złotych" for s in services]
+        conv.state = State.LISTENING
+        return "Oferujemy: " + ", ".join(svc_list) + ". Czym mogę służyć?"
+    
+    # === ASK_ADDRESS ===
+    if intent == "ASK_ADDRESS":
+        address = tenant.get("address", "")
+        return f"Znajdujemy się pod adresem {address}." if address else "Przepraszam, nie mam informacji o adresie."
+    
+    # === BOOK ===
+    if intent == "BOOK":
+        conv.state = State.ASK_SERVICE
+        services = tenant.get("services", [])
+        svc_names = [s['name'] for s in services]
+        return f"Chętnie umówię wizytę. Na jaką usługę? Mamy: {', '.join(svc_names)}."
+    
+    # === SELECT_SERVICE ===
+    if intent == "SELECT_SERVICE" or conv.state == State.ASK_SERVICE:
+        user_lower = user_text.lower()
+        services = tenant.get("services", [])
+        
+        for svc in services:
+            svc_name_lower = svc['name'].lower()
+            # Sprawdź czy nazwa usługi lub jej część pasuje
+            if svc_name_lower in user_lower or any(word in user_lower for word in svc_name_lower.split() if len(word) > 3):
+                conv.selected_service = svc
+                conv.state = State.ASK_DATE
+                return f"Świetnie, {svc['name']} za {int(svc['price'])} złotych. Na kiedy zarezerwować?"
+        
+        svc_names = [s['name'] for s in services]
+        return f"Nie rozpoznałam usługi. Mamy: {', '.join(svc_names)}. Którą wybrać?"
+    
+    # === SELECT_DATE ===
+    if intent == "SELECT_DATE" or conv.state == State.ASK_DATE:
+        conv.selected_date = user_text
+        conv.state = State.ASK_TIME
+        return "Na którą godzinę?"
+    
+    # === SELECT_TIME ===
+    if intent == "SELECT_TIME" or conv.state == State.ASK_TIME:
+        conv.selected_time = user_text
+        conv.state = State.CONFIRM
+        svc_name = conv.selected_service['name'] if conv.selected_service else "usługę"
+        return f"Rezerwuję {svc_name} na {conv.selected_date}, godzina {conv.selected_time}. Potwierdzam?"
+    
+    # === CONFIRM ===
+    if intent == "CONFIRM" and conv.state == State.CONFIRM:
+        conv.state = State.DONE
+        # TODO: Zapisz rezerwację do bazy + Google Calendar
+        return "Rezerwacja potwierdzona! Dziękuję i do zobaczenia."
+    
+    # === DENY ===
+    if intent == "DENY":
+        conv.state = State.LISTENING
+        conv.selected_service = None
+        conv.selected_date = None
+        conv.selected_time = None
+        return "W porządku. Jak mogę pomóc?"
+    
+    # === GOODBYE ===
+    if intent == "GOODBYE":
+        conv.state = State.END
+        return "Dziękuję za telefon. Do usłyszenia!"
+    
+    # === OTHER / FALLBACK ===
+    return "Przepraszam, nie zrozumiałam. Mogę pomóc z godzinami otwarcia, cennikiem usług lub umówić wizytę."
+
+
+# ==========================================
+# TTS - ElevenLabs (streaming + ulaw_8000)
 # ==========================================
 async def text_to_speech(text: str) -> bytes:
-    """ElevenLabs TTS - STREAMING endpoint z optimize_streaming_latency"""
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream?output_format=ulaw_8000&optimize_streaming_latency=3"
     
     async with aiohttp.ClientSession() as session:
@@ -93,23 +390,20 @@ async def text_to_speech(text: str) -> bytes:
             headers={
                 "xi-api-key": ELEVENLABS_API_KEY,
                 "Content-Type": "application/json",
-                "accept": "audio/wav"  # ← WAŻNE!
+                "accept": "audio/wav"
             },
-            json={
-                "text": text,
-                "model_id": "eleven_flash_v2_5"
-            }
+            json={"text": text, "model_id": "eleven_flash_v2_5"}
         ) as response:
             if response.status == 200:
                 audio = await response.read()
                 logger.info(f"🔊 TTS: {len(audio)} bytes")
                 return audio
-            else:
-                error = await response.text()
-                logger.error(f"TTS error: {response.status} - {error}")
-                return b""
+            logger.error(f"TTS error: {response.status}")
+            return b""
+
+
 # ==========================================
-# DEEPGRAM STT - Nova-3 General
+# DEEPGRAM STT (Nova-2 General, polski)
 # ==========================================
 class DeepgramSTT:
     def __init__(self, on_transcript):
@@ -118,10 +412,9 @@ class DeepgramSTT:
         self.session = None
         
     async def connect(self):
-        # Nova-3 General dla polskiego!
         url = (
             "wss://api.deepgram.com/v1/listen"
-            "?model=nova-3-general"  # zmień na nova-3-general jak będzie dostępny
+            "?model=nova-2-general"
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
@@ -146,13 +439,12 @@ class DeepgramSTT:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
                     if data.get("type") == "Results":
-                        alt = data.get("channel", {}).get("alternatives", [{}])[0]
-                        transcript = alt.get("transcript", "")
+                        transcript = data.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
                         if transcript and data.get("is_final"):
                             logger.info(f"📝 STT: {transcript}")
                             await self.on_transcript(transcript)
         except Exception as e:
-            logger.error(f"Deepgram listen error: {e}")
+            logger.error(f"Deepgram error: {e}")
             
     async def send(self, audio: bytes):
         if self.ws:
@@ -164,70 +456,110 @@ class DeepgramSTT:
         if self.session:
             await self.session.close()
 
+
 # ==========================================
-# TWILIO AUDIO - wysyłanie do klienta
+# TWILIO AUDIO
 # ==========================================
-async def send_to_twilio(ws: WebSocket, audio: bytes, stream_sid: str):
-    """Wyślij audio do Twilio - cały payload na raz"""
-    if not audio or not stream_sid:
-        return
-        
-    message = {
-        "event": "media",
-        "streamSid": stream_sid,
-        "media": {
-            "payload": base64.b64encode(audio).decode("ascii")
-        }
-    }
-    await ws.send_text(json.dumps(message))
-    logger.info(f"📤 Sent to Twilio: {len(audio)} bytes")
+async def send_audio(ws: WebSocket, audio: bytes, stream_sid: str):
+    if audio and stream_sid:
+        await ws.send_text(json.dumps({
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {"payload": base64.b64encode(audio).decode("ascii")}
+        }))
+        logger.info(f"📤 Sent: {len(audio)} bytes")
+
 
 # ==========================================
 # ENDPOINTS
 # ==========================================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "Voice AI"}
+    return {"status": "ok", "service": "Voice AI Multi-Tenant"}
+
+
+@app.get("/api/tenants")
+async def list_tenants():
+    """Lista wszystkich firm (dla panelu admina)"""
+    rows = await db.execute("SELECT id, name, phone_number, address FROM tenants WHERE is_active = 1")
+    return {"tenants": rows}
+
 
 @app.post("/twilio/incoming")
 async def incoming(request: Request):
+    """Webhook dla przychodzących połączeń Twilio"""
     host = request.headers.get("host", "localhost")
+    form = await request.form()
     
+    called = form.get("Called", "")
+    caller = form.get("From", "")
+    call_sid = form.get("CallSid", "")
+    
+    logger.info(f"📞 Call: {caller} → {called} (SID: {call_sid})")
+    
+    # Znajdź firmę po numerze
+    tenant = await get_tenant_by_phone(called)
+    
+    if not tenant:
+        logger.warning(f"⚠️ Unknown number: {called}")
+        return Response(
+            content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, ten numer nie jest aktywny.</Say></Response>',
+            media_type="application/xml"
+        )
+    
+    logger.info(f"✅ Tenant: {tenant['name']}")
+    
+    # Utwórz kontekst rozmowy
+    conversations[call_sid] = Conversation(
+        tenant=tenant,
+        call_sid=call_sid,
+        caller_phone=caller
+    )
+    
+    # TwiML - połącz z WebSocket
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="wss://{host}/ws" />
+        <Stream url="wss://{host}/ws">
+            <Parameter name="callSid" value="{call_sid}" />
+        </Stream>
     </Connect>
 </Response>"""
     
-    logger.info("📞 Incoming call")
     return Response(content=twiml, media_type="application/xml")
 
+
 @app.websocket("/ws")
-async def websocket(ws: WebSocket):
+async def websocket_handler(ws: WebSocket):
+    """Bidirectional WebSocket: Twilio ↔ Deepgram ↔ GPT ↔ ElevenLabs"""
     await ws.accept()
     logger.info("🔌 WebSocket connected")
     
     stream_sid = None
+    call_sid = None
+    conv: Optional[Conversation] = None
     
     async def on_transcript(text: str):
-        if len(text.strip()) < 2:
+        """Obsłuż transkrypcję od Deepgram"""
+        if not conv or len(text.strip()) < 2:
             return
-            
-        # 1. Intent detection (GPT → JSON)
+        
+        # Zapisz do historii
+        conv.transcript.append(f"USER: {text}")
+        
+        # Wykryj intent (GPT → tylko słowo)
         intent = await detect_intent(text)
         logger.info(f"🎯 Intent: {intent}")
         
-        # 2. Backend generuje odpowiedź (ZERO halucynacji)
-        response_text = generate_response(intent)
-        logger.info(f"💬 Response: {response_text}")
+        # Generuj odpowiedź (Backend z DANYCH, nie GPT!)
+        response = generate_response(conv, intent, text)
+        conv.transcript.append(f"BOT: {response}")
+        logger.info(f"💬 {response}")
         
-        # 3. TTS
-        audio = await text_to_speech(response_text)
-        
-        # 4. Wyślij do Twilio
+        # TTS
+        audio = await text_to_speech(response)
         if audio:
-            await send_to_twilio(ws, audio, stream_sid)
+            await send_audio(ws, audio, stream_sid)
     
     stt = DeepgramSTT(on_transcript)
     
@@ -239,33 +571,151 @@ async def websocket(ws: WebSocket):
             
             if event == "start":
                 stream_sid = data.get("streamSid")
-                logger.info(f"▶️ Stream started: {stream_sid}")
+                call_sid = data.get("start", {}).get("customParameters", {}).get("callSid", "")
+                
+                logger.info(f"▶️ Stream: {stream_sid}, Call: {call_sid}")
+                
+                # Pobierz kontekst rozmowy
+                conv = conversations.get(call_sid)
+                if not conv:
+                    logger.error(f"❌ No conversation for: {call_sid}")
+                    break
                 
                 # Połącz z Deepgram
                 await stt.connect()
                 
                 # Powitanie
-                greeting = f"Dzień dobry, tu {BUSINESS_DATA['name']}. W czym mogę pomóc?"
+                greeting = f"Dzień dobry, tu {conv.tenant['name']}. W czym mogę pomóc?"
+                conv.transcript.append(f"BOT: {greeting}")
+                
                 audio = await text_to_speech(greeting)
                 if audio:
-                    await send_to_twilio(ws, audio, stream_sid)
-                    
+                    await send_audio(ws, audio, stream_sid)
+                    conv.state = State.LISTENING
+                
             elif event == "media":
                 payload = data.get("media", {}).get("payload", "")
-                audio = base64.b64decode(payload)
-                await stt.send(audio)
+                await stt.send(base64.b64decode(payload))
                 
             elif event == "stop":
                 logger.info("⏹️ Stream stopped")
+                # TODO: Zapisz call_log do bazy
                 break
                 
     except Exception as e:
         logger.error(f"❌ Error: {e}")
     finally:
         await stt.close()
+        if call_sid and call_sid in conversations:
+            del conversations[call_sid]
         logger.info("👋 Closed")
+
+
+# ==========================================
+# STARTUP - inicjalizacja bazy
+# ==========================================
+@app.on_event("startup")
+async def startup():
+    """Inicjalizuj tabele w bazie przy starcie"""
+    if not TURSO_DATABASE_URL:
+        logger.warning("⚠️ TURSO_DATABASE_URL not set - using fallback data")
+        return
+    
+    # Utwórz tabele jeśli nie istnieją
+    schema = """
+    CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone_number TEXT UNIQUE NOT NULL,
+        address TEXT,
+        email TEXT,
+        google_calendar_id TEXT,
+        timezone TEXT DEFAULT 'Europe/Warsaw',
+        greeting_text TEXT,
+        goodbye_text TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE TABLE IF NOT EXISTS working_hours (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        day_of_week INTEGER NOT NULL,
+        open_time TEXT,
+        close_time TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+    
+    CREATE TABLE IF NOT EXISTS services (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        duration_minutes INTEGER NOT NULL,
+        price REAL NOT NULL,
+        currency TEXT DEFAULT 'PLN',
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+    
+    CREATE TABLE IF NOT EXISTS staff (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT,
+        phone TEXT,
+        email TEXT,
+        google_calendar_id TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+    
+    CREATE TABLE IF NOT EXISTS bookings (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        service_id TEXT NOT NULL,
+        staff_id TEXT,
+        customer_name TEXT,
+        customer_phone TEXT NOT NULL,
+        booking_date TEXT NOT NULL,
+        booking_time TEXT NOT NULL,
+        duration_minutes INTEGER NOT NULL,
+        status TEXT DEFAULT 'confirmed',
+        notes TEXT,
+        call_sid TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+    
+    CREATE TABLE IF NOT EXISTS call_logs (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        call_sid TEXT NOT NULL,
+        caller_phone TEXT,
+        started_at TEXT,
+        ended_at TEXT,
+        duration_seconds INTEGER,
+        transcript TEXT,
+        intents_log TEXT,
+        booking_id TEXT,
+        status TEXT DEFAULT 'completed',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+    """
+    
+    # Wykonaj każde CREATE TABLE osobno
+    for statement in schema.split(";"):
+        statement = statement.strip()
+        if statement and "CREATE TABLE" in statement:
+            await db.execute(statement)
+    
+    logger.info("✅ Database tables initialized")
+
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8765))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8765)))
