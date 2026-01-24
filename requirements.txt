@@ -1,5 +1,5 @@
-# Voice AI v3.0 - Smart Turn Edition
-# ==================================
+# Voice AI v3.0 - FAL Edition (bez torch!)
+# =========================================
 
 # Web Framework
 fastapi>=0.100.0
@@ -20,25 +20,5 @@ python-dotenv>=1.0.0
 # Logging
 loguru>=0.7.0
 
-# Audio processing
+# Audio processing (bez torch!)
 numpy>=1.24.0
-audioop-lts>=0.2.1;python_version>="3.13"  # audioop for Python 3.13+
-
-# Silero VAD (Voice Activity Detection)
-# Używa ONNX dla szybkości
-torch>=2.0.0
-torchaudio>=2.0.0
-onnxruntime>=1.16.0
-
-# Smart Turn v3 (End of Utterance Detection)
-# Model pobierany z HuggingFace
-huggingface-hub>=0.19.0
-
-# Optional: dla lepszego audio processing
-# soundfile>=0.12.0
-
-# W folderze sekretarka-voice otwórz requirements.txt i dodaj:
-torch
-torchaudio
-onnxruntime
-huggingface-hub

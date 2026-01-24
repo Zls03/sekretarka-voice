@@ -1,22 +1,20 @@
 """
-VOICE AI - PRODUCTION ARCHITECTURE v3.0
-=======================================
-Profesjonalny turn-taking jak Retell/Vapi!
+VOICE AI - PRODUCTION ARCHITECTURE v3.0 (FAL Edition)
+=====================================================
+Smart Turn przez FAL API - bez torch lokalnie!
 
 Stack:
-- Deepgram Nova-3 (STT polski) + interim results
-- Silero VAD (Voice Activity Detection)
-- Smart Turn v3 (inteligentne wykrywanie końca wypowiedzi)
+- Deepgram Nova-3 (STT polski)
+- FAL Smart Turn API (hosted - bez torch!)
 - GPT-4o-mini (intencje + parsowanie)
 - ElevenLabs Flash 2.5 (TTS)
 - Twilio Media Streams
 - Turso/libSQL (baza danych)
 
-Architektura:
-1. Audio → Silero VAD (wykrywa mowę/ciszę)
-2. Gdy cisza > 200ms → Smart Turn analizuje audio
-3. Smart Turn decyduje: END (odpowiadaj) lub CONTINUE (czekaj)
-4. Jeśli END → Deepgram transkrypt → GPT → TTS
+Różnica od lokalnej wersji:
+- Smart Turn przez API FAL (~50-100ms)
+- Nie wymaga torch/torchaudio (~2GB mniej!)
+- Działa na Railway bez timeout
 """
 
 import os
@@ -26,12 +24,10 @@ import asyncio
 import aiohttp
 import httpx
 import numpy as np
-import io
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import deque
 from dotenv import load_dotenv
 from loguru import logger
 from fastapi import FastAPI, WebSocket, Request
@@ -50,13 +46,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+FAL_KEY = os.getenv("FAL_KEY", "")  # Klucz do FAL API
 
 # Smart Turn config
-SMART_TURN_THRESHOLD = 0.5  # Próg pewności że to koniec wypowiedzi (0-1)
-VAD_SILENCE_MS = 200  # Ile ms ciszy żeby uruchomić Smart Turn
-AUDIO_BUFFER_MAX_SECONDS = 8  # Max długość bufora audio dla Smart Turn
+SMART_TURN_THRESHOLD = 0.5
+SILENCE_THRESHOLD_MS = 600  # Ile ms ciszy żeby sprawdzić Smart Turn
+FALLBACK_TIMEOUT_MS = 2000  # Fallback jeśli Smart Turn niedostępny
 
-app = FastAPI(title="Voice AI Production v3.0 - Smart Turn")
+app = FastAPI(title="Voice AI v3.0 - FAL Smart Turn")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 oai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -119,263 +116,172 @@ db = TursoDB()
 
 
 # ==========================================
-# SILERO VAD - Voice Activity Detection
-# ==========================================
-class SileroVAD:
-    """
-    Wykrywa czy w audio jest mowa.
-    Używa ONNX dla szybkości (~1ms na chunk).
-    """
-    def __init__(self, sample_rate: int = 16000, threshold: float = 0.5):
-        self.sample_rate = sample_rate
-        self.threshold = threshold
-        self.model = None
-        self._h = None
-        self._c = None
-        self._initialized = False
-        
-    async def initialize(self):
-        """Lazy load modelu - tylko gdy potrzebny"""
-        if self._initialized:
-            return
-            
-        try:
-            import torch
-            torch.set_num_threads(1)
-            
-            self.model, utils = torch.hub.load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                onnx=True  # Używamy ONNX dla szybkości
-            )
-            self._initialized = True
-            logger.info("✅ Silero VAD załadowany (ONNX)")
-        except Exception as e:
-            logger.warning(f"Silero VAD niedostępny: {e}")
-            self._initialized = False
-            
-    def detect(self, audio_chunk: np.ndarray) -> float:
-        """
-        Zwraca prawdopodobieństwo że chunk zawiera mowę (0-1).
-        Audio musi być 16kHz mono float32.
-        """
-        if not self._initialized or self.model is None:
-            return 0.5  # Fallback - zakładamy że jest mowa
-            
-        try:
-            import torch
-            # Konwertuj do tensora
-            audio_tensor = torch.from_numpy(audio_chunk).float()
-            
-            # Wywołaj model
-            speech_prob = self.model(audio_tensor, self.sample_rate).item()
-            return speech_prob
-        except Exception as e:
-            logger.error(f"VAD error: {e}")
-            return 0.5
-            
-    def is_speech(self, audio_chunk: np.ndarray) -> bool:
-        """Czy chunk zawiera mowę?"""
-        return self.detect(audio_chunk) >= self.threshold
-        
-    def reset(self):
-        """Reset stanu między rozmowami"""
-        if self.model is not None:
-            try:
-                self.model.reset_states()
-            except:
-                pass
-
-
-# ==========================================
-# SMART TURN v3 - Inteligentne wykrywanie końca wypowiedzi
-# ==========================================
-class SmartTurn:
-    """
-    Analizuje audio i decyduje czy użytkownik skończył mówić.
-    Używa modelu ONNX z pipecat-ai/smart-turn-v3.
-    
-    Wspiera 23 języki w tym POLSKI!
-    """
-    def __init__(self, threshold: float = 0.5):
-        self.threshold = threshold
-        self.session = None
-        self.model_loaded = False
-        
-    async def initialize(self):
-        """Lazy load modelu Smart Turn"""
-        if self.model_loaded:
-            return
-            
-        try:
-            import onnxruntime as ort
-            from huggingface_hub import hf_hub_download
-            
-            # Pobierz model z HuggingFace
-            model_path = hf_hub_download(
-                repo_id="pipecat-ai/smart-turn-v3",
-                filename="smart-turn-v3.1-cpu.onnx"
-            )
-            
-            # Załaduj sesję ONNX
-            sess_options = ort.SessionOptions()
-            sess_options.intra_op_num_threads = 1
-            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            
-            self.session = ort.InferenceSession(
-                model_path,
-                sess_options=sess_options,
-                providers=['CPUExecutionProvider']
-            )
-            
-            self.model_loaded = True
-            logger.info("✅ Smart Turn v3 załadowany (ONNX)")
-        except Exception as e:
-            logger.warning(f"Smart Turn niedostępny: {e}")
-            self.model_loaded = False
-            
-    def predict(self, audio_16khz: np.ndarray) -> Dict[str, Any]:
-        """
-        Analizuje audio i zwraca czy to koniec wypowiedzi.
-        
-        Args:
-            audio_16khz: Audio 16kHz mono float32, max 8 sekund
-            
-        Returns:
-            {
-                "end_of_turn": bool,
-                "probability": float (0-1),
-                "inference_time_ms": float
-            }
-        """
-        if not self.model_loaded or self.session is None:
-            # Fallback - zakładaj że to koniec po 800ms ciszy
-            return {"end_of_turn": True, "probability": 0.5, "inference_time_ms": 0}
-            
-        try:
-            import time
-            start = time.perf_counter()
-            
-            # Przygotuj audio - max 8 sekund (128000 samples przy 16kHz)
-            max_samples = 16000 * 8
-            if len(audio_16khz) > max_samples:
-                # Weź ostatnie 8 sekund
-                audio_16khz = audio_16khz[-max_samples:]
-            
-            # Padding jeśli za krótkie (model oczekuje pewnej długości)
-            if len(audio_16khz) < 16000:  # Min 1 sekunda
-                padding = np.zeros(16000 - len(audio_16khz), dtype=np.float32)
-                audio_16khz = np.concatenate([padding, audio_16khz])
-            
-            # Przygotuj input dla ONNX
-            # Model oczekuje audio w formacie [1, samples]
-            audio_input = audio_16khz.reshape(1, -1).astype(np.float32)
-            
-            # Inference
-            outputs = self.session.run(None, {"audio": audio_input})
-            
-            # Output to prawdopodobieństwo końca wypowiedzi
-            probability = float(outputs[0][0])
-            
-            inference_time = (time.perf_counter() - start) * 1000
-            
-            return {
-                "end_of_turn": probability >= self.threshold,
-                "probability": probability,
-                "inference_time_ms": inference_time
-            }
-        except Exception as e:
-            logger.error(f"Smart Turn error: {e}")
-            return {"end_of_turn": True, "probability": 0.5, "inference_time_ms": 0}
-
-
-# ==========================================
-# AUDIO BUFFER - Zbiera audio do analizy
+# AUDIO BUFFER
 # ==========================================
 class AudioBuffer:
-    """
-    Bufor audio dla Smart Turn.
-    Konwertuje mulaw 8kHz (Twilio) → PCM 16kHz (Smart Turn).
-    """
+    """Bufor audio - konwertuje mulaw 8kHz → base64 dla FAL API"""
+    
     def __init__(self, max_seconds: float = 8.0):
-        self.max_samples = int(16000 * max_seconds)  # 16kHz
-        self.buffer = np.array([], dtype=np.float32)
-        self.mulaw_buffer = bytearray()  # Surowe dane z Twilio
+        self.max_bytes = int(8000 * max_seconds)  # 8kHz mulaw
+        self.buffer = bytearray()
         
-    def add_mulaw(self, data: bytes):
-        """Dodaj mulaw audio z Twilio (8kHz)"""
-        self.mulaw_buffer.extend(data)
-        
-    def get_audio_16khz(self) -> np.ndarray:
-        """
-        Konwertuj bufor mulaw 8kHz → PCM float32 16kHz.
-        """
-        if not self.mulaw_buffer:
-            return np.array([], dtype=np.float32)
+    def add(self, data: bytes):
+        """Dodaj audio"""
+        self.buffer.extend(data)
+        # Ogranicz do max
+        if len(self.buffer) > self.max_bytes:
+            self.buffer = self.buffer[-self.max_bytes:]
+            
+    def get_wav_base64(self) -> str:
+        """Konwertuj do WAV base64 dla FAL API"""
+        if not self.buffer:
+            return ""
             
         try:
-            # Mulaw → PCM 16-bit
             import audioop
-            pcm_8khz = audioop.ulaw2lin(bytes(self.mulaw_buffer), 2)
+            import struct
+            import io
             
-            # PCM bytes → numpy int16
-            audio_int16 = np.frombuffer(pcm_8khz, dtype=np.int16)
+            # Mulaw → PCM 16-bit
+            pcm_8khz = audioop.ulaw2lin(bytes(self.buffer), 2)
             
-            # Resample 8kHz → 16kHz (proste podwojenie próbek)
-            audio_16khz = np.repeat(audio_int16, 2)
+            # Resample 8kHz → 16kHz (Smart Turn wymaga 16kHz)
+            pcm_16khz = audioop.ratecv(pcm_8khz, 2, 1, 8000, 16000, None)[0]
             
-            # Normalize do float32 (-1 to 1)
-            audio_float = audio_16khz.astype(np.float32) / 32768.0
+            # Zbuduj WAV header
+            wav_buffer = io.BytesIO()
             
-            # Ogranicz do max_samples
-            if len(audio_float) > self.max_samples:
-                audio_float = audio_float[-self.max_samples:]
-                
-            return audio_float
+            # WAV header
+            num_channels = 1
+            sample_rate = 16000
+            bits_per_sample = 16
+            byte_rate = sample_rate * num_channels * bits_per_sample // 8
+            block_align = num_channels * bits_per_sample // 8
+            data_size = len(pcm_16khz)
+            
+            wav_buffer.write(b'RIFF')
+            wav_buffer.write(struct.pack('<I', 36 + data_size))
+            wav_buffer.write(b'WAVE')
+            wav_buffer.write(b'fmt ')
+            wav_buffer.write(struct.pack('<I', 16))  # Subchunk1Size
+            wav_buffer.write(struct.pack('<H', 1))   # AudioFormat (PCM)
+            wav_buffer.write(struct.pack('<H', num_channels))
+            wav_buffer.write(struct.pack('<I', sample_rate))
+            wav_buffer.write(struct.pack('<I', byte_rate))
+            wav_buffer.write(struct.pack('<H', block_align))
+            wav_buffer.write(struct.pack('<H', bits_per_sample))
+            wav_buffer.write(b'data')
+            wav_buffer.write(struct.pack('<I', data_size))
+            wav_buffer.write(pcm_16khz)
+            
+            # Base64
+            return base64.b64encode(wav_buffer.getvalue()).decode('utf-8')
         except Exception as e:
             logger.error(f"Audio conversion error: {e}")
-            return np.array([], dtype=np.float32)
+            return ""
             
     def clear(self):
-        """Wyczyść bufor"""
-        self.buffer = np.array([], dtype=np.float32)
-        self.mulaw_buffer = bytearray()
+        self.buffer = bytearray()
         
     def duration_seconds(self) -> float:
-        """Długość audio w sekundach"""
-        return len(self.mulaw_buffer) / 8000.0  # mulaw 8kHz
+        return len(self.buffer) / 8000.0
 
 
 # ==========================================
-# TRANSCRIPT BUFFER - Łączy fragmenty transkrypcji
+# FAL SMART TURN API
+# ==========================================
+class FalSmartTurn:
+    """
+    Smart Turn przez FAL API.
+    Nie wymaga torch lokalnie!
+    
+    Docs: https://fal.ai/models/fal-ai/smart-turn/api
+    """
+    
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+        self.api_url = "https://fal.run/fal-ai/smart-turn"
+        
+    async def predict(self, audio_base64: str) -> Dict[str, Any]:
+        """
+        Sprawdź czy to koniec wypowiedzi.
+        
+        Args:
+            audio_base64: Audio WAV jako base64
+            
+        Returns:
+            {"end_of_turn": bool, "probability": float}
+        """
+        if not FAL_KEY:
+            logger.warning("FAL_KEY not set - using fallback")
+            return {"end_of_turn": True, "probability": 0.5}
+            
+        if not audio_base64:
+            return {"end_of_turn": True, "probability": 0.5}
+            
+        try:
+            # Utwórz data URL
+            audio_url = f"data:audio/wav;base64,{audio_base64}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url,
+                    headers={
+                        "Authorization": f"Key {FAL_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={"audio_url": audio_url},
+                    timeout=aiohttp.ClientTimeout(total=2.0)  # Max 2s
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        probability = data.get("probability", 0.5)
+                        
+                        logger.debug(f"🧠 FAL Smart Turn: prob={probability:.2f}")
+                        
+                        return {
+                            "end_of_turn": probability >= self.threshold,
+                            "probability": probability
+                        }
+                    else:
+                        error = await resp.text()
+                        logger.error(f"FAL API error: {resp.status} - {error}")
+                        return {"end_of_turn": True, "probability": 0.5}
+                        
+        except asyncio.TimeoutError:
+            logger.warning("FAL API timeout - using fallback")
+            return {"end_of_turn": True, "probability": 0.5}
+        except Exception as e:
+            logger.error(f"FAL Smart Turn error: {e}")
+            return {"end_of_turn": True, "probability": 0.5}
+
+
+# ==========================================
+# TRANSCRIPT BUFFER
 # ==========================================
 class TranscriptBuffer:
-    """
-    Buforuje fragmenty transkrypcji z Deepgram.
-    Łączy je w pełne wypowiedzi.
-    """
+    """Buforuje fragmenty transkrypcji"""
+    
     def __init__(self):
         self.fragments: List[str] = []
         self.last_update = datetime.now()
         
     def add(self, text: str):
-        """Dodaj fragment transkrypcji"""
         if text.strip():
             self.fragments.append(text.strip())
             self.last_update = datetime.now()
             
-    def get_full_text(self) -> str:
-        """Zwróć połączony tekst"""
+    def get_text(self) -> str:
         return " ".join(self.fragments)
         
     def clear(self):
-        """Wyczyść bufor"""
         self.fragments = []
         
     def age_ms(self) -> float:
-        """Ile ms od ostatniej aktualizacji"""
         return (datetime.now() - self.last_update).total_seconds() * 1000
+        
+    def has_content(self) -> bool:
+        return len(self.fragments) > 0
 
 
 # ==========================================
@@ -400,19 +306,10 @@ class ConversationContext:
     selected_time: Optional[str] = None
     customer_name: Optional[str] = None
     transcript: List[Dict] = field(default_factory=list)
-    
-    # Audio buffers
-    audio_buffer: AudioBuffer = field(default_factory=AudioBuffer)
-    transcript_buffer: TranscriptBuffer = field(default_factory=TranscriptBuffer)
-    
-    # Turn state
-    is_speaking: bool = False  # Czy user aktualnie mówi
-    last_vad_speech: datetime = field(default_factory=datetime.now)
-    waiting_for_turn_end: bool = False
 
 
 # ==========================================
-# GPT INTENT DETECTION (bez zmian)
+# GPT INTENT DETECTION
 # ==========================================
 def build_gpt_prompt(tenant: Dict) -> str:
     today = datetime.now()
@@ -430,16 +327,16 @@ DOSTĘPNE USŁUGI: {services_list}
 Twoim zadaniem jest wyłącznie parsowanie intencji i danych. Odpowiadaj TYLKO w formacie JSON.
 
 INTENCJE:
-- "greeting" - przywitanie (dzień dobry, cześć, halo)
+- "greeting" - przywitanie
 - "ask_services" - pytanie o usługi/cennik
 - "ask_hours" - pytanie o godziny otwarcia
-- "book" - chęć rezerwacji (chcę się umówić, rezerwacja)
+- "book" - chęć rezerwacji
 - "select_service" - wybór usługi
-- "select_date" - wybór daty (jutro, w poniedziałek, 25 stycznia)
-- "select_time" - wybór godziny (o 10, o dziesiątej, rano)
+- "select_date" - wybór daty
+- "select_time" - wybór godziny
 - "select_date_and_time" - wybór daty i godziny razem
-- "confirm" - potwierdzenie (tak, zgadza się, potwierdzam)
-- "cancel" - anulowanie/rezygnacja
+- "confirm" - potwierdzenie
+- "cancel" - anulowanie
 - "other" - inne
 
 PARSOWANIE DAT (względem {today.strftime('%Y-%m-%d')}):
@@ -453,15 +350,14 @@ PARSOWANIE GODZIN:
 - "o wpół do jedenastej" → "10:30"
 - "rano" → "09:00"
 - "po południu" → "14:00"
-- "wieczorem" → "17:00"
 
 ODPOWIEDŹ (tylko JSON):
 {{
   "intent": "nazwa_intencji",
   "service": "nazwa usługi lub null",
-  "date_raw": "oryginalne słowa o dacie lub null",
+  "date_raw": "oryginalne słowa lub null",
   "date_parsed": "YYYY-MM-DD lub null",
-  "time_raw": "oryginalne słowa o godzinie lub null",
+  "time_raw": "oryginalne słowa lub null",
   "time_parsed": "HH:MM lub null",
   "name": "imię klienta lub null"
 }}"""
@@ -470,14 +366,13 @@ ODPOWIEDŹ (tylko JSON):
 async def detect_intent(text: str, tenant: Dict, context: ConversationContext) -> Dict:
     """Wykryj intencję używając GPT"""
     try:
-        # Dodaj kontekst ostatnich wymian
         history = " | ".join([f"{t['role']}: {t['text']}" for t in context.transcript[-6:]])
         
         response = oai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": build_gpt_prompt(tenant)},
-                {"role": "user", "content": f"Kontekst rozmowy: {history}\n\nNowa wypowiedź do sparsowania: \"{text}\""}
+                {"role": "user", "content": f"Kontekst: {history}\n\nNowa wypowiedź: \"{text}\""}
             ],
             temperature=0.1,
             max_tokens=200
@@ -485,7 +380,6 @@ async def detect_intent(text: str, tenant: Dict, context: ConversationContext) -
         
         content = response.choices[0].message.content.strip()
         
-        # Wyciągnij JSON
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
@@ -500,10 +394,9 @@ async def detect_intent(text: str, tenant: Dict, context: ConversationContext) -
 
 
 # ==========================================
-# AVAILABILITY & BOOKING (bez zmian)
+# AVAILABILITY & BOOKING
 # ==========================================
 async def get_available_slots(tenant_id: str, date: str, duration: int) -> List[str]:
-    """Pobierz dostępne sloty na dany dzień"""
     try:
         date_obj = datetime.strptime(date, "%Y-%m-%d")
         day_of_week = date_obj.weekday()
@@ -521,7 +414,6 @@ async def get_available_slots(tenant_id: str, date: str, duration: int) -> List[
         
         logger.info(f"📅 Godziny pracy: {open_time} - {close_time}")
         
-        # Generuj sloty co 30 min
         slots = []
         current = datetime.strptime(open_time, "%H:%M")
         end = datetime.strptime(close_time, "%H:%M") - timedelta(minutes=duration)
@@ -531,14 +423,13 @@ async def get_available_slots(tenant_id: str, date: str, duration: int) -> List[
             current += timedelta(minutes=30)
             
         logger.info(f"📅 Dostępne sloty: {slots}")
-        return slots[:6]  # Max 6 propozycji
+        return slots[:6]
     except Exception as e:
         logger.error(f"Slots error: {e}")
         return []
 
 
 async def create_booking(tenant_id: str, service: Dict, date: str, time: str, customer_name: str = None) -> str:
-    """Utwórz rezerwację w bazie"""
     booking_id = f"book_{int(datetime.now().timestamp())}"
     
     await db.execute(
@@ -556,7 +447,6 @@ async def create_booking(tenant_id: str, service: Dict, date: str, time: str, cu
 
 async def save_call_log(tenant_id: str, caller: str, called: str, started_at: datetime, 
                         transcript: List[Dict], booking_id: str = None):
-    """Zapisz log rozmowy"""
     ended_at = datetime.now()
     duration_seconds = int((ended_at - started_at).total_seconds())
     
@@ -569,14 +459,13 @@ async def save_call_log(tenant_id: str, caller: str, called: str, started_at: da
          json.dumps(transcript, ensure_ascii=False), booking_id, datetime.now().isoformat()]
     )
     
-    logger.info(f"📊 Call logged: {duration_seconds}s ({duration_seconds//60}m {duration_seconds%60}s)")
+    logger.info(f"📊 Call logged: {duration_seconds}s")
 
 
 # ==========================================
-# POLISH FORMATTING (bez zmian)
+# POLISH FORMATTING
 # ==========================================
 def format_price_polish(price: int) -> str:
-    """Formatuj cenę po polsku"""
     if price == 0:
         return "bezpłatnie"
     
@@ -614,7 +503,6 @@ def format_price_polish(price: int) -> str:
 
 
 def format_time_polish(time_str: str) -> str:
-    """Formatuj godzinę po polsku"""
     hours_words = {
         "08": "ósmej", "09": "dziewiątej", "10": "dziesiątej", "11": "jedenastej",
         "12": "dwunastej", "13": "trzynastej", "14": "czternastej", "15": "piętnastej",
@@ -635,7 +523,6 @@ def format_time_polish(time_str: str) -> str:
 
 
 def format_date_polish(date_str: str) -> str:
-    """Formatuj datę po polsku"""
     today = datetime.now().date()
     date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
     
@@ -653,10 +540,9 @@ def format_date_polish(date_str: str) -> str:
 
 
 # ==========================================
-# ELEVENLABS TTS (bez zmian)
+# ELEVENLABS TTS
 # ==========================================
 async def text_to_speech(text: str) -> bytes:
-    """Konwertuj tekst na mowę przez ElevenLabs"""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -688,35 +574,28 @@ async def text_to_speech(text: str) -> bytes:
 
 
 # ==========================================
-# DEEPGRAM STT - Nova-3 z interim results
+# DEEPGRAM STT
 # ==========================================
 class DeepgramSTT:
-    """
-    Deepgram Nova-3 dla polskiego.
-    Używa interim_results=true żeby mieć szybki feedback.
-    """
-    def __init__(self, on_transcript, on_interim=None, keyterms: List[str] = None):
-        self.on_transcript = on_transcript  # Finalne transkrypcje
-        self.on_interim = on_interim  # Interim (do VAD)
+    def __init__(self, on_transcript, keyterms: List[str] = None):
+        self.on_transcript = on_transcript
         self.ws = None
         self.session = None
         self.keyterms = keyterms or []
         
     async def connect(self):
-        # Nova-3 dla polskiego z interim results
         base_url = (
             "wss://api.deepgram.com/v1/listen"
             "?model=nova-3"
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
-            "&interim_results=true"  # Włączone dla szybszego feedbacku
-            "&endpointing=false"  # Wyłączone - Smart Turn zadecyduje
+            "&interim_results=false"
+            "&endpointing=false"  # Smart Turn zadecyduje
             "&punctuate=true"
-            "&utterance_end_ms=1500"  # Backup timeout
+            "&utterance_end_ms=1500"
         )
         
-        # Dodaj keyterms
         if self.keyterms:
             import urllib.parse
             for kt in self.keyterms[:10]:
@@ -729,21 +608,20 @@ class DeepgramSTT:
                 base_url,
                 headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
             )
-            logger.info(f"🎤 Deepgram Nova-3 connected (interim=true, endpointing=false)")
+            logger.info(f"🎤 Deepgram Nova-3 connected")
             asyncio.create_task(self._listen())
         except Exception as e:
             logger.error(f"Deepgram connect error: {e}")
             await self._connect_fallback()
             
     async def _connect_fallback(self):
-        """Fallback do Nova-2 z prostym endpointing"""
         fallback_url = (
             "wss://api.deepgram.com/v1/listen"
             "?model=nova-2-general"
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
-            "&endpointing=800"  # Dłuższy timeout jako fallback
+            "&endpointing=800"
             "&interim_results=false"
         )
         
@@ -764,23 +642,11 @@ class DeepgramSTT:
             async for msg in self.ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
-                    
                     if data.get("type") == "Results":
                         transcript = data.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
-                        is_final = data.get("is_final", False)
-                        
-                        if transcript:
-                            if is_final:
-                                logger.info(f"📝 STT (final): {transcript}")
-                                await self.on_transcript(transcript)
-                            elif self.on_interim:
-                                # Interim - tylko do informacji że user mówi
-                                await self.on_interim(transcript)
-                                
-                    elif data.get("type") == "UtteranceEnd":
-                        # Deepgram wykrył koniec wypowiedzi (backup)
-                        logger.debug("📝 UtteranceEnd from Deepgram")
-                        
+                        if transcript and data.get("is_final"):
+                            logger.info(f"📝 STT: {transcript}")
+                            await self.on_transcript(transcript)
         except Exception as e:
             logger.error(f"Deepgram error: {e}")
             
@@ -796,7 +662,7 @@ class DeepgramSTT:
 
 
 # ==========================================
-# TENANT (bez zmian)
+# TENANT
 # ==========================================
 async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
     phone_clean = phone.replace(" ", "").replace("-", "")
@@ -839,14 +705,12 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
 
 
 # ==========================================
-# RESPONSE GENERATOR (bez zmian)
+# RESPONSE GENERATOR
 # ==========================================
 async def generate_response(intent_data: Dict, tenant: Dict, context: ConversationContext) -> str:
-    """Generuj odpowiedź na podstawie intencji i stanu"""
-    
     intent = intent_data.get("intent", "other")
     
-    # Aktualizuj kontekst na podstawie sparsowanych danych
+    # Aktualizuj kontekst
     if intent_data.get("service"):
         service_name = intent_data["service"].lower()
         for s in tenant.get("services", []):
@@ -886,26 +750,21 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
     
     # Chęć rezerwacji
     if intent == "book":
-        # Sprawdź co już mamy
         if context.selected_service and context.selected_date and context.selected_time:
-            # Mamy wszystko - potwierdź
             context.state = State.CONFIRM_BOOKING
             return await _confirm_booking_response(context, tenant)
         elif context.selected_service and context.selected_date:
-            # Brak godziny
             context.state = State.ASK_TIME
             slots = await get_available_slots(tenant["id"], context.selected_date, 
                                              context.selected_service.get("duration_minutes", 30))
             if slots:
                 slots_text = ", ".join([format_time_polish(s) for s in slots[:4]])
-                return f"O której godzinie? Dostępne terminy: {slots_text}."
-            return "O której godzinie chciałbyś się umówić?"
+                return f"O której godzinie? Dostępne: {slots_text}."
+            return "O której godzinie?"
         elif context.selected_service:
-            # Brak daty
             context.state = State.ASK_DATE
             return "Na kiedy chcesz się umówić?"
         else:
-            # Brak usługi
             context.state = State.ASK_SERVICE
             services = ", ".join([s['name'] for s in tenant.get("services", [])])
             return f"Chętnie umówię wizytę. Na jaką usługę? Mamy: {services}."
@@ -923,8 +782,8 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
                 return f"Świetnie, {context.selected_service['name']} za {price}. O której godzinie?"
             else:
                 context.state = State.ASK_DATE
-                return f"Świetnie, {context.selected_service['name']} za {price}. Na kiedy chcesz się umówić?"
-        return "Przepraszam, nie rozpoznałam usługi. Jaką usługę wybierasz?"
+                return f"Świetnie, {context.selected_service['name']} za {price}. Na kiedy?"
+        return "Przepraszam, nie rozpoznałam usługi."
     
     # Wybór daty
     if intent == "select_date":
@@ -938,15 +797,14 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
                                                  context.selected_service.get("duration_minutes", 30))
                 if slots:
                     slots_text = ", ".join([format_time_polish(s) for s in slots[:4]])
-                    return f"O której godzinie? Dostępne: {slots_text}."
+                    return f"O której? Dostępne: {slots_text}."
                 return "O której godzinie?"
-        return "Przepraszam, nie zrozumiałam daty. Na kiedy chcesz się umówić?"
+        return "Nie zrozumiałam daty. Na kiedy?"
     
     # Wybór godziny
     if intent == "select_time":
         if context.selected_time:
             if context.selected_service and context.selected_date:
-                # Sprawdź dostępność
                 slots = await get_available_slots(tenant["id"], context.selected_date,
                                                  context.selected_service.get("duration_minutes", 30))
                 if context.selected_time in slots:
@@ -954,10 +812,10 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
                     return await _confirm_booking_response(context, tenant)
                 else:
                     slots_text = ", ".join([format_time_polish(s) for s in slots[:4]])
-                    return f"Niestety ta godzina jest zajęta. Dostępne terminy: {slots_text}."
-        return "Przepraszam, nie zrozumiałam godziny. O której chcesz się umówić?"
+                    return f"Ta godzina zajęta. Dostępne: {slots_text}."
+        return "Nie zrozumiałam godziny."
     
-    # Wybór daty i godziny razem
+    # Wybór daty i godziny
     if intent == "select_date_and_time":
         if context.selected_date and context.selected_time:
             if context.selected_service:
@@ -968,12 +826,12 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
                     return await _confirm_booking_response(context, tenant)
                 else:
                     slots_text = ", ".join([format_time_polish(s) for s in slots[:4]])
-                    return f"Niestety ta godzina jest zajęta. Dostępne: {slots_text}."
+                    return f"Ta godzina zajęta. Dostępne: {slots_text}."
             else:
                 context.state = State.ASK_SERVICE
                 services = ", ".join([s['name'] for s in tenant.get("services", [])])
                 return f"Na jaką usługę? Mamy: {services}."
-        return "Przepraszam, nie zrozumiałam. Podaj datę i godzinę."
+        return "Podaj datę i godzinę."
     
     # Potwierdzenie
     if intent == "confirm" and context.state == State.CONFIRM_BOOKING:
@@ -990,7 +848,7 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
             date_text = format_date_polish(context.selected_date)
             time_text = format_time_polish(context.selected_time)
             
-            return f"Gotowe! {context.selected_service['name']} zarezerwowana na {date_text} o {time_text}. Dziękuję i do zobaczenia!"
+            return f"Gotowe! {context.selected_service['name']} na {date_text} o {time_text}. Do zobaczenia!"
     
     # Anulowanie
     if intent == "cancel":
@@ -998,78 +856,15 @@ async def generate_response(intent_data: Dict, tenant: Dict, context: Conversati
         context.selected_service = None
         context.selected_date = None
         context.selected_time = None
-        return "Rozumiem, anuluję. W czym jeszcze mogę pomóc?"
+        return "Anuluję. W czym mogę pomóc?"
     
-    # Domyślna odpowiedź
-    return "Jak mogę pomóc? Mogę umówić wizytę, podać godziny otwarcia lub cennik."
+    return "Jak mogę pomóc? Mogę umówić wizytę lub podać cennik."
 
 
 async def _confirm_booking_response(context: ConversationContext, tenant: Dict) -> str:
-    """Generuj potwierdzenie rezerwacji"""
     date_text = format_date_polish(context.selected_date)
     time_text = format_time_polish(context.selected_time)
-    
     return f"Rezerwuję {context.selected_service['name']} na {date_text} o {time_text}. Potwierdzasz?"
-
-
-# ==========================================
-# TURN DETECTOR - Główna logika turn-taking
-# ==========================================
-class TurnDetector:
-    """
-    Inteligentny detektor końca wypowiedzi.
-    Kombinuje Silero VAD + Smart Turn + buforowanie.
-    """
-    def __init__(self):
-        self.vad = SileroVAD()
-        self.smart_turn = SmartTurn(threshold=SMART_TURN_THRESHOLD)
-        self.initialized = False
-        
-    async def initialize(self):
-        """Zainicjalizuj modele"""
-        if self.initialized:
-            return
-            
-        await self.vad.initialize()
-        await self.smart_turn.initialize()
-        self.initialized = True
-        
-    async def should_respond(self, audio_buffer: AudioBuffer, silence_ms: float) -> bool:
-        """
-        Czy bot powinien odpowiedzieć?
-        
-        Args:
-            audio_buffer: Bufor audio z rozmowy
-            silence_ms: Ile ms ciszy od ostatniej mowy
-            
-        Returns:
-            True jeśli powinien odpowiedzieć, False jeśli czekać
-        """
-        # Jeśli za krótka cisza - nie sprawdzaj
-        if silence_ms < VAD_SILENCE_MS:
-            return False
-            
-        # Jeśli brak audio - nie odpowiadaj
-        if audio_buffer.duration_seconds() < 0.3:
-            return False
-            
-        # Pobierz audio 16kHz
-        audio_16khz = audio_buffer.get_audio_16khz()
-        
-        if len(audio_16khz) < 4800:  # Min 0.3s przy 16kHz
-            return False
-            
-        # Uruchom Smart Turn
-        result = self.smart_turn.predict(audio_16khz)
-        
-        logger.debug(f"🧠 Smart Turn: prob={result['probability']:.2f}, "
-                    f"end={result['end_of_turn']}, time={result['inference_time_ms']:.1f}ms")
-        
-        return result["end_of_turn"]
-
-
-# Global turn detector
-turn_detector = TurnDetector()
 
 
 # ==========================================
@@ -1077,7 +872,6 @@ turn_detector = TurnDetector()
 # ==========================================
 @app.post("/twilio/incoming")
 async def incoming(request: Request):
-    """Obsługa połączeń przychodzących z Twilio"""
     form = await request.form()
     caller = form.get("From", "unknown")
     called = form.get("To", "unknown")
@@ -1095,7 +889,6 @@ async def incoming(request: Request):
     
     logger.info(f"✅ Tenant: {tenant['business_name']}")
     
-    # Pobierz host z request
     host = request.headers.get("host", request.url.hostname)
     ws_url = f"wss://{host}/ws?caller={caller}&called={called}"
     
@@ -1111,7 +904,7 @@ async def incoming(request: Request):
 
 @app.websocket("/ws")
 async def websocket_handler(websocket: WebSocket):
-    """WebSocket handler dla Twilio Media Stream z Smart Turn"""
+    """WebSocket handler z FAL Smart Turn"""
     await websocket.accept()
     
     caller = websocket.query_params.get("caller", "unknown")
@@ -1119,14 +912,10 @@ async def websocket_handler(websocket: WebSocket):
     
     logger.info(f"🔌 WebSocket connected")
     
-    # Pobierz tenant
     tenant = await get_tenant_by_phone(called)
     if not tenant:
         await websocket.close()
         return
-    
-    # Inicjalizuj turn detector
-    await turn_detector.initialize()
     
     # Kontekst rozmowy
     context = ConversationContext()
@@ -1134,35 +923,36 @@ async def websocket_handler(websocket: WebSocket):
     started_at = datetime.now()
     booking_id = None
     
-    # Bufor transkrypcji
-    pending_transcripts: List[str] = []
-    last_speech_time = datetime.now()
-    processing_response = False
+    # Bufory
+    audio_buffer = AudioBuffer()
+    transcript_buffer = TranscriptBuffer()
+    
+    # Smart Turn
+    smart_turn = FalSmartTurn(threshold=SMART_TURN_THRESHOLD)
+    
+    # Flagi
+    processing = False
     
     async def process_turn():
-        """Przetwórz zakończoną turę użytkownika"""
-        nonlocal processing_response, booking_id
+        """Przetwórz zakończoną turę"""
+        nonlocal processing, booking_id
         
-        if processing_response:
+        if processing or not transcript_buffer.has_content():
             return
             
-        # Połącz wszystkie transkrypcje
-        full_text = " ".join(pending_transcripts)
-        pending_transcripts.clear()
-        
-        if not full_text.strip():
-            return
-            
-        processing_response = True
+        processing = True
         
         try:
-            # Zapisz w historii
+            full_text = transcript_buffer.get_text()
+            transcript_buffer.clear()
+            
+            if not full_text.strip():
+                return
+            
             context.transcript.append({"role": "user", "text": full_text})
             
-            # Wykryj intencję
+            # Intent + Response
             intent_data = await detect_intent(full_text, tenant, context)
-            
-            # Generuj odpowiedź
             response = await generate_response(intent_data, tenant, context)
             
             logger.info(f"💬 {response}")
@@ -1172,8 +962,7 @@ async def websocket_handler(websocket: WebSocket):
             audio = await text_to_speech(response)
             
             if audio and stream_sid:
-                # Wyślij audio do Twilio
-                chunk_size = 8000  # ~1 sekunda
+                chunk_size = 8000
                 for i in range(0, len(audio), chunk_size):
                     chunk = audio[i:i+chunk_size]
                     payload = base64.b64encode(chunk).decode("utf-8")
@@ -1184,39 +973,23 @@ async def websocket_handler(websocket: WebSocket):
                     })
                     await asyncio.sleep(0.05)
                     
-            # Sprawdź czy koniec rozmowy
             if context.state == State.BOOKING_DONE:
                 booking_id = f"book_{int(datetime.now().timestamp())}"
                 
-            # Wyczyść bufor audio
-            context.audio_buffer.clear()
+            audio_buffer.clear()
             
         finally:
-            processing_response = False
+            processing = False
     
     async def on_transcript(text: str):
-        """Callback dla finalnej transkrypcji z Deepgram"""
-        nonlocal last_speech_time
-        
+        """Callback dla transkrypcji"""
         if text.strip():
-            pending_transcripts.append(text.strip())
-            last_speech_time = datetime.now()
-            
-            # Sprawdź czy Smart Turn mówi że to koniec
-            if await turn_detector.should_respond(context.audio_buffer, 
-                                                   (datetime.now() - last_speech_time).total_seconds() * 1000):
-                await process_turn()
+            transcript_buffer.add(text.strip())
     
-    async def on_interim(text: str):
-        """Callback dla interim transkrypcji - tylko update czasu"""
-        nonlocal last_speech_time
-        if text.strip():
-            last_speech_time = datetime.now()
-    
-    # Inicjalizuj Deepgram
+    # Deepgram
     keyterms = [s['name'] for s in tenant.get('services', [])]
     keyterms.extend(["rezerwacja", "umówić", "wizyta", "termin"])
-    stt = DeepgramSTT(on_transcript, on_interim, keyterms)
+    stt = DeepgramSTT(on_transcript, keyterms)
     await stt.connect()
     
     # Przywitanie
@@ -1224,25 +997,37 @@ async def websocket_handler(websocket: WebSocket):
     context.transcript.append({"role": "assistant", "text": greeting})
     greeting_audio = await text_to_speech(greeting)
     
-    # Task do sprawdzania ciszy
-    async def silence_checker():
-        """Sprawdza czy minęło dość ciszy żeby odpowiedzieć"""
+    # Task sprawdzający ciszę
+    async def turn_checker():
+        """Sprawdza czy użytkownik skończył mówić"""
         while True:
-            await asyncio.sleep(0.1)  # Sprawdzaj co 100ms
+            await asyncio.sleep(0.15)  # Co 150ms
             
-            if pending_transcripts and not processing_response:
-                silence_ms = (datetime.now() - last_speech_time).total_seconds() * 1000
+            if transcript_buffer.has_content() and not processing:
+                silence_ms = transcript_buffer.age_ms()
                 
-                # Jeśli > 800ms ciszy i są transkrypcje - sprawdź Smart Turn
-                if silence_ms > 800:
-                    if await turn_detector.should_respond(context.audio_buffer, silence_ms):
-                        await process_turn()
-                # Fallback: jeśli > 2000ms ciszy - odpowiedz mimo wszystko
-                elif silence_ms > 2000 and pending_transcripts:
-                    logger.debug("⏰ Fallback timeout - responding")
-                    await process_turn()
+                # Jeśli dość ciszy - sprawdź Smart Turn
+                if silence_ms >= SILENCE_THRESHOLD_MS:
+                    # Użyj FAL Smart Turn
+                    if FAL_KEY and audio_buffer.duration_seconds() > 0.5:
+                        wav_b64 = audio_buffer.get_wav_base64()
+                        if wav_b64:
+                            result = await smart_turn.predict(wav_b64)
+                            if result["end_of_turn"]:
+                                logger.debug(f"🧠 Smart Turn: END (prob={result['probability']:.2f})")
+                                await process_turn()
+                            else:
+                                logger.debug(f"🧠 Smart Turn: CONTINUE (prob={result['probability']:.2f})")
+                        else:
+                            # Fallback
+                            if silence_ms >= FALLBACK_TIMEOUT_MS:
+                                await process_turn()
+                    else:
+                        # Bez FAL - fallback na timeout
+                        if silence_ms >= FALLBACK_TIMEOUT_MS:
+                            await process_turn()
     
-    silence_task = asyncio.create_task(silence_checker())
+    turn_task = asyncio.create_task(turn_checker())
     
     try:
         async for message in websocket.iter_json():
@@ -1252,7 +1037,6 @@ async def websocket_handler(websocket: WebSocket):
                 stream_sid = message.get("streamSid")
                 logger.info(f"▶️ Stream started: {stream_sid}")
                 
-                # Wyślij przywitanie
                 if greeting_audio and stream_sid:
                     payload = base64.b64encode(greeting_audio).decode("utf-8")
                     await websocket.send_json({
@@ -1265,12 +1049,8 @@ async def websocket_handler(websocket: WebSocket):
                 payload = message.get("media", {}).get("payload", "")
                 if payload:
                     audio = base64.b64decode(payload)
-                    
-                    # Wyślij do Deepgram
                     await stt.send(audio)
-                    
-                    # Dodaj do bufora audio (dla Smart Turn)
-                    context.audio_buffer.add_mulaw(audio)
+                    audio_buffer.add(audio)
                     
             elif event == "stop":
                 logger.info(f"⏹️ Stream stopped")
@@ -1279,13 +1059,9 @@ async def websocket_handler(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        silence_task.cancel()
+        turn_task.cancel()
         await stt.close()
-        
-        # Zapisz log
-        await save_call_log(tenant["id"], caller, called, started_at, 
-                          context.transcript, booking_id)
-        
+        await save_call_log(tenant["id"], caller, called, started_at, context.transcript, booking_id)
         logger.info(f"👋 Closed")
 
 
@@ -1296,11 +1072,17 @@ async def websocket_handler(websocket: WebSocket):
 async def health():
     return {
         "status": "ok",
-        "version": "3.0-smart-turn",
-        "features": ["silero-vad", "smart-turn-v3", "deepgram-nova3", "elevenlabs"]
+        "version": "3.0-fal",
+        "smart_turn": "fal-api" if FAL_KEY else "fallback",
+        "features": ["fal-smart-turn", "deepgram-nova3", "elevenlabs"]
     }
 
 
 @app.get("/")
 async def root():
-    return {"message": "Voice AI v3.0 - Smart Turn Edition", "status": "running"}
+    return {"message": "Voice AI v3.0 - FAL Smart Turn", "status": "running"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
