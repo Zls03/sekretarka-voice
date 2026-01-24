@@ -267,16 +267,18 @@ async def text_to_speech(text: str) -> bytes:
 # FORMATOWANIE PO POLSKU
 # ==========================================
 def format_hour_polish(time_str: str) -> str:
-    """10:00 → dziesiątej"""
+    """10:00 → dziesiątej, 08:00 → ósmej"""
     hour_words = {
         6: "szóstej", 7: "siódmej", 8: "ósmej", 9: "dziewiątej",
         10: "dziesiątej", 11: "jedenastej", 12: "dwunastej",
         13: "trzynastej", 14: "czternastej", 15: "piętnastej",
-        16: "szesnastej", 17: "siedemnastej", 18: "osiemnastej"
+        16: "szesnastej", 17: "siedemnastej", 18: "osiemnastej",
+        19: "dziewiętnastej", 20: "dwudziestej"
     }
     if not time_str:
         return ""
     try:
+        # Obsługa formatu "08:00" lub "8:00"
         hour = int(time_str.split(":")[0])
         return hour_words.get(hour, f"godzinie {hour}")
     except:
@@ -483,7 +485,9 @@ async def process_conversation(conv, intent_data: Dict, user_text: str) -> str:
         hours = tenant.get("working_hours", {})
         weekday = hours.get(0)
         if weekday:
-            return f"Pracujemy od {weekday['open']} do {weekday['close']}."
+            open_h = format_hour_polish(weekday['open'])
+            close_h = format_hour_polish(weekday['close'])
+            return f"Pracujemy od {open_h} do {close_h}."
         return "Przepraszam, nie mam informacji o godzinach."
     
     if intent == "ask_services":
