@@ -717,7 +717,7 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
     
     return {
         "id": tenant_id,
-        "business_name": tenant.get("business_name"),
+        "business_name": tenant.get("business_name") or tenant.get("name"),
         "services": services,
         "working_hours": working_hours
     }
