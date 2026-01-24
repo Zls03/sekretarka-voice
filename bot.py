@@ -664,16 +664,35 @@ class DeepgramSTT:
 # ==========================================
 # TENANT
 # ==========================================
+# ==========================================
+# TENANT
+# ==========================================
 async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
     phone_clean = phone.replace(" ", "").replace("-", "")
     phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
+    
+    logger.info(f"🔍 Szukam tenant: {phone_suffix}")
+    logger.info(f"🔍 DB URL: {db.url[:50] if db.url else 'BRAK'}...")
+    logger.info(f"🔍 DB Token: {'TAK' if db.token else 'BRAK'}")
     
     rows = await db.execute(
         "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
         [f"%{phone_suffix}"]
     )
     
+    logger.info(f"🔍 Znaleziono rows: {len(rows)}")
+    if rows:
+        logger.info(f"🔍 Pierwszy row: {rows[0]}")
+    
     if not rows:
+        # Spróbuj bez is_active
+        rows2 = await db.execute(
+            "SELECT * FROM tenants WHERE phone_number LIKE ?",
+            [f"%{phone_suffix}"]
+        )
+        logger.info(f"🔍 Bez is_active: {len(rows2)} rows")
+        if rows2:
+            logger.info(f"🔍 is_active = {rows2[0].get('is_active')}")
         return None
     
     tenant = rows[0]
@@ -702,7 +721,6 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         "services": services,
         "working_hours": working_hours
     }
-
 
 # ==========================================
 # RESPONSE GENERATOR
