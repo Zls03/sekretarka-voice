@@ -817,7 +817,7 @@ async def text_to_speech(text: str) -> bytes:
 
 
 # ==========================================
-# DEEPGRAM STT - Nova-3 + Keyterm Prompting
+# DEEPGRAM STT - Nova-3 (Polski)
 # ==========================================
 class DeepgramSTT:
     def __init__(self, on_transcript, keyterms: List[str] = None):
@@ -827,34 +827,63 @@ class DeepgramSTT:
         self.keyterms = keyterms or []
         
     async def connect(self):
-        # Nova-3 dla polskiego z dłuższym endpointingiem
-        url = (
+        # Nova-3 dla polskiego
+        # Uwaga: keyterm prompting używa parametru "keyterm" (nie "keywords")
+        base_url = (
             "wss://api.deepgram.com/v1/listen"
             "?model=nova-3"
             "&language=pl"
             "&encoding=mulaw"
             "&sample_rate=8000"
-            "&endpointing=600"  # Dłuższy czas - mniej ucinania zdań
+            "&endpointing=600"
             "&interim_results=false"
             "&punctuate=true"
-            "&smart_format=true"
         )
         
-        # Dodaj keyterms jeśli są
+        # Dodaj keyterms jeśli są (dla Nova-3 to "keyterm", nie "keywords")
+        # Każdy keyterm jako osobny parametr, URL-encoded
         if self.keyterms:
-            keyterms_str = "&".join([f"keywords={k}" for k in self.keyterms[:20]])
-            url += f"&{keyterms_str}"
+            import urllib.parse
+            for kt in self.keyterms[:10]:  # Max 10 keyterms
+                encoded = urllib.parse.quote(kt)
+                base_url += f"&keyterm={encoded}"
         
         self.session = aiohttp.ClientSession()
         try:
             self.ws = await self.session.ws_connect(
-                url,
+                base_url,
                 headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
             )
-            logger.info(f"🎤 Deepgram Nova-3 connected (keyterms: {len(self.keyterms)})")
+            logger.info(f"🎤 Deepgram Nova-3 PL connected")
             asyncio.create_task(self._listen())
         except Exception as e:
             logger.error(f"Deepgram connect error: {e}")
+            # Fallback do Nova-2 jeśli Nova-3 nie działa
+            await self._connect_fallback()
+            
+    async def _connect_fallback(self):
+        """Fallback do Nova-2 jeśli Nova-3 nie działa"""
+        fallback_url = (
+            "wss://api.deepgram.com/v1/listen"
+            "?model=nova-2-general"
+            "&language=pl"
+            "&encoding=mulaw"
+            "&sample_rate=8000"
+            "&endpointing=600"
+            "&interim_results=false"
+        )
+        
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            self.ws = await self.session.ws_connect(
+                fallback_url,
+                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+            )
+            logger.info("🎤 Deepgram Nova-2 fallback connected")
+            asyncio.create_task(self._listen())
+        except Exception as e:
+            logger.error(f"Deepgram fallback error: {e}")
             
     async def _listen(self):
         try:
