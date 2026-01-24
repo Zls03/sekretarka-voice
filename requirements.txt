@@ -1,9 +1,0 @@
-python-dotenv
-fastapi
-uvicorn
-aiohttp
-websockets
-python-multipart
-httpx
-loguru
-openai
