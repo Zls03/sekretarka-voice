@@ -4,7 +4,7 @@ PIPECAT FLOWS MIGRATION v1.0
 ============================
 Zmigrowany z custom implementation do Pipecat Flows framework.
 """
-
+from pipecat.serializers.twilio import TwilioFrameSerializer
 import os
 import sys
 import json
@@ -170,6 +170,7 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_in_enabled=True,
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
+            serializer=TwilioFrameSerializer(),
         )
     )
     
@@ -177,6 +178,9 @@ async def websocket_endpoint(websocket: WebSocket):
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         language="pl",
+        model="nova-3",  # ← Polski model
+        encoding="mulaw",  # ← Format Twilio
+        sample_rate=8000,
     )
     
     # TTS - ElevenLabs
@@ -184,6 +188,7 @@ async def websocket_endpoint(websocket: WebSocket):
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
         model="eleven_multilingual_v2",
+        output_format="ulaw_8000",
     )
     
     # LLM - OpenAI
