@@ -73,6 +73,7 @@ def start_booking_function() -> FlowsFunctionSchema:
         name="start_booking",
         description="Klient chce umówić wizytę lub zarezerwować termin",
         properties={},
+        required=[],
         handler=handle_start_booking,
     )
 
@@ -215,6 +216,7 @@ def any_staff_function(tenant: dict) -> FlowsFunctionSchema:
         name="any_available_staff",
         description="Klient nie ma preferencji, wybierz dowolnego dostępnego",
         properties={},
+        required=[],
         handler=lambda args, fm: handle_any_staff(args, fm, tenant),
     )
 
@@ -514,6 +516,7 @@ def end_conversation_function() -> FlowsFunctionSchema:
         name="end_conversation",
         description="Klient chce zakończyć rozmowę",
         properties={},
+        required=[],
         handler=handle_end_conversation,
     )
 
