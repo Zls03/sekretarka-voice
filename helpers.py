@@ -12,6 +12,8 @@ Zawiera:
 - Smart Turn (FAL API)
 - Audio/Transcript bufory
 """
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
 import json
@@ -132,11 +134,24 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         else:
             working_hours[day] = None
     
+    # FAQ
+    faq_rows = await db.execute(
+        "SELECT question, answer FROM tenant_faq WHERE tenant_id = ? ORDER BY sort_order",
+        [tenant_id]
+    )
+    
     return {
         **tenant,
         "business_name": tenant.get("business_name") or tenant.get("name"),
         "services": services,
-        "working_hours": working_hours
+        "working_hours": working_hours,
+        "faq": faq_rows,
+        "is_blocked": int(tenant.get("is_blocked") or 0),
+        "minutes_limit": int(tenant.get("minutes_limit") or 100),
+        "minutes_used": float(tenant.get("minutes_used") or 0),
+        "first_message": tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info": tenant.get("additional_info") or "",
+        "industry": tenant.get("industry") or ""
     }
 
 
@@ -408,11 +423,13 @@ async def create_booking(conv) -> bool:
 
 
 async def save_call_log(conv):
-    """Zapisz log rozmowy"""
+    """Zapisz log rozmowy i zaktualizuj zużycie minut"""
     try:
         ended_at = datetime.utcnow()
         duration = int((ended_at - conv.started_at).total_seconds())
+        duration_minutes = duration / 60.0
         
+        # Zapisz log
         await db.execute(
             """INSERT INTO call_logs 
                (id, tenant_id, call_sid, caller_phone, started_at, ended_at, 
@@ -431,7 +448,24 @@ async def save_call_log(conv):
             ]
         )
         
-        logger.info(f"📊 Call logged: {duration}s")
+        # Zaktualizuj zużycie minut
+        await db.execute(
+            "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
+            [duration_minutes, conv.tenant["id"]]
+        )
+        
+        # Sprawdź czy przekroczono 99% limitu - auto-blokada
+        minutes_limit = conv.tenant.get("minutes_limit", 100)
+        new_used = conv.tenant.get("minutes_used", 0) + duration_minutes
+        
+        if new_used >= minutes_limit * 0.99:
+            await db.execute(
+                "UPDATE tenants SET is_blocked = 1 WHERE id = ?",
+                [conv.tenant["id"]]
+            )
+            logger.warning(f"⚠️ Tenant {conv.tenant['id']} AUTO-BLOCKED - limit reached ({new_used:.1f}/{minutes_limit} min)")
+        
+        logger.info(f"📊 Call logged: {duration}s ({duration_minutes:.2f} min)")
     except Exception as e:
         logger.error(f"Call log error: {e}")
 
@@ -463,7 +497,7 @@ def find_service(tenant: Dict, text: str) -> Optional[Dict]:
 # ==========================================
 async def process_conversation(conv, intent_data: Dict, user_text: str) -> str:
     """Główna logika State Machine"""
-    from bot import State  # Import tutaj żeby uniknąć circular import
+    from bot_old import State  # Import tutaj żeby uniknąć circular import
     
     tenant = conv.tenant
     intent = intent_data.get("intent", "other")

@@ -1,24 +1,15 @@
-# Voice AI v3.0 - FAL Edition (bez torch!)
-# =========================================
+# Pipecat - główny framework
+pipecat-ai[twilio,deepgram,elevenlabs,openai,silero]
+pipecat-ai-flows
 
-# Web Framework
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-python-multipart>=0.0.6
+# Serwer
+fastapi
+uvicorn[standard]
+python-dotenv
 
-# HTTP/WebSocket clients
-aiohttp>=3.8.0
-httpx>=0.24.0
-websockets>=11.0
+# HTTP (do bazy i API)
+aiohttp
+httpx
 
 # OpenAI
-openai>=1.0.0
-
-# Environment
-python-dotenv>=1.0.0
-
-# Logging
-loguru>=0.7.0
-
-# Audio processing (bez torch!)
-numpy>=1.24.0
+openai

@@ -1,191 +1,61 @@
-"""
-VOICE AI v3.1 - PRODUCTION
-==========================
-Smart Turn + FAL API + Naprawiony WebSocket
-
-Plik 1/2: bot.py - Główna logika, WebSocket, Twilio
-Plik 2/2: helpers.py - GPT, TTS, formatowanie, baza danych
-"""
-
+# bot_pipecat.py - Pipecat Voice AI dla salonów
 import os
+import sys
 import json
-import base64
 import asyncio
 from datetime import datetime
-from typing import Optional, Dict, List
-from dataclasses import dataclass, field
-from enum import Enum
-from dotenv import load_dotenv
 from loguru import logger
+from dotenv import load_dotenv
+
+# FastAPI
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response
-from fastapi.middleware.cors import CORSMiddleware
 
-# Import helperów
-from helpers import (
-    db, get_tenant_by_phone, detect_intent, text_to_speech,
-    process_conversation, save_call_log, FalSmartTurn,
-    AudioBuffer, TranscriptBuffer
-)
+# Pipecat core
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineTask, PipelineParams
+
+# Pipecat transports
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+
+# Pipecat services
+from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+
+# Pipecat Flows
+from pipecat_flows import FlowManager
+
+# Nasze moduły
+from helpers import get_tenant_by_phone, db
+from flows import create_initial_node
 
 load_dotenv()
 
-# ==========================================
-# KONFIGURACJA
-# ==========================================
-FAL_KEY = os.getenv("FAL_KEY", "")
-SMART_TURN_THRESHOLD = 0.5
-SILENCE_THRESHOLD_MS = 600
-FALLBACK_TIMEOUT_MS = 2000
+# Konfiguracja logowania
+logger.remove()
+logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
 
-app = FastAPI(title="Voice AI v3.1")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
+app = FastAPI()
 
 # ==========================================
-# STATE MACHINE
-# ==========================================
-class State(Enum):
-    START = "start"
-    LISTENING = "listening"
-    ASK_SERVICE = "ask_service"
-    ASK_DATE = "ask_date"
-    ASK_TIME = "ask_time"
-    CONFIRM_BOOKING = "confirm_booking"
-    BOOKING_DONE = "booking_done"
-    END = "end"
-
-
-@dataclass
-class Conversation:
-    """Kontekst rozmowy"""
-    tenant: Dict
-    call_sid: str = ""
-    caller_phone: str = ""
-    state: State = State.START
-    started_at: datetime = field(default_factory=datetime.utcnow)
-    
-    # Rezerwacja
-    selected_service: Optional[Dict] = None
-    selected_date: Optional[str] = None
-    selected_time: Optional[str] = None
-    available_slots: List[str] = field(default_factory=list)
-    customer_name: Optional[str] = None
-    
-    # Historia
-    transcript: List[Dict] = field(default_factory=list)
-    intents_log: List[Dict] = field(default_factory=list)
-
-
-# Aktywne rozmowy
-conversations: Dict[str, Conversation] = {}
-
-
-# ==========================================
-# DEEPGRAM STT
-# ==========================================
-import aiohttp
-
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-
-class DeepgramSTT:
-    def __init__(self, on_transcript, keyterms: List[str] = None):
-        self.on_transcript = on_transcript
-        self.ws = None
-        self.session = None
-        self.keyterms = keyterms or []
-        
-    async def connect(self):
-        base_url = (
-            "wss://api.deepgram.com/v1/listen"
-            "?model=nova-3"
-            "&language=pl"
-            "&encoding=mulaw"
-            "&sample_rate=8000"
-            "&endpointing=600"
-            "&interim_results=false"
-            "&punctuate=true"
-        )
-        
-        if self.keyterms:
-            import urllib.parse
-            for kt in self.keyterms[:10]:
-                encoded = urllib.parse.quote(kt)
-                base_url += f"&keyterm={encoded}"
-        
-        self.session = aiohttp.ClientSession()
-        try:
-            self.ws = await self.session.ws_connect(
-                base_url,
-                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-            )
-            logger.info("🎤 Deepgram Nova-3 connected")
-            asyncio.create_task(self._listen())
-        except Exception as e:
-            logger.error(f"Deepgram error: {e}")
-            await self._connect_fallback()
-            
-    async def _connect_fallback(self):
-        fallback_url = (
-            "wss://api.deepgram.com/v1/listen"
-            "?model=nova-2-general"
-            "&language=pl"
-            "&encoding=mulaw"
-            "&sample_rate=8000"
-            "&endpointing=800"
-            "&interim_results=false"
-        )
-        try:
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-            self.ws = await self.session.ws_connect(
-                fallback_url,
-                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-            )
-            logger.info("🎤 Deepgram Nova-2 fallback connected")
-            asyncio.create_task(self._listen())
-        except Exception as e:
-            logger.error(f"Deepgram fallback error: {e}")
-            
-    async def _listen(self):
-        try:
-            async for msg in self.ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    if data.get("type") == "Results":
-                        transcript = data.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
-                        if transcript and data.get("is_final"):
-                            logger.info(f"📝 STT: {transcript}")
-                            await self.on_transcript(transcript)
-        except Exception as e:
-            logger.error(f"Deepgram listen error: {e}")
-            
-    async def send(self, audio: bytes):
-        if self.ws:
-            await self.ws.send_bytes(audio)
-            
-    async def close(self):
-        if self.ws:
-            await self.ws.close()
-        if self.session:
-            await self.session.close()
-
-
-# ==========================================
-# TWILIO ENDPOINT
+# TWILIO INCOMING - Połączenie przychodzące
 # ==========================================
 @app.post("/twilio/incoming")
-async def incoming(request: Request):
-    """Połączenie przychodzące z Twilio"""
-    host = request.headers.get("host", "localhost")
+async def twilio_incoming(request: Request):
+    """Obsługa połączenia przychodzącego z Twilio"""
     form = await request.form()
     
     called = form.get("Called", form.get("To", ""))
     caller = form.get("From", "")
     call_sid = form.get("CallSid", "")
     
-    logger.info(f"📞 Call: {caller} → {called}")
+    logger.info(f"📞 Incoming call: {caller} → {called} (CallSid: {call_sid})")
     
+    # Pobierz tenant z bazy
     tenant = await get_tenant_by_phone(called)
     
     if not tenant:
@@ -195,207 +65,241 @@ async def incoming(request: Request):
             media_type="application/xml"
         )
     
-    logger.info(f"✅ Tenant: {tenant.get('name') or tenant.get('business_name')}")
+    # Sprawdź blokadę (limit minut)
+    if tenant.get("is_blocked"):
+        logger.warning(f"🚫 Tenant {tenant['id']} BLOCKED")
+        return Response(
+            content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
+            media_type="application/xml"
+        )
     
-    # Zapisz rozmowę
-    conversations[call_sid] = Conversation(
-        tenant=tenant,
-        call_sid=call_sid,
-        caller_phone=caller,
-        started_at=datetime.utcnow()
-    )
+    logger.info(f"✅ Tenant: {tenant.get('name')}")
     
-    # TwiML z parametrem callSid
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    # TwiML - połącz z WebSocket
+    host = request.headers.get("host", "localhost")
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
+            <Parameter name="tenantId" value="{tenant['id']}" />
         </Stream>
     </Connect>
-</Response>"""
+</Response>'''
     
     return Response(content=twiml, media_type="application/xml")
 
 
 # ==========================================
-# WEBSOCKET HANDLER
+# WEBSOCKET - Główna logika Pipecat
 # ==========================================
 @app.websocket("/ws")
-async def websocket_handler(ws: WebSocket):
-    """WebSocket dla Twilio Media Stream"""
-    await ws.accept()
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint dla Twilio Media Streams"""
+    await websocket.accept()
+    
     logger.info("🔌 WebSocket connected")
     
-    stream_sid = None
+    # Czekaj na wiadomość start z parametrami
+    start_data = None
+    tenant = None
     call_sid = None
-    conv: Optional[Conversation] = None
-    stt = None
-    
-    # Bufory dla Smart Turn
-    audio_buffer = AudioBuffer()
-    transcript_buffer = TranscriptBuffer()
-    smart_turn = FalSmartTurn(threshold=SMART_TURN_THRESHOLD)
-    
-    processing = False
-    
-    async def send_audio(audio: bytes):
-        """Wyślij audio do Twilio"""
-        if audio and stream_sid:
-            await ws.send_text(json.dumps({
-                "event": "media",
-                "streamSid": stream_sid,
-                "media": {"payload": base64.b64encode(audio).decode("ascii")}
-            }))
-    
-    async def process_turn():
-        """Przetwórz turę użytkownika"""
-        nonlocal processing
-        
-        if processing or not transcript_buffer.has_content() or not conv:
-            return
-            
-        processing = True
-        
-        try:
-            full_text = transcript_buffer.get_text()
-            transcript_buffer.clear()
-            
-            if not full_text.strip():
-                return
-            
-            conv.transcript.append({
-                "role": "user", 
-                "text": full_text, 
-                "time": datetime.utcnow().isoformat()
-            })
-            
-            # Kontekst dla GPT
-            context = " | ".join([f"{t['role']}: {t['text']}" for t in conv.transcript[-6:]])
-            services = [s['name'] for s in conv.tenant.get("services", [])]
-            
-            # GPT → intencja
-            intent_data = await detect_intent(full_text, context, services)
-            
-            # State Machine → odpowiedź
-            response = await process_conversation(conv, intent_data, full_text)
-            
-            conv.transcript.append({
-                "role": "assistant", 
-                "text": response, 
-                "time": datetime.utcnow().isoformat()
-            })
-            logger.info(f"💬 {response}")
-            
-            # TTS
-            audio = await text_to_speech(response)
-            if audio:
-                await send_audio(audio)
-                
-            audio_buffer.clear()
-            
-        finally:
-            processing = False
-    
-    async def on_transcript(text: str):
-        """Callback dla transkrypcji Deepgram"""
-        if text.strip():
-            transcript_buffer.add(text.strip())
-    
-    # Task sprawdzający ciszę (Smart Turn)
-    async def turn_checker():
-        while True:
-            await asyncio.sleep(0.15)
-            
-            if transcript_buffer.has_content() and not processing:
-                silence_ms = transcript_buffer.age_ms()
-                
-                if silence_ms >= SILENCE_THRESHOLD_MS:
-                    # Użyj FAL Smart Turn jeśli dostępny
-                    if FAL_KEY and audio_buffer.duration_seconds() > 0.5:
-                        wav_b64 = audio_buffer.get_wav_base64()
-                        if wav_b64:
-                            result = await smart_turn.predict(wav_b64)
-                            if result["end_of_turn"]:
-                                logger.debug(f"🧠 Smart Turn: END (prob={result['probability']:.2f})")
-                                await process_turn()
-                            else:
-                                logger.debug(f"🧠 Smart Turn: CONTINUE")
-                        elif silence_ms >= FALLBACK_TIMEOUT_MS:
-                            await process_turn()
-                    elif silence_ms >= FALLBACK_TIMEOUT_MS:
-                        # Fallback bez Smart Turn
-                        await process_turn()
-    
-    turn_task = asyncio.create_task(turn_checker())
     
     try:
+        # Odbierz pierwsze wiadomości żeby dostać parametry
         while True:
-            msg = await ws.receive_text()
-            data = json.loads(msg)
-            event = data.get("event")
+            message = await websocket.receive_text()
+            data = json.loads(message)
             
-            if event == "start":
-                stream_sid = data.get("streamSid")
-                # Pobierz callSid z parametrów (tak jak w starym kodzie!)
-                call_sid = data.get("start", {}).get("customParameters", {}).get("callSid", "")
+            if data.get("event") == "start":
+                start_data = data.get("start", {})
+                custom_params = start_data.get("customParameters", {})
                 
-                logger.info(f"▶️ Stream started: {stream_sid}, call: {call_sid}")
+                call_sid = custom_params.get("callSid", "unknown")
+                tenant_id = custom_params.get("tenantId")
                 
-                conv = conversations.get(call_sid)
-                if not conv:
-                    logger.error(f"❌ No conversation for {call_sid}")
-                    break
+                logger.info(f"📋 Call started: {call_sid}, tenant: {tenant_id}")
                 
-                # Keyterms z usług
-                keyterms = [s['name'] for s in conv.tenant.get("services", [])]
-                keyterms.extend(["rezerwacja", "umówić", "wizyta", "termin"])
-                
-                # Start Deepgram
-                stt = DeepgramSTT(on_transcript, keyterms)
-                await stt.connect()
-                
-                # Przywitanie
-                tenant_name = conv.tenant.get('name') or conv.tenant.get('business_name', 'salon')
-                greeting = f"Dzień dobry, tu {tenant_name}. W czym mogę pomóc?"
-                conv.transcript.append({
-                    "role": "assistant", 
-                    "text": greeting, 
-                    "time": datetime.utcnow().isoformat()
-                })
-                
-                audio = await text_to_speech(greeting)
-                if audio:
-                    await send_audio(audio)
-                    conv.state = State.LISTENING
-                
-            elif event == "media":
-                payload = data.get("media", {}).get("payload", "")
-                if payload:
-                    audio_bytes = base64.b64decode(payload)
-                    if stt:
-                        await stt.send(audio_bytes)
-                    audio_buffer.add(audio_bytes)
-                
-            elif event == "stop":
-                logger.info("⏹️ Stream stopped")
+                # Pobierz tenant z bazy
+                if tenant_id:
+                    from helpers import db
+                    rows = await db.execute("SELECT * FROM tenants WHERE id = ?", [tenant_id])
+                    if rows:
+                        tenant = dict(rows[0])
+                        # Dodaj usługi, pracowników, godziny
+                        services = await db.execute(
+                            "SELECT * FROM services WHERE tenant_id = ? AND is_active = 1", 
+                            [tenant_id]
+                        )
+                        staff = await db.execute(
+                            "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
+                            [tenant_id]
+                        )
+                        tenant["services"] = [dict(s) for s in services]
+                        tenant["staff"] = [dict(s) for s in staff]
+                        
+                        logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
                 break
-                
+            
+            elif data.get("event") == "connected":
+                logger.info("📡 Twilio stream connected")
+                continue
+    
     except Exception as e:
-        logger.error(f"❌ WebSocket error: {e}")
+        logger.error(f"Error getting start params: {e}")
+        return
+    
+    if not tenant:
+        logger.error("❌ No tenant data!")
+        await websocket.close()
+        return
+    
+    # ==========================================
+    # KONFIGURACJA PIPECAT PIPELINE
+    # ==========================================
+    
+    # Transport - Twilio WebSocket
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
+        )
+    )
+    
+    # STT - Deepgram
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        language="pl",
+    )
+    
+    # TTS - ElevenLabs
+    tts = ElevenLabsTTSService(
+        api_key=os.getenv("ELEVENLABS_API_KEY"),
+        voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+        model="eleven_multilingual_v2",
+    )
+    
+    # LLM - OpenAI
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model="gpt-4o-mini",
+    )
+    
+    # Context
+    context = OpenAILLMContext()
+    context_aggregator = llm.create_context_aggregator(context)
+    
+    # ==========================================
+    # PIPECAT FLOWS - State Machine
+    # ==========================================
+    
+    # Flow Manager - zarządza stanami konwersacji
+    flow_manager = FlowManager(
+        task=None,  # Ustawimy po utworzeniu task
+        llm=llm,
+        context_aggregator=context_aggregator,
+    )
+    
+    # Zapisz dane tenant w state (dostępne w całym flow)
+    flow_manager.state["tenant"] = tenant
+    flow_manager.state["call_sid"] = call_sid
+    flow_manager.state["started_at"] = datetime.utcnow()
+    
+    # ==========================================
+    # PIPELINE
+    # ==========================================
+    
+    pipeline = Pipeline([
+        transport.input(),
+        stt,
+        context_aggregator.user(),
+        llm,
+        tts,
+        transport.output(),
+        context_aggregator.assistant(),
+    ])
+    
+    # Task
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+        )
+    )
+    
+    # Podłącz flow manager do task
+    flow_manager.task = task
+    
+    # ==========================================
+    # EVENT HANDLERS
+    # ==========================================
+    
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        logger.info("🎤 Client connected - starting flow")
+        # Rozpocznij flow od pierwszego node'a
+        await flow_manager.initialize(create_initial_node(tenant))
+    
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport, client):
+        logger.info("📴 Client disconnected")
+        # Zapisz log rozmowy
+        await save_call_log(flow_manager)
+    
+    # ==========================================
+    # RUN PIPELINE
+    # ==========================================
+    
+    runner = PipelineRunner()
+    
+    try:
+        await runner.run(task)
+    except Exception as e:
+        logger.error(f"Pipeline error: {e}")
     finally:
-        turn_task.cancel()
+        logger.info("🏁 Pipeline finished")
+
+
+async def save_call_log(flow_manager):
+    """Zapisz log rozmowy do bazy"""
+    try:
+        tenant = flow_manager.state.get("tenant", {})
+        started_at = flow_manager.state.get("started_at")
+        ended_at = datetime.utcnow()
         
-        if stt:
-            await stt.close()
-        
-        if conv:
-            await save_call_log(conv)
-        
-        if call_sid and call_sid in conversations:
-            del conversations[call_sid]
-        
-        logger.info("👋 Closed")
+        if started_at:
+            duration = int((ended_at - started_at).total_seconds())
+            duration_minutes = duration / 60.0
+            
+            # Zapisz log
+            await db.execute(
+                """INSERT INTO call_logs 
+                   (id, tenant_id, call_sid, started_at, ended_at, duration_seconds, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'completed', datetime('now'))""",
+                [
+                    f"call_{int(datetime.utcnow().timestamp())}",
+                    tenant.get("id"),
+                    flow_manager.state.get("call_sid"),
+                    started_at.isoformat(),
+                    ended_at.isoformat(),
+                    duration,
+                ]
+            )
+            
+            # Aktualizuj zużycie minut
+            await db.execute(
+                "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
+                [duration_minutes, tenant.get("id")]
+            )
+            
+            logger.info(f"📊 Call logged: {duration}s")
+    except Exception as e:
+        logger.error(f"Save call log error: {e}")
 
 
 # ==========================================
@@ -403,17 +307,9 @@ async def websocket_handler(ws: WebSocket):
 # ==========================================
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "version": "3.1",
-        "smart_turn": "fal-api" if FAL_KEY else "fallback"
-    }
-
-@app.get("/")
-async def root():
-    return {"message": "Voice AI v3.1", "status": "running"}
+    return {"status": "ok", "framework": "pipecat"}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
