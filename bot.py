@@ -1,8 +1,8 @@
 # bot.py - Pipecat Voice AI dla salonów
 """
-PIPECAT FLOWS MIGRATION v1.1
+PIPECAT FLOWS MIGRATION v1.2
 ============================
-Naprawiona obsługa Twilio stream_sid
+Naprawiona obsługa TwilioFrameSerializer z auto_hang_up=False
 """
 
 import os
@@ -182,13 +182,17 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info(f"🔧 Creating pipeline with stream_sid: {stream_sid}")
     
     # Transport - Twilio WebSocket z serializerem
+    # WAŻNE: auto_hang_up=False bo nie mamy Twilio credentials
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            serializer=TwilioFrameSerializer(stream_sid=stream_sid),
+            serializer=TwilioFrameSerializer(
+                stream_sid=stream_sid,
+                params=TwilioFrameSerializer.InputParams(auto_hang_up=False)
+            ),
         )
     )
     
@@ -329,7 +333,7 @@ async def save_call_log(flow_manager):
 # ==========================================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "framework": "pipecat", "version": "1.1"}
+    return {"status": "ok", "framework": "pipecat", "version": "1.2"}
 
 
 if __name__ == "__main__":
