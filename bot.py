@@ -1,4 +1,10 @@
-# bot_pipecat.py - Pipecat Voice AI dla salonów
+# bot.py - Pipecat Voice AI dla salonów
+"""
+PIPECAT FLOWS MIGRATION v1.0
+============================
+Zmigrowany z custom implementation do Pipecat Flows framework.
+"""
+
 import os
 import sys
 import json
@@ -6,6 +12,8 @@ import asyncio
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
+
+load_dotenv()
 
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
@@ -16,11 +24,11 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 
-# Pipecat transports
+# Pipecat transports - NOWE importy (bez deprecated)
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 
-# Pipecat services
+# Pipecat services - NOWE importy (bez deprecated)
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -33,13 +41,12 @@ from pipecat_flows import FlowManager
 from helpers import get_tenant_by_phone, db
 from flows import create_initial_node
 
-load_dotenv()
-
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
 
 app = FastAPI()
+
 
 # ==========================================
 # TWILIO INCOMING - Połączenie przychodzące
@@ -101,7 +108,6 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info("🔌 WebSocket connected")
     
     # Czekaj na wiadomość start z parametrami
-    start_data = None
     tenant = None
     call_sid = None
     
@@ -122,11 +128,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # Pobierz tenant z bazy
                 if tenant_id:
-                    from helpers import db
                     rows = await db.execute("SELECT * FROM tenants WHERE id = ?", [tenant_id])
                     if rows:
                         tenant = dict(rows[0])
-                        # Dodaj usługi, pracowników, godziny
+                        # Dodaj usługi, pracowników
                         services = await db.execute(
                             "SELECT * FROM services WHERE tenant_id = ? AND is_active = 1", 
                             [tenant_id]
@@ -164,9 +169,7 @@ async def websocket_endpoint(websocket: WebSocket):
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            vad_audio_passthrough=True,
         )
     )
     
@@ -194,22 +197,6 @@ async def websocket_endpoint(websocket: WebSocket):
     context_aggregator = llm.create_context_aggregator(context)
     
     # ==========================================
-    # PIPECAT FLOWS - State Machine
-    # ==========================================
-    
-    # Flow Manager - zarządza stanami konwersacji
-    flow_manager = FlowManager(
-        task=None,  # Ustawimy po utworzeniu task
-        llm=llm,
-        context_aggregator=context_aggregator,
-    )
-    
-    # Zapisz dane tenant w state (dostępne w całym flow)
-    flow_manager.state["tenant"] = tenant
-    flow_manager.state["call_sid"] = call_sid
-    flow_manager.state["started_at"] = datetime.utcnow()
-    
-    # ==========================================
     # PIPELINE
     # ==========================================
     
@@ -223,7 +210,7 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator.assistant(),
     ])
     
-    # Task
+    # Task - MUSI BYĆ UTWORZONY PRZED FlowManager!
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
@@ -232,8 +219,21 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
     
-    # Podłącz flow manager do task
-    flow_manager.task = task
+    # ==========================================
+    # PIPECAT FLOWS - State Machine
+    # FlowManager MUSI być utworzony PO task!
+    # ==========================================
+    
+    flow_manager = FlowManager(
+        task=task,  # WAŻNE: task musi być przekazany tutaj!
+        llm=llm,
+        context_aggregator=context_aggregator,
+    )
+    
+    # Zapisz dane tenant w state (dostępne w całym flow)
+    flow_manager.state["tenant"] = tenant
+    flow_manager.state["call_sid"] = call_sid
+    flow_manager.state["started_at"] = datetime.utcnow()
     
     # ==========================================
     # EVENT HANDLERS
