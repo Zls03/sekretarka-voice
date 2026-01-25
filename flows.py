@@ -698,7 +698,7 @@ def no_more_help_function() -> FlowsFunctionSchema:
 
 async def handle_need_more_help(args: dict, flow_manager: FlowManager, tenant: dict):
     logger.info("🔄 Customer needs more help")
-    return ("Oczywiście, w czym mogę pomóc?", create_initial_node(tenant))
+    return ("Oczywiście, w czym mogę pomóc?", create_continue_conversation_node(tenant))
 
 
 async def handle_no_more_help(args: dict, flow_manager: FlowManager):
@@ -707,6 +707,65 @@ async def handle_no_more_help(args: dict, flow_manager: FlowManager):
         "Dziękuję za rezerwację! Do zobaczenia, miłego dnia!",
         create_end_node()
     )
+
+
+# ==========================================
+# NODE: Kontynuacja rozmowy (BEZ przywitania!)
+# ==========================================
+
+def create_continue_conversation_node(tenant: dict) -> dict:
+    """
+    Node do kontynuacji rozmowy PO odpowiedzi na pytanie.
+    NIE ma pre_actions z przywitaniem!
+    """
+    business_name = tenant.get("name", "salon")
+    
+    services = tenant.get("services", [])
+    services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
+    
+    staff = tenant.get("staff", [])
+    staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
+    
+    return {
+        "name": "continue_conversation",
+        
+        # ⚠️ BEZ pre_actions - nie witamy się ponownie!
+        
+        "respond_immediately": False,  # Czekaj na klienta
+        
+        "role_messages": [
+            {
+                "role": "system",
+                "content": f"""Jesteś asystentem głosowym dla firmy "{business_name}".
+
+ZASADY:
+- Mów krótko i naturalnie, to rozmowa telefoniczna
+- Używaj polskiego języka
+- NIE używaj emoji ani specjalnych znaków
+
+DOSTĘPNE USŁUGI: {services_list}
+PRACOWNICY: {staff_list}"""
+            }
+        ],
+        
+        "task_messages": [
+            {
+                "role": "system",
+                "content": """Kontynuuj rozmowę. NIE witaj się ponownie!
+
+Gdy klient odpowie:
+- Jeśli chce się UMÓWIĆ → użyj funkcji start_booking
+- Jeśli ma PYTANIE → użyj funkcji answer_question
+- Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation"""
+            }
+        ],
+        
+        "functions": [
+            start_booking_function(),
+            answer_question_function(tenant),
+            end_conversation_function(),
+        ]
+    }
 
 
 # ==========================================
@@ -733,10 +792,10 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
     address = tenant.get("address", "")
     additional_info = tenant.get("additional_info", "")
     
-    # TODO: Pobierz FAQ z bazy
+    # TODO: Pobierz FAQ z bazy i odpowiedz na pytanie
     
-    # Wróć do greeting po odpowiedzi
-    return (None, create_initial_node(tenant))
+    # Wróć do KONTYNUACJI (bez ponownego przywitania!)
+    return (None, create_continue_conversation_node(tenant))
 
 
 # ==========================================
