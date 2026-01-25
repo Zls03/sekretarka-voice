@@ -183,12 +183,21 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # Transport - Twilio WebSocket z serializerem
     # WAŻNE: auto_hang_up=False bo nie mamy Twilio credentials
+    from pipecat.audio.vad.vad_analyzer import VADParams
+    
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    confidence=0.8,      # Wyższy próg (domyślnie 0.7)
+                    start_secs=0.3,      # Dłużej czekaj przed uznaniem za mowę
+                    stop_secs=1.0,       # Dłużej czekaj przed uznaniem za ciszę
+                    min_volume=0.5,      # Minimalny poziom głośności
+                )
+            ),
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 params=TwilioFrameSerializer.InputParams(auto_hang_up=False)
