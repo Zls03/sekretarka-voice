@@ -1,10 +1,10 @@
 # bot.py - Pipecat Voice AI dla salonów
 """
-PIPECAT FLOWS MIGRATION v1.0
+PIPECAT FLOWS MIGRATION v1.1
 ============================
-Zmigrowany z custom implementation do Pipecat Flows framework.
+Naprawiona obsługa Twilio stream_sid
 """
-from pipecat.serializers.twilio import TwilioFrameSerializer
+
 import os
 import sys
 import json
@@ -24,11 +24,12 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 
-# Pipecat transports - NOWE importy (bez deprecated)
+# Pipecat transports
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.serializers.twilio import TwilioFrameSerializer
 
-# Pipecat services - NOWE importy (bez deprecated)
+# Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -107,24 +108,35 @@ async def websocket_endpoint(websocket: WebSocket):
     
     logger.info("🔌 WebSocket connected")
     
-    # Czekaj na wiadomość start z parametrami
+    # ==========================================
+    # KROK 1: Odbierz "connected" i "start" events
+    # żeby dostać stream_sid PRZED utworzeniem pipeline
+    # ==========================================
+    
+    stream_sid = None
     tenant = None
     call_sid = None
     
     try:
-        # Odbierz pierwsze wiadomości żeby dostać parametry
         while True:
             message = await websocket.receive_text()
             data = json.loads(message)
+            event = data.get("event")
             
-            if data.get("event") == "start":
+            if event == "connected":
+                logger.info("📡 Twilio stream connected")
+                continue
+                
+            elif event == "start":
                 start_data = data.get("start", {})
+                stream_sid = start_data.get("streamSid")
                 custom_params = start_data.get("customParameters", {})
                 
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
                 
-                logger.info(f"📋 Call started: {call_sid}, tenant: {tenant_id}")
+                logger.info(f"📋 Stream started: {stream_sid}")
+                logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
                 
                 # Pobierz tenant z bazy
                 if tenant_id:
@@ -144,46 +156,52 @@ async def websocket_endpoint(websocket: WebSocket):
                         tenant["staff"] = [dict(s) for s in staff]
                         
                         logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
+                
+                # Mamy stream_sid - możemy utworzyć pipeline
                 break
-            
-            elif data.get("event") == "connected":
-                logger.info("📡 Twilio stream connected")
-                continue
-    
+                
     except Exception as e:
         logger.error(f"Error getting start params: {e}")
+        await websocket.close()
         return
     
+    if not stream_sid:
+        logger.error("❌ No stream_sid!")
+        await websocket.close()
+        return
+        
     if not tenant:
         logger.error("❌ No tenant data!")
         await websocket.close()
         return
     
     # ==========================================
-    # KONFIGURACJA PIPECAT PIPELINE
+    # KROK 2: Teraz mamy stream_sid - tworzymy pipeline
     # ==========================================
     
-    # Transport - Twilio WebSocket
+    logger.info(f"🔧 Creating pipeline with stream_sid: {stream_sid}")
+    
+    # Transport - Twilio WebSocket z serializerem
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            serializer=TwilioFrameSerializer(),
+            serializer=TwilioFrameSerializer(stream_sid=stream_sid),
         )
     )
     
-    # STT - Deepgram
+    # STT - Deepgram (format dla Twilio)
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         language="pl",
-        model="nova-3",  # ← Polski model
-        encoding="mulaw",  # ← Format Twilio
+        model="nova-3",
+        encoding="mulaw",
         sample_rate=8000,
     )
     
-    # TTS - ElevenLabs
+    # TTS - ElevenLabs (format dla Twilio)
     tts = ElevenLabsTTSService(
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
@@ -215,7 +233,7 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator.assistant(),
     ])
     
-    # Task - MUSI BYĆ UTWORZONY PRZED FlowManager!
+    # Task
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
@@ -226,18 +244,18 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # ==========================================
     # PIPECAT FLOWS - State Machine
-    # FlowManager MUSI być utworzony PO task!
     # ==========================================
     
     flow_manager = FlowManager(
-        task=task,  # WAŻNE: task musi być przekazany tutaj!
+        task=task,
         llm=llm,
         context_aggregator=context_aggregator,
     )
     
-    # Zapisz dane tenant w state (dostępne w całym flow)
+    # Zapisz dane tenant w state
     flow_manager.state["tenant"] = tenant
     flow_manager.state["call_sid"] = call_sid
+    flow_manager.state["stream_sid"] = stream_sid
     flow_manager.state["started_at"] = datetime.utcnow()
     
     # ==========================================
@@ -247,13 +265,11 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
-        # Rozpocznij flow od pierwszego node'a
         await flow_manager.initialize(create_initial_node(tenant))
     
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("📴 Client disconnected")
-        # Zapisz log rozmowy
         await save_call_log(flow_manager)
     
     # ==========================================
@@ -263,6 +279,7 @@ async def websocket_endpoint(websocket: WebSocket):
     runner = PipelineRunner()
     
     try:
+        logger.info("🚀 Starting pipeline...")
         await runner.run(task)
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
@@ -312,7 +329,7 @@ async def save_call_log(flow_manager):
 # ==========================================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "framework": "pipecat"}
+    return {"status": "ok", "framework": "pipecat", "version": "1.1"}
 
 
 if __name__ == "__main__":
