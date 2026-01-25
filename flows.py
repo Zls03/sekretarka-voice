@@ -220,7 +220,11 @@ Gdy klient odpowie:
 - Jeśli ma PYTANIE (godziny, ceny, lokalizacja) → użyj funkcji answer_question
 - Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation
 
-ODPOWIADAJ krótko i naturalnie."""
+WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem lub propozycją, np.:
+- "Czy mogę w czymś jeszcze pomóc?"
+- "Chciałby się Pan/Pani umówić?"
+
+NIGDY nie zostawiaj klienta bez dalszej wskazówki."""
             }
         ],
         
@@ -249,7 +253,92 @@ def start_booking_function() -> FlowsFunctionSchema:
 async def handle_start_booking(args: dict, flow_manager: FlowManager):
     logger.info("📅 Starting booking flow")
     tenant = flow_manager.state.get("tenant", {})
+    
+    # Sprawdź czy rezerwacje są włączone (czy kalendarz podłączony)
+    calendar_connected = tenant.get("google_calendar_id") or tenant.get("calendar_connected", False)
+    bookings_enabled = tenant.get("bookings_enabled", True)  # Domyślnie włączone
+    
+    if not bookings_enabled:
+        logger.info("⚠️ Bookings disabled for this tenant")
+        return (
+            "Przepraszam, w tej chwili nie przyjmujemy rezerwacji online. Czy mogę przekazać właścicielowi prośbę o kontakt?",
+            create_take_message_node(tenant)
+        )
+    
     return ("Świetnie, umówmy wizytę.", create_get_service_node(tenant))
+
+
+# ==========================================
+# NODE: Przyjmij wiadomość (gdy rezerwacje wyłączone)
+# ==========================================
+
+def create_take_message_node(tenant: dict) -> dict:
+    """Node do przyjęcia wiadomości gdy rezerwacje są wyłączone"""
+    return {
+        "name": "take_message",
+        "task_messages": [
+            {
+                "role": "system",
+                "content": """Klient chciał się umówić ale rezerwacje online są wyłączone.
+                
+Zapytaj czy chce zostawić wiadomość do właściciela:
+- Jeśli TAK → zapytaj o imię, numer telefonu i krótką wiadomość
+- Jeśli NIE → pożegnaj się uprzejmie
+
+Bądź miły i przepraszający że nie możesz pomóc z rezerwacją."""
+            }
+        ],
+        "functions": [
+            leave_message_function(tenant),
+            no_message_function(),
+        ]
+    }
+
+
+def leave_message_function(tenant: dict) -> FlowsFunctionSchema:
+    return FlowsFunctionSchema(
+        name="leave_message",
+        description="Klient chce zostawić wiadomość",
+        properties={
+            "name": {"type": "string", "description": "Imię klienta"},
+            "phone": {"type": "string", "description": "Numer telefonu"},
+            "message": {"type": "string", "description": "Treść wiadomości"}
+        },
+        required=["name"],
+        handler=lambda args, fm: handle_leave_message(args, fm, tenant),
+    )
+
+
+def no_message_function() -> FlowsFunctionSchema:
+    return FlowsFunctionSchema(
+        name="no_message",
+        description="Klient nie chce zostawiać wiadomości",
+        properties={},
+        required=[],
+        handler=handle_no_message,
+    )
+
+
+async def handle_leave_message(args: dict, flow_manager: FlowManager, tenant: dict):
+    name = args.get("name", "")
+    phone = args.get("phone", "")
+    message = args.get("message", "")
+    
+    logger.info(f"📝 Message left: {name}, {phone}, {message}")
+    
+    # TODO: Zapisz wiadomość w bazie / wyślij SMS do właściciela
+    
+    return (
+        f"Dziękuję {name}. Przekażę wiadomość właścicielowi. Oddzwonimy jak najszybciej!",
+        create_end_node()
+    )
+
+
+async def handle_no_message(args: dict, flow_manager: FlowManager):
+    return (
+        "Rozumiem. Zapraszam do kontaktu telefonicznego z właścicielem. Do widzenia!",
+        create_end_node()
+    )
 
 
 # ==========================================
@@ -451,6 +540,7 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     1. Czy to nie przeszłość?
     2. Czy firma jest otwarta tego dnia?
     3. Jakie godziny są dostępne?
+    4. Jeśli klient podał godzinę → od razu potwierdź (jeśli wolna)
     """
     date_str = args.get("date", "")
     preferred_time = args.get("preferred_time", "")
@@ -514,15 +604,35 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     flow_manager.state["selected_date"] = parsed_date
     flow_manager.state["available_slots"] = available_slots
     
-    # Formatuj sloty słownie
-    slots_text = ", ".join([format_hour_polish(h) for h in available_slots[:5]])
-    if len(available_slots) > 5:
-        slots_text += " i inne"
-    
     date_formatted = format_date_polish(parsed_date)
     
+    # 6. NOWE: Jeśli klient podał preferowaną godzinę, sprawdź czy wolna
+    if preferred_time:
+        preferred_hour = parse_time(preferred_time)
+        if preferred_hour and preferred_hour in available_slots:
+            # Godzina jest wolna! Od razu potwierdź i przejdź dalej
+            flow_manager.state["selected_time"] = preferred_hour
+            logger.info(f"✅ Preferred time {preferred_hour}:00 is available, auto-confirming")
+            return (
+                f"Świetnie, {format_hour_polish(preferred_hour)} {date_formatted} jest wolna. Mogę prosić o imię do rezerwacji?",
+                create_get_name_node(tenant)
+            )
+        elif preferred_hour:
+            # Godzina zajęta, zaproponuj najbliższą wolną
+            closest = min(available_slots, key=lambda x: abs(x - preferred_hour))
+            slots_text = ", ".join([format_hour_polish(h) for h in available_slots[:3]])
+            return (
+                f"Niestety {format_hour_polish(preferred_hour)} jest zajęta. Najbliższy wolny termin to {format_hour_polish(closest)}. Pasuje? Inne opcje: {slots_text}.",
+                create_select_time_node(tenant)
+            )
+    
+    # 7. Klient nie podał godziny - zaproponuj 2-3 sloty
+    slots_text = ", ".join([format_hour_polish(h) for h in available_slots[:3]])
+    if len(available_slots) > 3:
+        slots_text += " lub inną"
+    
     return (
-        f"Na {date_formatted} mam wolne terminy: {slots_text}. Która godzina pasuje?",
+        f"Na {date_formatted} mam wolne: {slots_text}. Która godzina pasuje?",
         create_select_time_node(tenant)
     )
 
@@ -756,7 +866,13 @@ PRACOWNICY: {staff_list}"""
 Gdy klient odpowie:
 - Jeśli chce się UMÓWIĆ → użyj funkcji start_booking
 - Jeśli ma PYTANIE → użyj funkcji answer_question
-- Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation"""
+- Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation
+
+WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem, np.:
+- "Czy mogę w czymś jeszcze pomóc?"
+- "Czy chciałbyś się umówić?"
+
+NIGDY nie zostawiaj rozmówcy bez dalszej wskazówki."""
             }
         ],
         
