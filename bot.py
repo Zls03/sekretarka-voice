@@ -205,21 +205,28 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
     
-    # STT - Deepgram (format dla Twilio)
+    # STT - Deepgram
+    # UWAGA: NIE ustawiamy encoding/sample_rate bo TwilioFrameSerializer
+    # już konwertuje mulaw 8kHz → PCM 16kHz dla pipeline
+    from deepgram import LiveOptions
+    
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
-        language="pl",
-        model="nova-3",
-        encoding="mulaw",
-        sample_rate=8000,
+        live_options=LiveOptions(
+            model="nova-3",
+            language="pl",
+            smart_format=True,
+            punctuate=True,
+        )
     )
     
-    # TTS - ElevenLabs (format dla Twilio)
+    # TTS - ElevenLabs  
+    # Serializer skonwertuje PCM → mulaw dla Twilio
     tts = ElevenLabsTTSService(
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
         model="eleven_multilingual_v2",
-        output_format="ulaw_8000",
+        output_format="pcm_24000",  # Standard PCM, serializer skonwertuje
     )
     
     # LLM - OpenAI
@@ -246,12 +253,14 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator.assistant(),
     ])
     
-    # Task
+    # Task - WAŻNE: sample rate 8000 dla Twilio!
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
             enable_metrics=True,
+            audio_in_sample_rate=8000,   # Twilio wysyła 8kHz
+            audio_out_sample_rate=8000,  # Twilio odbiera 8kHz
         )
     )
     
