@@ -1,13 +1,14 @@
-# Pipecat - główny framework
+# Pipecat framework
 pipecat-ai[twilio,deepgram,elevenlabs,openai,silero]
 pipecat-ai-flows
 
-# Serwer
+# Server
 fastapi
 uvicorn[standard]
 python-dotenv
+python-multipart
 
-# HTTP (do bazy i API)
+# HTTP
 aiohttp
 httpx
 
