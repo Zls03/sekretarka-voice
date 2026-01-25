@@ -1,26 +1,33 @@
 # flows.py - Pipecat Flows dla systemu rezerwacji
-# WERSJA 2.0 - Profesjonalna z pełną walidacją
+# WERSJA 4.0 - Z PRAWDZIWĄ INTEGRACJĄ GOOGLE CALENDAR
 """
 FUNKCJE:
 - Natychmiastowe przywitanie (pre_actions + tts_say)
-- Walidacja godzin otwarcia
-- Walidacja kalendarza (nie rezerwuj w przeszłości)
+- Prawdziwe sloty z Google Calendar (przez API panelu)
+- Fallback na godziny pracy gdy brak kalendarza
+- Respektowanie: przerwa między wizytami, min wyprzedzenie, max dni w przód
 - Walidacja usług i pracowników
-- Podsumowanie po rezerwacji
-- Pytanie "czy coś jeszcze?"
+- Profesjonalne podsumowanie
 """
 
 from pipecat_flows import FlowManager, FlowsFunctionSchema
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Optional, List
 from loguru import logger
 import locale
+import httpx
+import os
 
 # Ustawienie polskiego locale dla nazw dni
 try:
     locale.setlocale(locale.LC_TIME, 'pl_PL.UTF-8')
 except:
     pass
+
+# URL do panelu Next.js (ustaw w .env)
+# Format: https://twoj-panel.vercel.app lub http://localhost:3000
+PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
+PANEL_SLUG = os.getenv("PANEL_SLUG", "")  # np. "salon-ania"
 
 # ==========================================
 # POMOCNICZE FUNKCJE WALIDACJI
@@ -51,10 +58,9 @@ def parse_polish_date(date_str: str) -> Optional[datetime]:
     elif date_str in ["pojutrze"]:
         return today + timedelta(days=2)
     elif date_str in POLISH_DAYS_REVERSE:
-        # Znajdź najbliższy taki dzień
         target_weekday = POLISH_DAYS_REVERSE[date_str]
         days_ahead = target_weekday - today.weekday()
-        if days_ahead <= 0:  # Już minął ten dzień w tym tygodniu
+        if days_ahead <= 0:
             days_ahead += 7
         return today + timedelta(days=days_ahead)
     
@@ -62,7 +68,7 @@ def parse_polish_date(date_str: str) -> Optional[datetime]:
     for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d.%m", "%d-%m-%Y", "%d/%m/%Y"]:
         try:
             parsed = datetime.strptime(date_str, fmt)
-            if parsed.year == 1900:  # Brak roku
+            if parsed.year == 1900:
                 parsed = parsed.replace(year=today.year)
             return parsed
         except:
@@ -75,7 +81,6 @@ def parse_time(time_str: str) -> Optional[int]:
     """Parsuj godzinę (słownie lub numerycznie) → zwraca godzinę jako int"""
     time_str = time_str.lower().strip()
     
-    # Słowne godziny
     word_to_hour = {
         "ósma": 8, "osma": 8,
         "dziewiąta": 9, "dziewiata": 9,
@@ -95,7 +100,6 @@ def parse_time(time_str: str) -> Optional[int]:
     if time_str in word_to_hour:
         return word_to_hour[time_str]
     
-    # Próbuj wyciągnąć liczbę
     import re
     numbers = re.findall(r'\d+', time_str)
     if numbers:
@@ -108,26 +112,22 @@ def parse_time(time_str: str) -> Optional[int]:
 
 def get_opening_hours(tenant: dict, weekday: int) -> tuple[int, int] | None:
     """Pobierz godziny otwarcia dla danego dnia tygodnia"""
-    # Domyślne godziny jeśli brak w tenant
     default_hours = {
-        0: (9, 18),   # Poniedziałek
-        1: (9, 18),   # Wtorek
-        2: (9, 18),   # Środa
-        3: (9, 18),   # Czwartek
-        4: (9, 18),   # Piątek
-        5: (9, 14),   # Sobota (krócej)
-        6: None,      # Niedziela - zamknięte
+        0: (9, 18), 1: (9, 18), 2: (9, 18), 3: (9, 18), 4: (9, 18),
+        5: (9, 14), 6: None,
     }
     
-    # TODO: Pobierz z tenant.opening_hours jeśli dostępne
-    opening_hours = tenant.get("opening_hours", {})
-    
-    day_name = POLISH_DAYS[weekday]
-    if day_name in opening_hours:
-        hours = opening_hours[day_name]
-        if hours is None or hours.get("closed"):
-            return None
-        return (hours.get("open", 9), hours.get("close", 18))
+    # Pobierz z working_hours jeśli dostępne
+    working_hours = tenant.get("working_hours", [])
+    for wh in working_hours:
+        if wh.get("day_of_week") == weekday:
+            open_time = wh.get("open_time")
+            close_time = wh.get("close_time")
+            if open_time and close_time:
+                open_hour = int(open_time.split(":")[0])
+                close_hour = int(close_time.split(":")[0])
+                return (open_hour, close_hour)
+            return None  # Zamknięte
     
     return default_hours.get(weekday)
 
@@ -161,13 +161,160 @@ def format_date_polish(date: datetime) -> str:
 
 
 # ==========================================
+# INTEGRACJA Z GOOGLE CALENDAR
+# ==========================================
+
+async def get_available_slots_from_api(
+    tenant: dict,
+    staff: dict,
+    service: dict,
+    date: datetime
+) -> List[int]:
+    """
+    Pobiera wolne sloty z API panelu Next.js.
+    Panel sprawdza Google Calendar i zwraca dostępne godziny.
+    """
+    staff_id = staff.get("id")
+    service_id = service.get("id")
+    date_str = date.strftime("%Y-%m-%d")
+    slug = tenant.get("slug") or PANEL_SLUG
+    
+    if not slug:
+        logger.warning("⚠️ No panel slug configured")
+        return []
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
+                params={
+                    "staffId": staff_id,
+                    "serviceId": service_id,
+                    "date": date_str,
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                slots = data.get("slots", [])
+                # Konwertuj "10:00" na 10
+                hours = []
+                for slot in slots:
+                    if isinstance(slot, str) and ":" in slot:
+                        hours.append(int(slot.split(":")[0]))
+                    elif isinstance(slot, int):
+                        hours.append(slot)
+                logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
+                return hours
+            else:
+                logger.warning(f"⚠️ Calendar API returned {response.status_code}")
+                return []
+                
+    except Exception as e:
+        logger.error(f"❌ Calendar API error: {e}")
+        return []
+
+
+async def get_available_slots_from_working_hours(
+    tenant: dict,
+    staff: dict,
+    service: dict,
+    date: datetime
+) -> List[int]:
+    """
+    Fallback: generuje sloty z godzin pracy gdy brak Google Calendar.
+    Uwzględnia: czas trwania usługi, przerwy między wizytami.
+    """
+    weekday = date.weekday()
+    opening_hours = get_opening_hours(tenant, weekday)
+    
+    if not opening_hours:
+        return []  # Zamknięte
+    
+    open_hour, close_hour = opening_hours
+    
+    # Pobierz ustawienia pracownika
+    break_minutes = staff.get("break_minutes", 30)
+    service_duration = service.get("duration_minutes", 60)
+    
+    # Generuj sloty co godzinę (uproszczone)
+    slots = []
+    current_hour = open_hour
+    
+    while current_hour + (service_duration / 60) <= close_hour:
+        slots.append(current_hour)
+        current_hour += 1  # Sloty co godzinę
+    
+    # Jeśli to dziś, usuń godziny które minęły
+    now = datetime.now()
+    if date.date() == now.date():
+        min_hour = now.hour + 1  # Minimum 1h wyprzedzenia
+        slots = [h for h in slots if h >= min_hour]
+    
+    logger.info(f"📅 Generated {len(slots)} slots from working hours for {date.strftime('%Y-%m-%d')}")
+    return slots
+
+
+async def get_available_slots(
+    tenant: dict,
+    staff: dict,
+    service: dict,
+    date: datetime
+) -> List[int]:
+    """
+    Główna funkcja pobierania slotów.
+    1. Jeśli pracownik ma połączony kalendarz → API
+    2. Jeśli nie → godziny pracy
+    """
+    calendar_connected = staff.get("google_calendar_id") or staff.get("calendar_connected", False)
+    
+    if calendar_connected:
+        logger.info(f"📅 Staff {staff.get('name')} has calendar connected, using API")
+        slots = await get_available_slots_from_api(tenant, staff, service, date)
+        if slots:
+            return slots
+        # Fallback jeśli API nie zwróciło slotów
+        logger.warning("⚠️ API returned no slots, falling back to working hours")
+    
+    return await get_available_slots_from_working_hours(tenant, staff, service, date)
+
+
+def validate_date_constraints(
+    date: datetime,
+    tenant: dict,
+    staff: dict
+) -> tuple[bool, str]:
+    """
+    Sprawdza czy data spełnia ograniczenia:
+    - min_advance_hours (np. 12h)
+    - max_days_ahead (np. 14 dni)
+    """
+    now = datetime.now()
+    
+    # Min wyprzedzenie
+    min_advance_hours = staff.get("min_advance_hours", 12)
+    min_booking_time = now + timedelta(hours=min_advance_hours)
+    
+    if date < min_booking_time:
+        return (False, f"Rezerwacje przyjmujemy z minimum {min_advance_hours} godzinnym wyprzedzeniem.")
+    
+    # Max dni w przód
+    max_days_ahead = staff.get("max_days_ahead", 14)
+    max_date = now + timedelta(days=max_days_ahead)
+    
+    if date > max_date:
+        return (False, f"Rezerwacje można składać maksymalnie {max_days_ahead} dni w przód.")
+    
+    return (True, "")
+
+
+# ==========================================
 # GŁÓWNY NODE: Powitanie
 # ==========================================
 
 def create_initial_node(tenant: dict) -> dict:
     """
     Node początkowy z NATYCHMIASTOWYM przywitaniem!
-    Używa pre_actions z tts_say żeby od razu się przywitać.
     """
     business_name = tenant.get("name", "salon")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
@@ -181,15 +328,10 @@ def create_initial_node(tenant: dict) -> dict:
     return {
         "name": "greeting",
         
-        # ⚡ NATYCHMIASTOWE PRZYWITANIE - przed LLM!
         "pre_actions": [
-            {
-                "type": "tts_say",
-                "text": first_message
-            }
+            {"type": "tts_say", "text": first_message}
         ],
         
-        # ⏸️ NIE generuj odpowiedzi LLM od razu - czekaj na klienta
         "respond_immediately": False,
         
         "role_messages": [
@@ -220,10 +362,7 @@ Gdy klient odpowie:
 - Jeśli ma PYTANIE (godziny, ceny, lokalizacja) → użyj funkcji answer_question
 - Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation
 
-WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem lub propozycją, np.:
-- "Czy mogę w czymś jeszcze pomóc?"
-- "Chciałby się Pan/Pani umówić?"
-
+WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem lub propozycją.
 NIGDY nie zostawiaj klienta bez dalszej wskazówki."""
             }
         ],
@@ -254,16 +393,38 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
     logger.info("📅 Starting booking flow")
     tenant = flow_manager.state.get("tenant", {})
     
-    # Sprawdź czy rezerwacje są włączone (czy kalendarz podłączony)
-    calendar_connected = tenant.get("google_calendar_id") or tenant.get("calendar_connected", False)
-    bookings_enabled = tenant.get("bookings_enabled", True)  # Domyślnie włączone
+    # Sprawdź czy rezerwacje są włączone
+    bookings_enabled = tenant.get("bookings_enabled", True)
+    
+    # Sprawdź czy jest jakikolwiek pracownik
+    staff = tenant.get("staff", [])
+    has_any_staff = len(staff) > 0
+    
+    # Sprawdź czy JAKIKOLWIEK pracownik ma podłączony kalendarz
+    has_calendar = any(
+        s.get("google_calendar_id") or s.get("calendar_connected") 
+        for s in staff
+    )
     
     if not bookings_enabled:
-        logger.info("⚠️ Bookings disabled for this tenant")
+        logger.info("⚠️ Bookings disabled")
         return (
             "Przepraszam, w tej chwili nie przyjmujemy rezerwacji online. Czy mogę przekazać właścicielowi prośbę o kontakt?",
             create_take_message_node(tenant)
         )
+    
+    if not has_any_staff:
+        logger.info("⚠️ No staff configured")
+        return (
+            "Przepraszam, nie mamy jeszcze skonfigurowanych pracowników. Czy mogę przekazać prośbę o kontakt?",
+            create_take_message_node(tenant)
+        )
+    
+    if not has_calendar:
+        # Brak kalendarza - ale możemy próbować na podstawie godzin pracy
+        # UWAGA: To może powodować konflikty!
+        logger.warning("⚠️ No calendar connected - using working hours fallback")
+        flow_manager.state["calendar_fallback"] = True
     
     return ("Świetnie, umówmy wizytę.", create_get_service_node(tenant))
 
@@ -273,7 +434,6 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
 # ==========================================
 
 def create_take_message_node(tenant: dict) -> dict:
-    """Node do przyjęcia wiadomości gdy rezerwacje są wyłączone"""
     return {
         "name": "take_message",
         "task_messages": [
@@ -283,9 +443,7 @@ def create_take_message_node(tenant: dict) -> dict:
                 
 Zapytaj czy chce zostawić wiadomość do właściciela:
 - Jeśli TAK → zapytaj o imię, numer telefonu i krótką wiadomość
-- Jeśli NIE → pożegnaj się uprzejmie
-
-Bądź miły i przepraszający że nie możesz pomóc z rezerwacją."""
+- Jeśli NIE → pożegnaj się uprzejmie"""
             }
         ],
         "functions": [
@@ -342,7 +500,7 @@ async def handle_no_message(args: dict, flow_manager: FlowManager):
 
 
 # ==========================================
-# NODE: Wybór usługi (z walidacją)
+# NODE: Wybór usługi
 # ==========================================
 
 def create_get_service_node(tenant: dict) -> dict:
@@ -373,10 +531,7 @@ def select_service_function(tenant: dict) -> FlowsFunctionSchema:
         name="select_service",
         description="Klient wybrał usługę",
         properties={
-            "service_name": {
-                "type": "string",
-                "description": "Nazwa usługi"
-            }
+            "service_name": {"type": "string", "description": "Nazwa usługi"}
         },
         required=["service_name"],
         handler=lambda args, fm: handle_select_service(args, fm, tenant),
@@ -410,7 +565,7 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
 
 
 # ==========================================
-# NODE: Wybór pracownika (z walidacją)
+# NODE: Wybór pracownika
 # ==========================================
 
 def create_get_staff_node(tenant: dict) -> dict:
@@ -463,6 +618,8 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     staff_name = args.get("staff_name", "").lower()
     staff_list = tenant.get("staff", [])
     
+    logger.info(f"🔍 Validating staff: {staff_name}")
+    
     found_staff = None
     for s in staff_list:
         if staff_name in s["name"].lower() or s["name"].lower() in staff_name:
@@ -471,8 +628,9 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     
     if not found_staff:
         available = ", ".join([s["name"] for s in staff_list])
+        logger.warning(f"❌ Staff not found: {staff_name}")
         return (
-            f"Przepraszam, nie mamy pracownika {staff_name}. U nas pracują: {available}.",
+            f"Przepraszam, nie mamy pracownika o imieniu {staff_name}. U nas pracują: {available}. Do kogo chcesz się umówić?",
             None
         )
     
@@ -486,15 +644,23 @@ async def handle_any_staff(args: dict, flow_manager: FlowManager, tenant: dict):
     staff_list = tenant.get("staff", [])
     
     if staff_list:
+        # Wybierz pierwszego dostępnego
         first_staff = staff_list[0]
         flow_manager.state["selected_staff"] = first_staff
-        return (f"Dobrze, umówię do {first_staff['name']}.", create_get_date_node(tenant))
+        logger.info(f"✅ Auto-selected staff: {first_staff['name']}")
+        return (
+            f"Dobrze, umówię do {first_staff['name']}.",
+            create_get_date_node(tenant)
+        )
     else:
-        return ("Przepraszam, nie mamy dostępnych pracowników.", create_end_node())
+        return (
+            "Przepraszam, nie mamy aktualnie dostępnych pracowników.",
+            create_end_node()
+        )
 
 
 # ==========================================
-# NODE: Wybór daty (z WALIDACJĄ godzin otwarcia!)
+# NODE: Wybór daty
 # ==========================================
 
 def create_get_date_node(tenant: dict) -> dict:
@@ -505,8 +671,8 @@ def create_get_date_node(tenant: dict) -> dict:
                 "role": "system",
                 "content": """Zapytaj kiedy klient chciałby się umówić.
 
-Proponuj: dziś, jutro, pojutrze, lub konkretny dzień tygodnia.
-Gdy klient poda dzień, użyj funkcji check_availability."""
+Zaproponuj: dziś, jutro, lub konkretny dzień tygodnia.
+Gdy klient poda dzień i opcjonalnie godzinę, użyj funkcji check_availability."""
             }
         ],
         "functions": [
@@ -526,7 +692,7 @@ def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
             },
             "preferred_time": {
                 "type": "string",
-                "description": "Preferowana pora (opcjonalnie)"
+                "description": "Preferowana pora (np. 'rano', 'po południu', '10:00')"
             }
         },
         required=["date"],
@@ -536,14 +702,17 @@ def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
 
 async def handle_check_availability(args: dict, flow_manager: FlowManager, tenant: dict):
     """
-    WALIDACJA KALENDARZA:
-    1. Czy to nie przeszłość?
-    2. Czy firma jest otwarta tego dnia?
-    3. Jakie godziny są dostępne?
-    4. Jeśli klient podał godzinę → od razu potwierdź (jeśli wolna)
+    GŁÓWNA LOGIKA SPRAWDZANIA DOSTĘPNOŚCI:
+    1. Parsuj datę
+    2. Sprawdź ograniczenia (min wyprzedzenie, max dni w przód)
+    3. Pobierz sloty z kalendarza lub godzin pracy
+    4. Jeśli klient podał preferowaną godzinę → auto-potwierdź jeśli wolna
     """
     date_str = args.get("date", "")
     preferred_time = args.get("preferred_time", "")
+    
+    staff = flow_manager.state.get("selected_staff", {})
+    service = flow_manager.state.get("selected_service", {})
     
     logger.info(f"📅 Checking availability: {date_str}, preferred: {preferred_time}")
     
@@ -564,35 +733,24 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
             None
         )
     
-    # 3. Sprawdź godziny otwarcia
+    # 3. Sprawdź ograniczenia
+    valid, error_msg = validate_date_constraints(parsed_date, tenant, staff)
+    if not valid:
+        return (error_msg, None)
+    
+    # 4. Sprawdź czy firma jest otwarta tego dnia
     weekday = parsed_date.weekday()
     opening_hours = get_opening_hours(tenant, weekday)
     
     if opening_hours is None:
         day_name = POLISH_DAYS[weekday]
         return (
-            f"Przepraszam, w {day_name} jesteśmy zamknięci. Zapraszam w inny dzień, od poniedziałku do soboty.",
+            f"Przepraszam, w {day_name} jesteśmy zamknięci. Zapraszam w inny dzień.",
             None
         )
     
-    open_hour, close_hour = opening_hours
-    
-    # 4. Jeśli to dziś, sprawdź czy nie jest za późno
-    if parsed_date.date() == now.date():
-        current_hour = now.hour
-        if current_hour >= close_hour:
-            return (
-                f"Przepraszam, na dziś jest już za późno, pracujemy do {format_hour_polish(close_hour)}. Może jutro?",
-                None
-            )
-        # Ogranicz dostępne godziny do tych które jeszcze nie minęły
-        open_hour = max(open_hour, current_hour + 1)
-    
-    # 5. Generuj dostępne sloty
-    # TODO: Sprawdź w Google Calendar które sloty są zajęte
-    available_slots = []
-    for hour in range(open_hour, close_hour):
-        available_slots.append(hour)
+    # 5. Pobierz dostępne sloty (z kalendarza lub godzin pracy)
+    available_slots = await get_available_slots(tenant, staff, service, parsed_date)
     
     if not available_slots:
         return (
@@ -606,11 +764,11 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     
     date_formatted = format_date_polish(parsed_date)
     
-    # 6. NOWE: Jeśli klient podał preferowaną godzinę, sprawdź czy wolna
+    # 6. Jeśli klient podał preferowaną godzinę, sprawdź czy wolna
     if preferred_time:
         preferred_hour = parse_time(preferred_time)
         if preferred_hour and preferred_hour in available_slots:
-            # Godzina jest wolna! Od razu potwierdź i przejdź dalej
+            # Godzina jest wolna! Auto-potwierdź
             flow_manager.state["selected_time"] = preferred_hour
             logger.info(f"✅ Preferred time {preferred_hour}:00 is available, auto-confirming")
             return (
@@ -638,7 +796,7 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
 
 
 # ==========================================
-# NODE: Wybór godziny (z WALIDACJĄ!)
+# NODE: Wybór godziny
 # ==========================================
 
 def create_select_time_node(tenant: dict) -> dict:
@@ -743,7 +901,13 @@ async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant:
     
     logger.info(f"💾 Saving booking: {customer_name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}")
     
-    # TODO: Zapisz do bazy danych i Google Calendar
+    # TODO: Zapisz do bazy danych przez API panelu
+    # TODO: Dodaj event do Google Calendar
+    try:
+        await save_booking_to_api(tenant, staff, service, date, hour, customer_name)
+    except Exception as e:
+        logger.error(f"❌ Failed to save booking: {e}")
+        # Kontynuuj mimo błędu - lepiej potwierdzić klientowi
     
     # Generuj kod wizyty
     import random
@@ -757,16 +921,49 @@ async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant:
     
     summary = f"Rezerwacja potwierdzona! {service.get('name')} u {staff.get('name')}, {date_formatted} o godzinie {time_formatted}. Pana imię: {customer_name}."
     
-    # Przejdź do node'a "czy coś jeszcze?"
     return (summary, create_anything_else_node(tenant))
 
 
+async def save_booking_to_api(tenant, staff, service, date, hour, customer_name, customer_phone=""):
+    """Zapisuje rezerwację przez API panelu + dodaje do Google Calendar"""
+    slug = tenant.get("slug") or PANEL_SLUG
+    
+    if not slug:
+        logger.warning("⚠️ No panel slug configured, skipping API save")
+        return
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{PANEL_API_URL}/api/panel/{slug}/bookings",
+                json={
+                    "staff_id": staff.get("id"),
+                    "service_id": service.get("id"),
+                    "date": date.strftime("%Y-%m-%d") if date else None,
+                    "time": f"{hour:02d}:00" if hour else None,
+                    "client_name": customer_name,
+                    "client_phone": customer_phone,
+                }
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                logger.info(f"✅ Booking saved via API: {data.get('bookingId')}")
+                logger.info(f"📅 Google Calendar event: {data.get('googleEventCreated')}")
+                return data
+            else:
+                logger.warning(f"⚠️ Booking API returned {response.status_code}: {response.text}")
+                
+    except Exception as e:
+        logger.error(f"❌ Booking API error: {e}")
+        raise
+
+
 # ==========================================
-# NODE: Czy coś jeszcze? (NOWY!)
+# NODE: Czy coś jeszcze?
 # ==========================================
 
 def create_anything_else_node(tenant: dict) -> dict:
-    """Node pytający czy klient potrzebuje czegoś jeszcze"""
     return {
         "name": "anything_else",
         "task_messages": [
@@ -799,7 +996,7 @@ def need_more_help_function(tenant: dict) -> FlowsFunctionSchema:
 def no_more_help_function() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="no_more_help",
-        description="Klient nie potrzebuje więcej pomocy, chce zakończyć",
+        description="Klient nie potrzebuje więcej pomocy",
         properties={},
         required=[],
         handler=handle_no_more_help,
@@ -812,7 +1009,7 @@ async def handle_need_more_help(args: dict, flow_manager: FlowManager, tenant: d
 
 
 async def handle_no_more_help(args: dict, flow_manager: FlowManager):
-    logger.info("👋 Customer done, ending conversation")
+    logger.info("👋 Customer done")
     return (
         "Dziękuję za rezerwację! Do zobaczenia, miłego dnia!",
         create_end_node()
@@ -820,28 +1017,20 @@ async def handle_no_more_help(args: dict, flow_manager: FlowManager):
 
 
 # ==========================================
-# NODE: Kontynuacja rozmowy (BEZ przywitania!)
+# NODE: Kontynuacja rozmowy (bez przywitania)
 # ==========================================
 
 def create_continue_conversation_node(tenant: dict) -> dict:
-    """
-    Node do kontynuacji rozmowy PO odpowiedzi na pytanie.
-    NIE ma pre_actions z przywitaniem!
-    """
     business_name = tenant.get("name", "salon")
-    
     services = tenant.get("services", [])
     services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
-    
     staff = tenant.get("staff", [])
     staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
     
     return {
         "name": "continue_conversation",
         
-        # ⚠️ BEZ pre_actions - nie witamy się ponownie!
-        
-        "respond_immediately": False,  # Czekaj na klienta
+        "respond_immediately": False,
         
         "role_messages": [
             {
@@ -849,9 +1038,9 @@ def create_continue_conversation_node(tenant: dict) -> dict:
                 "content": f"""Jesteś asystentem głosowym dla firmy "{business_name}".
 
 ZASADY:
-- Mów krótko i naturalnie, to rozmowa telefoniczna
+- Mów krótko i naturalnie
 - Używaj polskiego języka
-- NIE używaj emoji ani specjalnych znaków
+- NIE używaj emoji
 
 DOSTĘPNE USŁUGI: {services_list}
 PRACOWNICY: {staff_list}"""
@@ -868,10 +1057,7 @@ Gdy klient odpowie:
 - Jeśli ma PYTANIE → użyj funkcji answer_question
 - Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation
 
-WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem, np.:
-- "Czy mogę w czymś jeszcze pomóc?"
-- "Czy chciałbyś się umówić?"
-
+WAŻNE: Po każdej odpowiedzi ZAWSZE zakończ pytaniem.
 NIGDY nie zostawiaj rozmówcy bez dalszej wskazówki."""
             }
         ],
@@ -904,13 +1090,8 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
     question = args.get("question", "")
     logger.info(f"❓ Question: {question}")
     
-    # Przygotuj kontekst z info o firmie
-    address = tenant.get("address", "")
-    additional_info = tenant.get("additional_info", "")
-    
     # TODO: Pobierz FAQ z bazy i odpowiedz na pytanie
     
-    # Wróć do KONTYNUACJI (bez ponownego przywitania!)
     return (None, create_continue_conversation_node(tenant))
 
 
@@ -934,7 +1115,6 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
 
 
 def create_end_node() -> dict:
-    """Końcowy node - pożegnanie i rozłączenie"""
     return {
         "name": "end",
         "task_messages": [

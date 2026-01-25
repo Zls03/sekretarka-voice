@@ -38,6 +38,9 @@ from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 # Pipecat Flows
 from pipecat_flows import FlowManager
 
+# Idle timeout processor
+from pipecat.processors.user_idle_processor import UserIdleProcessor
+
 # Nasze moduły
 from helpers import get_tenant_by_phone, db
 from flows import create_initial_node
@@ -240,12 +243,110 @@ async def websocket_endpoint(websocket: WebSocket):
     context_aggregator = llm.create_context_aggregator(context)
     
     # ==========================================
+    # TIMEOUT HANDLING
+    # ==========================================
+    
+    # Konfiguracja timeoutów
+    MAX_CALL_DURATION = 4 * 60  # 4 minuty max
+    IDLE_TIMEOUT = 10.0         # 10 sekund ciszy → pytanie
+    
+    call_start_time = datetime.utcnow()
+    
+    async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
+        """
+        Obsługa ciszy od użytkownika.
+        retry_count=1 → pierwsze przypomnienie
+        retry_count=2 → drugie przypomnienie  
+        retry_count>=3 → rozłącz
+        
+        Zwraca True żeby kontynuować monitoring, False żeby zakończyć.
+        """
+        logger.info(f"⏰ User idle - retry #{retry_count}")
+        
+        if retry_count == 1:
+            # Pierwsze przypomnienie
+            from pipecat.frames.frames import LLMMessagesAppendFrame
+            await processor.push_frame(
+                LLMMessagesAppendFrame(
+                    messages=[{
+                        "role": "system",
+                        "content": "Użytkownik milczy. Zapytaj uprzejmie: 'Czy jest Pan jeszcze przy telefonie?'"
+                    }],
+                    run_llm=True
+                )
+            )
+            return True  # Kontynuuj monitoring
+            
+        elif retry_count == 2:
+            # Drugie przypomnienie
+            from pipecat.frames.frames import LLMMessagesAppendFrame
+            await processor.push_frame(
+                LLMMessagesAppendFrame(
+                    messages=[{
+                        "role": "system", 
+                        "content": "Użytkownik nadal milczy. Powiedz: 'Jeśli potrzebujesz więcej czasu, proszę dać znać.'"
+                    }],
+                    run_llm=True
+                )
+            )
+            return True  # Kontynuuj monitoring
+            
+        else:
+            # Trzeci raz - rozłącz
+            logger.info("⏰ User idle too long - ending call")
+            from pipecat.frames.frames import LLMMessagesAppendFrame, EndFrame
+            await processor.push_frame(
+                LLMMessagesAppendFrame(
+                    messages=[{
+                        "role": "system",
+                        "content": "Zakończ rozmowę mówiąc: 'Rozumiem, że jest Pan zajęty. Zapraszam do ponownego kontaktu. Do widzenia!'"
+                    }],
+                    run_llm=True
+                )
+            )
+            # Daj czas na TTS
+            await asyncio.sleep(4)
+            await processor.push_frame(EndFrame())
+            return False  # Zakończ monitoring
+    
+    # User Idle Processor - wykrywa ciszę od użytkownika
+    user_idle = UserIdleProcessor(
+        callback=handle_user_idle,
+        timeout=IDLE_TIMEOUT,
+    )
+    
+    # ==========================================
+    # MAX CALL DURATION MONITOR
+    # ==========================================
+    
+    async def check_max_duration():
+        """Sprawdza czy nie przekroczono max czasu rozmowy"""
+        while True:
+            await asyncio.sleep(10)  # Sprawdzaj co 10 sekund
+            elapsed = (datetime.utcnow() - call_start_time).total_seconds()
+            
+            if elapsed >= MAX_CALL_DURATION - 30:  # 30 sekund przed końcem
+                logger.warning(f"⚠️ Call approaching max duration: {elapsed:.0f}s / {MAX_CALL_DURATION}s")
+                
+            if elapsed >= MAX_CALL_DURATION:
+                logger.warning(f"🛑 Max call duration reached: {elapsed:.0f}s - ending call")
+                # Wyślij ostrzeżenie przez TTS i zakończ
+                try:
+                    from pipecat.frames.frames import TextFrame, EndFrame
+                    # Nie mamy łatwego dostępu do pipeline tu, więc po prostu cancelujemy
+                    await task.cancel()
+                except:
+                    pass
+                break
+    
+    # ==========================================
     # PIPELINE
     # ==========================================
     
     pipeline = Pipeline([
         transport.input(),
         stt,
+        user_idle,  # ← DODANE: wykrywa ciszę użytkownika
         context_aggregator.user(),
         llm,
         tts,
@@ -287,6 +388,8 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
+        # Uruchom monitor max czasu rozmowy
+        asyncio.create_task(check_max_duration())
         await flow_manager.initialize(create_initial_node(tenant))
     
     @transport.event_handler("on_client_disconnected")
