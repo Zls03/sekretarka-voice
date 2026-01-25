@@ -5,23 +5,12 @@ from loguru import logger
 
 
 def create_initial_node(tenant: dict) -> dict:
-    """
-    Pierwszy node - powitanie i rozpoznanie intencji.
-    
-    Flow:
-    greeting → [booking] → get_service
-            → [question] → answer_question  
-            → [goodbye] → end
-    """
-    
     business_name = tenant.get("name", "salon")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
     
-    # Formatuj usługi
     services = tenant.get("services", [])
     services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
     
-    # Formatuj pracowników
     staff = tenant.get("staff", [])
     staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
     
@@ -47,12 +36,14 @@ WAŻNE: Jeśli klient pyta o coś czego nie ma (pracownik, usługa), POWIEDZ ŻE
         "task_messages": [
             {
                 "role": "system",
-                "content": f"""Przywitaj się: "{first_message}"
+                "content": f"""NAJPIERW powiedz DOKŁADNIE: "{first_message}"
 
-Następnie rozpoznaj czego chce klient:
+Potem CZEKAJ na odpowiedź klienta. Gdy klient odpowie:
 - Jeśli chce się UMÓWIĆ/ZAREZERWOWAĆ → użyj funkcji start_booking
-- Jeśli ma PYTANIE (godziny, ceny, lokalizacja) → użyj funkcji answer_question
-- Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation"""
+- Jeśli ma PYTANIE → użyj funkcji answer_question
+- Jeśli chce się POŻEGNAĆ → użyj funkcji end_conversation
+
+WAŻNE: NIE używaj żadnej funkcji dopóki klient nie odpowie! Najpierw się PRZYWITAJ."""
             }
         ],
         "functions": [
@@ -61,7 +52,6 @@ Następnie rozpoznaj czego chce klient:
             end_conversation_function(),
         ]
     }
-
 
 # ==========================================
 # FUNKCJA: Rozpocznij rezerwację
