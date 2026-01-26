@@ -26,7 +26,7 @@ from flows_helpers import (
 # NODE: Powitanie
 # ==========================================
 
-def create_initial_node(tenant: dict) -> dict:
+def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     business_name = tenant.get("name", "salon")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
     
@@ -36,9 +36,17 @@ def create_initial_node(tenant: dict) -> dict:
     staff = tenant.get("staff", [])
     staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
     
+    # Jeśli powitanie już odtworzone przez Twilio <Play> - nie mów znowu
+    if greeting_played:
+        pre_actions = []
+        logger.info("🎵 Greeting already played by Twilio - skipping TTS")
+    else:
+        pre_actions = [{"type": "tts_say", "text": first_message}]
+        logger.info("🔊 Using TTS for greeting")
+    
     return {
         "name": "greeting",
-        "pre_actions": [{"type": "tts_say", "text": first_message}],
+        "pre_actions": pre_actions,
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
@@ -64,10 +72,8 @@ PRACOWNICY: {staff_list}"""
         "functions": [
             start_booking_function(),
             answer_question_function(tenant),
-            end_conversation_function(),
         ]
     }
-
 
 # ==========================================
 # FUNKCJA: Odpowiedź na pytanie (NAPRAWIONA!)
@@ -95,22 +101,24 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
     # Przejdź do node'a który ODPOWIE na pytanie
     return (None, create_answer_node(tenant, question, context))
 
-
 def create_answer_node(tenant: dict, question: str, context: str) -> dict:
     """Node który odpowiada na pytanie klienta"""
     
-    # Sprawdź czy to pytanie o usługi/cennik (wtedy można zaproponować rezerwację)
     question_lower = question.lower()
     is_service_question = any(word in question_lower for word in ["usług", "cen", "ile kosztuje", "cennik"])
-    
-    # Czy kalendarz włączony?
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     
-    # Buduj końcówkę odpowiedzi
+    # Losowa końcówka
+    endings = [
+        "Czy mogę jeszcze w czymś pomóc?",
+        "Czy masz jeszcze jakieś pytania?",
+        "Czy jest coś jeszcze, w czym mogę pomóc?",
+    ]
+    
     if is_service_question and booking_enabled:
-        ending = "Jeśli chcesz, mogę umówić wizytę. A może masz inne pytanie?"
-    else:
-        ending = "Czy mogę jeszcze w czymś pomóc?"
+        endings.append("Jeśli chcesz, mogę umówić wizytę.")
+    
+    ending = random.choice(endings)
     
     return {
         "name": "answer_question_node",
@@ -123,27 +131,21 @@ INFORMACJE O FIRMIE:
 
 ZASADY:
 - Odpowiedz KRÓTKO (1-2 zdania)
-- Użyj informacji z FAQ jeśli pasują do pytania
-- Jeśli nie znasz odpowiedzi, powiedz szczerze
+- Użyj informacji z FAQ jeśli pasują
 - Na końcu powiedz: "{ending}"
-- NIE proponuj rezerwacji przy każdym pytaniu!"""
+- NIE proponuj rezerwacji przy każdym pytaniu"""
         }],
         "task_messages": [{
             "role": "system",
             "content": f"""Pytanie: "{question}"
 
-Po odpowiedzi CZEKAJ na reakcję klienta:
-- Chce się umówić → start_booking
-- Ma pytanie → answer_question
-- Żegna się → end_conversation"""
+Po odpowiedzi CZEKAJ na reakcję klienta."""
         }],
         "functions": [
             start_booking_function(),
             answer_question_function(tenant),
-            end_conversation_function(),
         ]
     }
-
 
 # ==========================================
 # FUNKCJA: Rozpocznij rezerwację
@@ -508,7 +510,6 @@ PRACOWNICY: {", ".join([s["name"] for s in staff])}"""
         "functions": [
             start_booking_function(),
             answer_question_function(tenant),
-            end_conversation_function(),
         ]
     }
 
@@ -583,7 +584,7 @@ def create_end_node() -> dict:
     return {
         "name": "end",
         "pre_actions": [
-            {"type": "tts_say", "text": "Do widzenia!"}
+            {"type": "tts_say", "text": "Dziękuję za rozmowę, do usłyszenia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}

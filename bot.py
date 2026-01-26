@@ -51,10 +51,6 @@ logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {messa
 
 app = FastAPI()
 
-
-# ==========================================
-# TWILIO INCOMING - Połączenie przychodzące
-# ==========================================
 @app.post("/twilio/incoming")
 async def twilio_incoming(request: Request):
     """Obsługa połączenia przychodzącego z Twilio"""
@@ -86,21 +82,77 @@ async def twilio_incoming(request: Request):
     
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     
-    # TwiML - połącz z WebSocket
     host = request.headers.get("host", "localhost")
-    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+    
+    # Sprawdź czy mamy pre-generowane audio powitania
+    if tenant.get("greeting_audio"):
+        # Mamy audio - użyj <Play> przed <Connect>
+        greeting_audio_url = f"https://{host}/greeting-audio/{tenant['id']}"
+        logger.info(f"🎵 Using pre-generated greeting audio")
+        
+        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>{greeting_audio_url}</Play>
+    <Connect>
+        <Stream url="wss://{host}/ws">
+            <Parameter name="callSid" value="{call_sid}" />
+            <Parameter name="tenantId" value="{tenant['id']}" />
+            <Parameter name="greetingPlayed" value="true" />
+        </Stream>
+    </Connect>
+</Response>'''
+    else:
+        # Brak audio - standardowy flow z TTS
+        logger.info(f"🔊 No greeting audio - will use TTS")
+        
+        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
+            <Parameter name="greetingPlayed" value="false" />
         </Stream>
     </Connect>
 </Response>'''
     
     return Response(content=twiml, media_type="application/xml")
 
-
+# ==========================================
+# GREETING AUDIO - Serwowanie MP3 dla Twilio
+# ==========================================
+@app.get("/greeting-audio/{tenant_id}")
+async def get_greeting_audio(tenant_id: str):
+    """Zwraca pre-generowane MP3 powitania dla Twilio <Play>"""
+    import base64
+    
+    try:
+        rows = await db.execute(
+            "SELECT greeting_audio FROM tenants WHERE id = ?", 
+            [tenant_id]
+        )
+        
+        if rows and rows[0].get("greeting_audio"):
+            audio_base64 = rows[0]["greeting_audio"]
+            audio_bytes = base64.b64decode(audio_base64)
+            
+            logger.info(f"🎵 Serving greeting audio for {tenant_id}: {len(audio_bytes)} bytes")
+            
+            return Response(
+                content=audio_bytes,
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Length": str(len(audio_bytes)),
+                    "Cache-Control": "public, max-age=3600"
+                }
+            )
+        else:
+            logger.warning(f"⚠️ No greeting audio for {tenant_id}")
+            return Response(status_code=404)
+            
+    except Exception as e:
+        logger.error(f"Greeting audio error: {e}")
+        return Response(status_code=500)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -119,6 +171,7 @@ async def websocket_endpoint(websocket: WebSocket):
     stream_sid = None
     tenant = None
     call_sid = None
+    greeting_played = False
     
     try:
         while True:
@@ -137,6 +190,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
+                greeting_played = custom_params.get("greetingPlayed", "false") == "true"
                 
                 logger.info(f"📋 Stream started: {stream_sid}")
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
@@ -161,7 +215,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             "SELECT question, answer FROM tenant_faq WHERE tenant_id = ?",
                             [tenant_id]
                         )
-                        tenant["faq"] = [dict(f) for f in faq]
+                        # Greeting audio jest już w tenant z SELECT *
+                        logger.info(f"✅ Loaded tenant: {tenant.get('name')}, greeting_audio: {'YES' if tenant.get('greeting_audio') else 'NO'}")
 
                         
                         logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
@@ -372,14 +427,19 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
     
+    # Import funkcji end_conversation z flows
+    from flows import end_conversation_function
+    
     # ==========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
+    from flows import end_conversation_function
     
     flow_manager = FlowManager(
         task=task,
         llm=llm,
         context_aggregator=context_aggregator,
+        global_functions=[end_conversation_function()],
     )
     
     # Zapisz dane tenant w state
@@ -387,6 +447,7 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["call_sid"] = call_sid
     flow_manager.state["stream_sid"] = stream_sid
     flow_manager.state["started_at"] = datetime.utcnow()
+    flow_manager.state["greeting_played"] = greeting_played
     
     # ==========================================
     # EVENT HANDLERS
@@ -397,7 +458,8 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("🎤 Client connected - starting flow")
         # Uruchom monitor max czasu rozmowy
         asyncio.create_task(check_max_duration())
-        await flow_manager.initialize(create_initial_node(tenant))
+        # Przekaż info czy powitanie już odtworzone przez Twilio <Play>
+        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
     
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
