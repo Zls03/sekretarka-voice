@@ -32,6 +32,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 # Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq import GroqLLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
