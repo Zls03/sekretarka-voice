@@ -13,6 +13,7 @@ import random
 import string
 
 # Import helperów
+from helpers import db
 from flows_helpers import (
     parse_polish_date, parse_time,
     format_hour_polish, format_date_polish,
@@ -976,76 +977,70 @@ def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Przekieruj rozmowę na numer właściciela przez Twilio"""
-    import os
-    import httpx
-    
+    """Zapisz request o transfer i zakończ stream - Twilio wykona <Dial> po zamknięciu WebSocket"""
     transfer_number = tenant.get("transfer_number", "")
     
     if not transfer_number:
-        logger.warning("📞 Transfer requested but no number configured")
-        return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", 
+        return ("Przepraszam, przekierowanie nie jest dostępne. Czy mogę przekazać wiadomość?",
                 create_message_only_node(tenant))
     
     call_sid = flow_manager.state.get("call_sid")
     
     if not call_sid:
         logger.error("📞 No call_sid for transfer!")
-        return ("Przepraszam, wystąpił problem. Czy mogę przekazać wiadomość?", 
+        return ("Przepraszam, wystąpił problem. Czy mogę przekazać wiadomość?",
                 create_message_only_node(tenant))
     
-    # Formatuj numer (dodaj +48 jeśli brak)
+    # Formatuj numer
     if not transfer_number.startswith("+"):
         transfer_number = f"+48{transfer_number.replace(' ', '').replace('-', '')}"
     
-    logger.info(f"📞 Transferring call {call_sid} to {transfer_number}")
-    
-    # Twilio credentials
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    
-    if not account_sid or not auth_token:
-        logger.error("📞 Twilio credentials not configured!")
-        return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", 
-                create_message_only_node(tenant))
-    
-    # TwiML do przekierowania
-    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Łączę z właścicielem, proszę czekać.</Say>
-    <Dial timeout="30" callerId="{tenant.get('phone_number', '')}">
-        {transfer_number}
-    </Dial>
-    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Przepraszamy, nie udało się połączyć. Prosimy spróbować później.</Say>
-</Response>'''
+    logger.info(f"📞 Saving transfer request: {call_sid} → {transfer_number}")
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}.json",
-                auth=(account_sid, auth_token),
-                data={"Twiml": twiml},
-                timeout=10.0
+        # Utwórz tabelę jeśli nie istnieje
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_requests (
+                call_sid TEXT PRIMARY KEY,
+                transfer_number TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT
             )
-            
-            if response.status_code == 200:
-                logger.info(f"📞 Transfer initiated successfully!")
-                # Zapisz w state
-                flow_manager.state["transfer_requested"] = True
-                flow_manager.state["transfer_number"] = transfer_number
-                # Nie mówimy nic - Twilio przejmuje
-                return (None, create_end_node())
-            else:
-                logger.error(f"📞 Twilio transfer error: {response.status_code}")
-                logger.error(f"📞 Response: {response.text}")
-                logger.error(f"📞 Call SID: {call_sid}, Transfer to: {transfer_number}")
-                return ("Przepraszam, nie udało się przekierować. Czy mogę przekazać wiadomość?", 
-                        create_message_only_node(tenant))
-                
+        """)
+        
+        # Zapisz request do bazy
+        await db.execute(
+            """INSERT OR REPLACE INTO transfer_requests (call_sid, transfer_number, status, created_at)
+               VALUES (?, ?, 'pending', datetime('now'))""",
+            [call_sid, transfer_number]
+        )
+        logger.info(f"📞 Transfer request saved for {call_sid}")
+        
     except Exception as e:
-        logger.error(f"📞 Transfer error: {e}")
-        return ("Przepraszam, wystąpił problem z przekierowaniem. Czy mogę przekazać wiadomość?", 
+        logger.error(f"📞 Failed to save transfer request: {e}")
+        return ("Przepraszam, wystąpił problem z przekierowaniem. Czy mogę przekazać wiadomość?",
                 create_message_only_node(tenant))
+    
+    # Oznacz że to transfer (nie zwykłe zakończenie)
+    flow_manager.state["transfer_requested"] = True
+    
+    # Powiedz że łączysz i zamknij stream - Twilio wykona transfer w /twilio/after-stream
+    return ("Łączę z właścicielem, proszę chwilę poczekać.", create_transfer_end_node())
+
+
+def create_transfer_end_node() -> dict:
+    """Specjalny node końcowy dla transferu - bez pożegnania!"""
+    return {
+        "name": "transfer_end",
+        "respond_immediately": False,
+        "pre_actions": [],  # Brak pożegnania - klient czeka na transfer
+        "post_actions": [
+            {"type": "end_conversation"}
+        ],
+        "role_messages": [],
+        "task_messages": [],
+        "functions": []
+    }
 # ==========================================
 # NODE: Zakończenie
 # ==========================================

@@ -95,7 +95,7 @@ async def twilio_incoming(request: Request):
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>
-    <Connect>
+    <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
@@ -103,6 +103,7 @@ async def twilio_incoming(request: Request):
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Do widzenia.</Say>
 </Response>'''
     
     return Response(content=twiml, media_type="application/xml")
@@ -602,6 +603,66 @@ async def twilio_status(request: Request):
             logger.error(f"Twilio status error: {e}")
     
     return Response(content="OK", media_type="text/plain")
+
+# ==========================================
+# TWILIO AFTER STREAM - Obsługa transferu po zakończeniu WebSocket
+# ==========================================
+@app.post("/twilio/after-stream")
+async def twilio_after_stream(request: Request):
+    """Po zakończeniu WebSocket - sprawdź czy był request o transfer"""
+    form = await request.form()
+    call_sid = request.query_params.get("callSid") or form.get("CallSid", "")
+    
+    logger.info(f"📞 After stream callback for {call_sid}")
+    
+    try:
+        # Sprawdź czy był request o transfer
+        transfer_data = await db.execute(
+            "SELECT transfer_number FROM transfer_requests WHERE call_sid = ? AND status = 'pending'",
+            [call_sid]
+        )
+        
+        if transfer_data and transfer_data[0].get("transfer_number"):
+            transfer_number = transfer_data[0]["transfer_number"]
+            logger.info(f"📞 Executing transfer to {transfer_number}")
+            
+            # Oznacz jako wykonany
+            await db.execute(
+                "UPDATE transfer_requests SET status = 'completed' WHERE call_sid = ?",
+                [call_sid]
+            )
+            
+            # Pobierz numer salonu dla caller ID
+            tenant_data = await db.execute(
+                """SELECT t.phone_number FROM tenants t 
+                   JOIN call_logs cl ON cl.tenant_id = t.id 
+                   WHERE cl.call_sid = ?""",
+                [call_sid]
+            )
+            caller_id = tenant_data[0]["phone_number"] if tenant_data else ""
+            
+            # Zwróć TwiML z Dial - przekieruj do właściciela
+            twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial timeout="30" callerId="{caller_id}">
+        {transfer_number}
+    </Dial>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Przepraszamy, nie udało się połączyć. Do widzenia.</Say>
+</Response>'''
+            
+            logger.info(f"📞 Transfer TwiML generated for {transfer_number}")
+            return Response(content=twiml, media_type="application/xml")
+        
+    except Exception as e:
+        logger.error(f"📞 After stream error: {e}")
+    
+    # Brak transferu lub błąd - zakończ normalnie
+    logger.info(f"📞 No transfer for {call_sid} - hanging up")
+    twiml = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Hangup/>
+</Response>'''
+    return Response(content=twiml, media_type="application/xml")
 # ==========================================
 # HEALTH CHECK
 # ==========================================
