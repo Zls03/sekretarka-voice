@@ -641,9 +641,10 @@ async def twilio_after_stream(request: Request):
             )
             caller_id = tenant_data[0]["phone_number"] if tenant_data else ""
             
-            # Zwróć TwiML z Dial - przekieruj do właściciela
+            # Zwróć TwiML z Dial - przekieruj do właściciela z muzyką na czekanie
             twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Play>http://twimlets.com/holdmusic?Bucket=com.twilio.music.ambient</Play>
     <Dial timeout="30" callerId="{caller_id}">
         {transfer_number}
     </Dial>
