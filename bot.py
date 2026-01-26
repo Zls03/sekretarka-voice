@@ -282,7 +282,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # Groq - ultra szybki LLM (4-10x szybszy niż OpenAI)
     llm = GroqLLMService(
         api_key=os.getenv("GROQ_API_KEY"),
-        model="llama-3.3-70b-versatile",
+        model="llama3-groq-70b-8192-tool-use-preview",
     )
     
     # Context
