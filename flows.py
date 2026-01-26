@@ -102,24 +102,6 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
     return (None, create_answer_node(tenant, question, context))
 
 def create_answer_node(tenant: dict, question: str, context: str) -> dict:
-    """Node który odpowiada na pytanie klienta"""
-    
-    question_lower = question.lower()
-    is_service_question = any(word in question_lower for word in ["usług", "cen", "ile kosztuje", "cennik"])
-    booking_enabled = tenant.get("booking_enabled", 1) == 1
-    
-    # Losowa końcówka
-    endings = [
-        "Czy mogę jeszcze w czymś pomóc?",
-        "Czy masz jeszcze jakieś pytania?",
-        "Czy jest coś jeszcze, w czym mogę pomóc?",
-    ]
-    
-    if is_service_question and booking_enabled:
-        endings.append("Jeśli chcesz, mogę umówić wizytę.")
-    
-    ending = random.choice(endings)
-    
     return {
         "name": "answer_question_node",
         "role_messages": [{
@@ -132,8 +114,9 @@ INFORMACJE O FIRMIE:
 ZASADY:
 - Odpowiedz KRÓTKO (1-2 zdania)
 - Użyj informacji z FAQ jeśli pasują
-- Na końcu powiedz: "{ending}"
-- NIE proponuj rezerwacji przy każdym pytaniu"""
+- Na końcu zadaj KRÓTKIE pytanie czy klient potrzebuje czegoś jeszcze
+- WAŻNE: Użyj INNEGO zakończenia niż w poprzednich odpowiedziach! Wybierz coś nowego, np: "Masz inne pytania?", "Coś jeszcze?", "Czy to wszystko?", "Mogę jeszcze pomóc?"
+- NIE POWTARZAJ tego samego zakończenia dwa razy"""
         }],
         "task_messages": [{
             "role": "system",
@@ -584,12 +567,9 @@ def create_end_node() -> dict:
     return {
         "name": "end",
         "pre_actions": [
-            {"type": "tts_say", "text": "Dziękuje, Do widzenia!"}
+            {"type": "tts_say", "text": "Do widzenia, miłego dnia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}
         ],
-        "role_messages": [],
-        "task_messages": [],  # ← PUSTE! Nie generuj nic więcej
-        "functions": []
     }
