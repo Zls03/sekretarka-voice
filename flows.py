@@ -45,9 +45,15 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
 def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     business_name = tenant.get("name", "salon")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
+    booking_enabled = tenant.get("booking_enabled", 1) == 1
     
-    services = tenant.get("services", [])
-    services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
+    # Usługi z kalendarza lub info_services
+    if booking_enabled:
+        services = tenant.get("services", [])
+        services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
+    else:
+        info_services = tenant.get("info_services", [])
+        services_list = ", ".join([s["name"] + (f" - {s['price']}" if s.get('price') else "") for s in info_services]) if info_services else "brak usług"
     
     staff = tenant.get("staff", [])
     staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
@@ -59,6 +65,29 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     else:
         pre_actions = [{"type": "tts_say", "text": first_message}]
         logger.info("🔊 Using TTS for greeting")
+    
+    # Różne funkcje w zależności od trybu
+    if booking_enabled:
+        functions = [
+            start_booking_function(),
+            answer_question_function(tenant),
+        ]
+        task_content = """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+
+- Chce się UMÓWIĆ → start_booking
+- Ma PYTANIE → answer_question  
+- Chce się POŻEGNAĆ → end_conversation"""
+    else:
+        functions = [
+            answer_question_function(tenant),
+        ]
+        task_content = """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+
+WAŻNE: Rezerwacje telefoniczne są WYŁĄCZONE.
+Jeśli klient chce się umówić → poinformuj że rezerwacja telefoniczna nie jest dostępna, można zadzwonić bezpośrednio lub odwiedzić osobiście.
+
+- Ma PYTANIE (cennik, godziny, usługi, inne) → answer_question  
+- Chce się POŻEGNAĆ → end_conversation"""
     
     return {
         "name": "greeting",
@@ -74,23 +103,17 @@ ZASADY:
 - NIE używaj emoji
 - Godziny mów słownie (dziesiąta, nie 10:00)
 
-DOSTĘPNE USŁUGI: {services_list}
-PRACOWNICY: {staff_list}"""
+{"REZERWACJE TELEFONICZNE SĄ WYŁĄCZONE. Informuj tylko o usługach, cenach, godzinach." if not booking_enabled else ""}
+
+USŁUGI/CENNIK: {services_list}
+{"PRACOWNICY: " + staff_list if booking_enabled else ""}"""
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
-
-- Chce się UMÓWIĆ → start_booking
-- Ma PYTANIE → answer_question  
-- Chce się POŻEGNAĆ → end_conversation"""
+            "content": task_content
         }],
-        "functions": [
-            start_booking_function(),
-            answer_question_function(tenant),
-        ]
+        "functions": functions
     }
-
 # ==========================================
 # FUNKCJA: Odpowiedź na pytanie (NAPRAWIONA!)
 # ==========================================

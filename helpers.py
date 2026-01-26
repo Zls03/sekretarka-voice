@@ -140,6 +140,12 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         [tenant_id]
     )
     
+    # Usługi informacyjne (dla trybu bez rezerwacji)
+    info_services = await db.execute(
+        "SELECT name, price, description FROM info_services WHERE tenant_id = ? ORDER BY sort_order",
+        [tenant_id]
+    )
+    
     return {
         **tenant,
         "business_name": tenant.get("business_name") or tenant.get("name"),
@@ -151,7 +157,12 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         "minutes_used": float(tenant.get("minutes_used") or 0),
         "first_message": tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
         "additional_info": tenant.get("additional_info") or "",
-        "industry": tenant.get("industry") or ""
+        "industry": tenant.get("industry") or "",
+        "booking_enabled": int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
+        "transfer_enabled": int(tenant.get("transfer_enabled") or 0),
+        "transfer_number": tenant.get("transfer_number") or "",
+        "notification_email": tenant.get("notification_email") or tenant.get("email") or "",
+        "info_services": info_services,
     }
 
 

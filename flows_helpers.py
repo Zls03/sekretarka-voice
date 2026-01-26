@@ -316,6 +316,7 @@ async def save_booking_to_api(
 def build_business_context(tenant: dict) -> str:
     """Buduje kontekst o firmie dla GPT"""
     parts = []
+    booking_enabled = tenant.get("booking_enabled", 1) == 1
     
     # Godziny pracy
     working_hours = tenant.get("working_hours", [])
@@ -329,26 +330,49 @@ def build_business_context(tenant: dict) -> str:
         if hours_text:
             parts.append(f"GODZINY PRACY: {', '.join(hours_text)}")
     
-    # Usługi z cenami
-    services = tenant.get("services", [])
-    if services:
-        svc_text = []
-        for s in services:
-            price = s.get('price', 'cena do uzgodnienia')
-            duration = s.get('duration_minutes', 30)
-            svc_text.append(f"{s['name']} - {price} zł ({duration} min)")
-        parts.append(f"CENNIK: {', '.join(svc_text)}")
+    # Usługi/Cennik - różne źródło w zależności od trybu
+    if booking_enabled:
+        # Tryb z rezerwacjami - usługi z kalendarza
+        services = tenant.get("services", [])
+        if services:
+            svc_text = []
+            for s in services:
+                price = s.get('price', 'cena do uzgodnienia')
+                duration = s.get('duration_minutes', 30)
+                svc_text.append(f"{s['name']} - {price} zł ({duration} min)")
+            parts.append(f"CENNIK: {', '.join(svc_text)}")
+    else:
+        # Tryb informacyjny - usługi z info_services
+        info_services = tenant.get("info_services", [])
+        if info_services:
+            svc_text = []
+            for s in info_services:
+                name = s.get('name', '')
+                price = s.get('price', '')
+                description = s.get('description', '')
+                
+                if price and description:
+                    svc_text.append(f"{name} - {price} ({description})")
+                elif price:
+                    svc_text.append(f"{name} - {price}")
+                elif description:
+                    svc_text.append(f"{name} ({description})")
+                else:
+                    svc_text.append(name)
+            parts.append(f"CENNIK/USŁUGI: {', '.join(svc_text)}")
+        
+        # Dodaj informację że rezerwacje są wyłączone
+        parts.append("UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon.")
     
     # Adres - formatuj ładnie
     address = tenant.get("address", "")
     if address:
-        # Zamień skróty na pełne słowa
         address = address.replace("ul.", "ulica").replace("ul ", "ulica ")
         address = address.replace("al.", "aleja").replace("al ", "aleja ")
         address = address.replace("pl.", "plac").replace("pl ", "plac ")
         parts.append(f"ADRES: {address}")
     
-    # FAQ - NAPRAWIONE!
+    # FAQ
     faq = tenant.get("faq", [])
     if faq:
         faq_text = []
