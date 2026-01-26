@@ -809,7 +809,7 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
                     "Content-Type": "application/json"
                 },
                 json={
-                    "from": "Voice AI <noreply@yourdomain.com>",
+                    "from": "Voice AI <noreply@bizvoice.pl>",
                     "to": [to_email],
                     "subject": f"📞 Wiadomość od {customer_name} - {business_name}",
                     "html": html_content

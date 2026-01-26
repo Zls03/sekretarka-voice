@@ -121,18 +121,18 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         [tenant_id]
     )
     
-    # Godziny pracy
+    # Godziny pracy - jako lista (dla build_business_context)
     hours_rows = await db.execute(
         "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?",
         [tenant_id]
     )
-    working_hours = {}
+    working_hours = []
     for h in hours_rows:
-        day = int(h["day_of_week"]) if h["day_of_week"] else 0
-        if h["open_time"]:
-            working_hours[day] = {"open": h["open_time"], "close": h["close_time"]}
-        else:
-            working_hours[day] = None
+        working_hours.append({
+            "day_of_week": int(h["day_of_week"]) if h["day_of_week"] else 0,
+            "open_time": h["open_time"],
+            "close_time": h["close_time"]
+        })
     
     # FAQ
     faq_rows = await db.execute(
