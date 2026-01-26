@@ -604,7 +604,7 @@ def escalate_to_human_function(tenant: dict) -> FlowsFunctionSchema:
 
 async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict):
     """Obsługa eskalacji - różne ścieżki w zależności kto inicjuje"""
-    reason = args.get("reason", "")
+    reason = args.get("reason", "").lower()
     initiated_by = args.get("initiated_by", "bot")
     
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
@@ -612,21 +612,23 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     
     logger.info(f"🚨 Escalation: {reason} (initiated by: {initiated_by})")
     
-    # BOT inicjuje (wykrył frustrację) → TYLKO wiadomość
+    # BOT inicjuje (wykrył frustrację) → pytaj czy chce wiadomość
     if initiated_by == "bot":
         return (None, create_message_only_node(tenant))
     
-    # KLIENT inicjuje → zależy od ustawień
+    # KLIENT inicjuje i chce zostawić WIADOMOŚĆ → od razu zbieraj dane
+    if "wiadomość" in reason or "wiadomosc" in reason or "przekazać" in reason or "przekazac" in reason:
+        return (None, create_collect_message_node_with_prompt(tenant))
+    
+    # KLIENT inicjuje i chce rozmawiać z WŁAŚCICIELEM → daj wybór (jeśli transfer ON)
     if transfer_enabled and transfer_number:
-        # Daj wybór: wiadomość lub przekierowanie
         return (None, create_escalation_choice_node(tenant))
     else:
-        # Tylko wiadomość
-        return (None, create_message_only_node(tenant))
-
+        # Brak transferu - od razu zbieraj wiadomość
+        return (None, create_collect_message_node_with_prompt(tenant))
 
 def create_message_only_node(tenant: dict) -> dict:
-    """Node: bot proponuje tylko wiadomość (bez przekierowania)"""
+    """Node: bot proponuje tylko wiadomość (gdy BOT wykrył problem)"""
     return {
         "name": "message_only",
         "pre_actions": [
@@ -641,14 +643,12 @@ def create_message_only_node(tenant: dict) -> dict:
             "role": "system",
             "content": """Klient odpowiada:
 - TAK, chce zostawić wiadomość → collect_message
-- NIE, nie chce → end_conversation
-- Coś innego → odpowiedz naturalnie i zapytaj ponownie"""
+- NIE, nie chce → end_conversation"""
         }],
         "functions": [
             collect_message_function(tenant),
         ]
     }
-
 
 def create_escalation_choice_node(tenant: dict) -> dict:
     """Node: klient sam poprosił o kontakt - daj wybór"""
@@ -690,12 +690,36 @@ def collect_message_function(tenant: dict) -> FlowsFunctionSchema:
 async def handle_collect_message_start(args: dict, flow_manager: FlowManager, tenant: dict):
     """Rozpocznij zbieranie wiadomości"""
     logger.info("📝 Starting message collection")
-    return ("Powiedz proszę jak masz na imię i co mam przekazać.", 
-            create_collect_message_node(tenant))
+    # Tekst będzie w pre_actions node'a, nie tutaj
+    return (None, create_collect_message_node_with_prompt(tenant))
+
+def create_collect_message_node_with_prompt(tenant: dict) -> dict:
+    """Node do zbierania wiadomości - z promptem na początku"""
+    return {
+        "name": "collect_message",
+        "pre_actions": [
+            {"type": "tts_say", "text": "Powiedz proszę jak masz na imię i co mam przekazać."}
+        ],
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": "Zbierasz wiadomość od klienta dla właściciela. Potrzebujesz: imię i treść wiadomości."
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": """Zapisz dane klienta:
+- Gdy masz imię i wiadomość → save_message
+- Jeśli klient się rozmyślił lub mówi "to wszystko" → zapytaj czy na pewno nie chce zostawić wiadomości
+- Jeśli potwierdzi że nie → end_conversation"""
+        }],
+        "functions": [
+            save_message_function(tenant),
+        ]
+    }
 
 
 def create_collect_message_node(tenant: dict) -> dict:
-    """Node do zbierania wiadomości"""
+    """Node do zbierania wiadomości - bez promptu (już powiedziano)"""
     return {
         "name": "collect_message",
         "respond_immediately": False,
@@ -707,13 +731,13 @@ def create_collect_message_node(tenant: dict) -> dict:
             "role": "system",
             "content": """Zapisz dane klienta:
 - Gdy masz imię i wiadomość → save_message
-- Jeśli klient się rozmyślił → end_conversation"""
+- Jeśli klient się rozmyślił lub mówi "to wszystko" → zapytaj czy na pewno nie chce zostawić wiadomości
+- Jeśli potwierdzi że nie → end_conversation"""
         }],
         "functions": [
             save_message_function(tenant),
         ]
     }
-
 
 def save_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Zapisz wiadomość"""
