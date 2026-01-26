@@ -584,15 +584,12 @@ def create_end_node() -> dict:
     return {
         "name": "end",
         "pre_actions": [
-            {"type": "tts_say", "text": "Dziękuję za rozmowę, do usłyszenia!"}
+            {"type": "tts_say", "text": "Do widzenia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}
         ],
         "role_messages": [],
-        "task_messages": [{
-            "role": "system",
-            "content": "Rozmowa zakończona."
-        }],
+        "task_messages": [],  # ← PUSTE! Nie generuj nic więcej
         "functions": []
     }
