@@ -1,16 +1,13 @@
 # Pipecat framework
-pipecat-ai[twilio,deepgram,elevenlabs,openai,silero]
+pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq]
 pipecat-ai-flows
-
 # Server
 fastapi
 uvicorn[standard]
 python-dotenv
 python-multipart
-
 # HTTP
 aiohttp
 httpx
-
 # OpenAI
 openai
