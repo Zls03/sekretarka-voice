@@ -566,10 +566,14 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
 def create_end_node() -> dict:
     return {
         "name": "end",
+        "respond_immediately": False,  # NIE uruchamiaj LLM!
         "pre_actions": [
             {"type": "tts_say", "text": "Do widzenia, miłego dnia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}
         ],
+        "role_messages": [],
+        "task_messages": [],  # Wymagane przez Pipecat
+        "functions": []
     }
