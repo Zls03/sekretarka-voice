@@ -185,31 +185,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"📋 Stream started: {stream_sid}")
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
                 
-                # Pobierz tenant z bazy
+                # Pobierz tenant z bazy - używamy get_tenant_by_phone dla pełnych danych
                 if tenant_id:
-                    rows = await db.execute("SELECT * FROM tenants WHERE id = ?", [tenant_id])
-                    if rows:
-                        tenant = dict(rows[0])
-                        # Dodaj usługi, pracowników
-                        services = await db.execute(
-                            "SELECT * FROM services WHERE tenant_id = ? AND is_active = 1", 
-                            [tenant_id]
-                        )
-                        staff = await db.execute(
-                            "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
-                            [tenant_id]
-                        )
-                        tenant["services"] = [dict(s) for s in services]
-                        tenant["staff"] = [dict(s) for s in staff]
-                        faq = await db.execute(
-                            "SELECT question, answer FROM tenant_faq WHERE tenant_id = ?",
-                            [tenant_id]
-                        )
-                        # Greeting audio jest już w tenant z SELECT *
-                        logger.info(f"✅ Loaded tenant: {tenant.get('name')}, greeting_audio: {'YES' if tenant.get('greeting_audio') else 'NO'}")
-
+                    # Najpierw pobierz numer telefonu tenant
+                    rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [tenant_id])
+                    if rows and rows[0].get("phone_number"):
+                        # Użyj get_tenant_by_phone - pobiera WSZYSTKIE dane (working_hours, info_services, etc.)
+                        tenant = await get_tenant_by_phone(rows[0]["phone_number"])
                         
-                        logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
+                        if tenant:
+                            # Dodaj staff (get_tenant_by_phone tego nie pobiera)
+                            staff = await db.execute(
+                                "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
+                                [tenant_id]
+                            )
+                            tenant["staff"] = [dict(s) for s in staff]
+                            
+                            logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
+                            logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
+                            logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
+                            logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
                 
                 # Mamy stream_sid - możemy utworzyć pipeline
                 break
