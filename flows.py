@@ -465,9 +465,8 @@ def no_more_help_function() -> FlowsFunctionSchema:
         description="Klient kończy",
         properties={},
         required=[],
-        handler=lambda args, fm: ("Do widzenia!", create_end_node()),
+        handler=lambda args, fm: (None, create_end_node()),  # None = pożegnanie w node
     )
-
 
 # ==========================================
 # NODE: Kontynuacja rozmowy
@@ -559,14 +558,14 @@ def end_conversation_function() -> FlowsFunctionSchema:
 
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     logger.info("👋 Ending conversation")
-    # Zwracamy tekst pożegnania I node końcowy
-    return ("Do widzenia, miłego dnia!", create_end_node())
+    # WAŻNE: None = nie mów nic tutaj, pożegnanie jest w pre_actions node'a
+    return (None, create_end_node())
 
 
 def create_end_node() -> dict:
     return {
         "name": "end",
-        "respond_immediately": False,  # NIE uruchamiaj LLM!
+        "respond_immediately": False,  # ← TO JEST KLUCZOWE
         "pre_actions": [
             {"type": "tts_say", "text": "Do widzenia, miłego dnia!"}
         ],
