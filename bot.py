@@ -298,6 +298,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     call_start_time = datetime.utcnow()
     call_logged = False
+    conversation_ended = False
     
     async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
         """
@@ -308,10 +309,18 @@ async def websocket_endpoint(websocket: WebSocket):
         
         Zwraca True żeby kontynuować monitoring, False żeby zakończyć.
         """
+        # Jeśli rozmowa już zakończona (node "end") - nie rób nic
+        try:
+            current_node = flow_manager.current_node.get("name", "") if flow_manager.current_node else ""
+            if current_node == "end":
+                logger.info("⏰ Idle triggered but already in end node - stopping monitor")
+                return False
+        except:
+            pass
+        
         logger.info(f"⏰ User idle - retry #{retry_count}")
         
         if retry_count == 1:
-            # Pierwsze przypomnienie
             from pipecat.frames.frames import LLMMessagesAppendFrame
             await processor.push_frame(
                 LLMMessagesAppendFrame(
@@ -322,10 +331,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     run_llm=True
                 )
             )
-            return True  # Kontynuuj monitoring
+            return True
             
         elif retry_count == 2:
-            # Drugie przypomnienie
             from pipecat.frames.frames import LLMMessagesAppendFrame
             await processor.push_frame(
                 LLMMessagesAppendFrame(
@@ -336,10 +344,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     run_llm=True
                 )
             )
-            return True  # Kontynuuj monitoring
+            return True
             
         else:
-            # Trzeci raz - rozłącz
             logger.info("⏰ User idle too long - ending call")
             from pipecat.frames.frames import LLMMessagesAppendFrame, EndFrame
             await processor.push_frame(
@@ -351,10 +358,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     run_llm=True
                 )
             )
-            # Daj czas na TTS
             await asyncio.sleep(4)
             await processor.push_frame(EndFrame())
-            return False  # Zakończ monitoring
+            return False
     
     # User Idle Processor - wykrywa ciszę od użytkownika
     user_idle = UserIdleProcessor(
@@ -393,7 +399,7 @@ async def websocket_endpoint(websocket: WebSocket):
     pipeline = Pipeline([
         transport.input(),
         stt,
-        user_idle,  # ← DODANE: wykrywa ciszę użytkownika
+        user_idle, 
         context_aggregator.user(),
         llm,
         tts,

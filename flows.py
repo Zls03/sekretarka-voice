@@ -1062,7 +1062,7 @@ def end_conversation_function() -> FlowsFunctionSchema:
 
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     logger.info("👋 Ending conversation")
-    # WAŻNE: None = nie mów nic tutaj, pożegnanie jest w pre_actions node'a
+    flow_manager.state["conversation_ended"] = True
     return (None, create_end_node())
 
 
