@@ -84,34 +84,19 @@ async def twilio_incoming(request: Request):
     
     host = request.headers.get("host", "localhost")
     
-    # Sprawdź czy mamy pre-generowane audio powitania
-    if tenant.get("greeting_audio"):
-        # Mamy audio - użyj <Play> przed <Connect>
-        greeting_audio_url = f"https://{host}/greeting-audio/{tenant['id']}"
-        logger.info(f"🎵 Using pre-generated greeting audio")
-        
-        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+    # Powitanie - używamy Twilio Say dla instant response
+    first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
+    
+    logger.info(f"🔊 Using Twilio Say for instant greeting")
+    
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Play>{greeting_audio_url}</Play>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>
     <Connect>
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
             <Parameter name="greetingPlayed" value="true" />
-        </Stream>
-    </Connect>
-</Response>'''
-    else:
-        # Brak audio - standardowy flow z TTS
-        logger.info(f"🔊 No greeting audio - will use TTS")
-        
-        twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="wss://{host}/ws">
-            <Parameter name="callSid" value="{call_sid}" />
-            <Parameter name="tenantId" value="{tenant['id']}" />
-            <Parameter name="greetingPlayed" value="false" />
         </Stream>
     </Connect>
 </Response>'''

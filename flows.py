@@ -588,5 +588,11 @@ def create_end_node() -> dict:
         ],
         "post_actions": [
             {"type": "end_conversation"}
-        ]
+        ],
+        "role_messages": [],
+        "task_messages": [{
+            "role": "system",
+            "content": "Rozmowa zakończona."
+        }],
+        "functions": []
     }
