@@ -251,6 +251,7 @@ async def websocket_endpoint(websocket: WebSocket):
     IDLE_TIMEOUT = 10.0         # 10 sekund ciszy → pytanie
     
     call_start_time = datetime.utcnow()
+    call_logged = False
     
     async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
         """
@@ -395,7 +396,6 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("📴 Client disconnected")
-        await save_call_log(flow_manager)
     
     # ==========================================
     # RUN PIPELINE
@@ -410,10 +410,17 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Pipeline error: {e}")
     finally:
         logger.info("🏁 Pipeline finished")
+        # ZAWSZE zapisz log - nawet przy błędzie/crash
+        await save_call_log(flow_manager)
 
 
 async def save_call_log(flow_manager):
     """Zapisz log rozmowy do bazy"""
+    # Sprawdź czy już zapisane
+    if flow_manager.state.get("call_logged"):
+        logger.info("📊 Call already logged, skipping")
+        return
+        
     try:
         tenant = flow_manager.state.get("tenant", {})
         started_at = flow_manager.state.get("started_at")
@@ -444,7 +451,9 @@ async def save_call_log(flow_manager):
                 [duration_minutes, tenant.get("id")]
             )
             
-            logger.info(f"📊 Call logged: {duration}s")
+            # Oznacz jako zapisane
+            flow_manager.state["call_logged"] = True
+            logger.info(f"📊 Call logged: {duration}s ({duration_minutes:.2f} min)")
     except Exception as e:
         logger.error(f"Save call log error: {e}")
 
