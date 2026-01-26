@@ -32,7 +32,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 # Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.groq import GroqLLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
@@ -278,10 +278,10 @@ async def websocket_endpoint(websocket: WebSocket):
         output_format="pcm_24000",  # Standard PCM, serializer skonwertuje
     )
     
-    # LLM - OpenAI
-    llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini",
+    # Groq - ultra szybki LLM (4-10x szybszy niż OpenAI)
+    llm = GroqLLMService(
+        api_key=os.getenv("GROQ_API_KEY"),
+        model="llama-3.3-70b-versatile",
     )
     
     # Context

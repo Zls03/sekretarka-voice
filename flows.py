@@ -584,7 +584,7 @@ def create_end_node() -> dict:
     return {
         "name": "end",
         "pre_actions": [
-            {"type": "tts_say", "text": "Do widzenia!"}
+            {"type": "tts_say", "text": "Dziękuje, Do widzenia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}
