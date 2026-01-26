@@ -98,27 +98,44 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
 
 def create_answer_node(tenant: dict, question: str, context: str) -> dict:
     """Node który odpowiada na pytanie klienta"""
+    
+    # Sprawdź czy to pytanie o usługi/cennik (wtedy można zaproponować rezerwację)
+    question_lower = question.lower()
+    is_service_question = any(word in question_lower for word in ["usług", "cen", "ile kosztuje", "cennik"])
+    
+    # Czy kalendarz włączony?
+    booking_enabled = tenant.get("booking_enabled", 1) == 1
+    
+    # Buduj końcówkę odpowiedzi
+    if is_service_question and booking_enabled:
+        ending = "Jeśli chcesz, mogę umówić wizytę. A może masz inne pytanie?"
+    else:
+        ending = "Czy mogę jeszcze w czymś pomóc?"
+    
     return {
         "name": "answer_question_node",
         "role_messages": [{
             "role": "system",
-            "content": f"""Odpowiedz na pytanie klienta używając tych informacji:
+            "content": f"""Odpowiedz na pytanie klienta.
 
+INFORMACJE O FIRMIE:
 {context}
 
 ZASADY:
-- Odpowiedz KRÓTKO i konkretnie (1-2 zdania)
-- Jeśli nie znasz odpowiedzi, powiedz że nie masz takiej informacji
-- Na końcu zapytaj czy możesz jeszcze w czymś pomóc lub zaproponuj rezerwację"""
+- Odpowiedz KRÓTKO (1-2 zdania)
+- Użyj informacji z FAQ jeśli pasują do pytania
+- Jeśli nie znasz odpowiedzi, powiedz szczerze
+- Na końcu powiedz: "{ending}"
+- NIE proponuj rezerwacji przy każdym pytaniu!"""
         }],
         "task_messages": [{
             "role": "system",
-            "content": f"""Pytanie klienta: "{question}"
+            "content": f"""Pytanie: "{question}"
 
-Odpowiedz na to pytanie. Po odpowiedzi:
-- Jeśli klient chce się umówić → start_booking
-- Jeśli ma kolejne pytanie → answer_question
-- Jeśli kończy rozmowę → end_conversation"""
+Po odpowiedzi CZEKAJ na reakcję klienta:
+- Chce się umówić → start_booking
+- Ma pytanie → answer_question
+- Żegna się → end_conversation"""
         }],
         "functions": [
             start_booking_function(),
@@ -549,16 +566,26 @@ async def handle_leave_message(args: dict, flow_manager: FlowManager, tenant: di
 def end_conversation_function() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="end_conversation",
-        description="Klient kończy rozmowę",
+        description="Klient żegna się lub kończy rozmowę (np. 'do widzenia', 'dziękuję', 'to wszystko')",
         properties={},
         required=[],
-        handler=lambda args, fm: ("Do widzenia, miłego dnia!", create_end_node()),
+        handler=handle_end_conversation,
     )
+
+
+async def handle_end_conversation(args: dict, flow_manager: FlowManager):
+    logger.info("👋 Ending conversation")
+    # Zwracamy tekst pożegnania I node końcowy
+    return ("Do widzenia, miłego dnia!", create_end_node())
 
 
 def create_end_node() -> dict:
     return {
         "name": "end",
-        "task_messages": [{"role": "system", "content": "Rozmowa zakończona."}],
-        "post_actions": [{"type": "end_conversation"}]
+        "pre_actions": [
+            {"type": "tts_say", "text": "Do widzenia!"}
+        ],
+        "post_actions": [
+            {"type": "end_conversation"}
+        ]
     }

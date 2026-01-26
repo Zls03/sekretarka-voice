@@ -339,18 +339,30 @@ def build_business_context(tenant: dict) -> str:
             svc_text.append(f"{s['name']} - {price} zł ({duration} min)")
         parts.append(f"CENNIK: {', '.join(svc_text)}")
     
-    # Adres
-    if tenant.get("address"):
-        parts.append(f"ADRES: {tenant['address']}")
+    # Adres - formatuj ładnie
+    address = tenant.get("address", "")
+    if address:
+        # Zamień skróty na pełne słowa
+        address = address.replace("ul.", "ulica").replace("ul ", "ulica ")
+        address = address.replace("al.", "aleja").replace("al ", "aleja ")
+        address = address.replace("pl.", "plac").replace("pl ", "plac ")
+        parts.append(f"ADRES: {address}")
     
-    # FAQ
+    # FAQ - NAPRAWIONE!
     faq = tenant.get("faq", [])
     if faq:
-        faq_text = [f"P: {f['question']} O: {f['answer']}" for f in faq]
-        parts.append(f"FAQ: {'; '.join(faq_text)}")
+        faq_text = []
+        for f in faq:
+            q = f.get("question", "")
+            a = f.get("answer", "")
+            if q and a:
+                faq_text.append(f"Pytanie: {q} → Odpowiedź: {a}")
+        if faq_text:
+            parts.append(f"FAQ:\n" + "\n".join(faq_text))
     
     # Dodatkowe info
-    if tenant.get("additional_info"):
-        parts.append(f"DODATKOWE INFO: {tenant['additional_info']}")
+    additional = tenant.get("additional_info", "")
+    if additional:
+        parts.append(f"DODATKOWE INFO: {additional}")
     
-    return "\n".join(parts)
+    return "\n\n".join(parts)

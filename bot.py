@@ -157,6 +157,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
                         tenant["services"] = [dict(s) for s in services]
                         tenant["staff"] = [dict(s) for s in staff]
+                        faq = await db.execute(
+                            "SELECT question, answer FROM tenant_faq WHERE tenant_id = ?",
+                            [tenant_id]
+                        )
+                        tenant["faq"] = [dict(f) for f in faq]
+
                         
                         logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
                 
@@ -413,51 +419,131 @@ async def websocket_endpoint(websocket: WebSocket):
         # ZAWSZE zapisz log - nawet przy błędzie/crash
         await save_call_log(flow_manager)
 
-
 async def save_call_log(flow_manager):
-    """Zapisz log rozmowy do bazy"""
-    # Sprawdź czy już zapisane
+    """Tworzy wstępny log rozmowy (czas zostanie zaktualizowany przez Twilio callback)"""
     if flow_manager.state.get("call_logged"):
-        logger.info("📊 Call already logged, skipping")
         return
         
     try:
         tenant = flow_manager.state.get("tenant", {})
-        started_at = flow_manager.state.get("started_at")
-        ended_at = datetime.utcnow()
+        call_sid = flow_manager.state.get("call_sid")
         
-        if started_at:
-            duration = int((ended_at - started_at).total_seconds())
-            duration_minutes = duration / 60.0
-            
-            # Zapisz log
-            await db.execute(
-                """INSERT INTO call_logs 
-                   (id, tenant_id, call_sid, started_at, ended_at, duration_seconds, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'completed', datetime('now'))""",
-                [
-                    f"call_{int(datetime.utcnow().timestamp())}",
-                    tenant.get("id"),
-                    flow_manager.state.get("call_sid"),
-                    started_at.isoformat(),
-                    ended_at.isoformat(),
-                    duration,
-                ]
+        if tenant.get("id") and call_sid:
+            # Sprawdź czy już istnieje
+            existing = await db.execute(
+                "SELECT id FROM call_logs WHERE call_sid = ?",
+                [call_sid]
             )
             
-            # Aktualizuj zużycie minut
-            await db.execute(
-                "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
-                [duration_minutes, tenant.get("id")]
-            )
+            if not existing:
+                await db.execute(
+                    """INSERT INTO call_logs 
+                       (id, tenant_id, call_sid, duration_seconds, status, created_at)
+                       VALUES (?, ?, ?, 0, 'in_progress', datetime('now'))""",
+                    [
+                        f"call_{int(datetime.utcnow().timestamp())}",
+                        tenant.get("id"),
+                        call_sid,
+                    ]
+                )
+                logger.info(f"📊 Call log created: {call_sid} (waiting for Twilio callback)")
             
-            # Oznacz jako zapisane
             flow_manager.state["call_logged"] = True
-            logger.info(f"📊 Call logged: {duration}s ({duration_minutes:.2f} min)")
     except Exception as e:
         logger.error(f"Save call log error: {e}")
-
-
+# ==========================================
+# TWILIO STATUS CALLBACK - Dokładny czas rozmowy
+# ==========================================
+@app.post("/twilio/status")
+async def twilio_status(request: Request):
+    """Callback po zakończeniu rozmowy - Twilio wysyła rzeczywisty czas"""
+    form = await request.form()
+    
+    call_sid = form.get("CallSid", "")
+    call_duration = form.get("CallDuration", "0")  # Sekundy - dokładny czas od Twilio!
+    call_status = form.get("CallStatus", "")  # completed, busy, no-answer, failed
+    called = form.get("Called", "")  # Numer na który dzwoniono
+    caller = form.get("From", "")  # Numer dzwoniącego
+    
+    logger.info(f"📊 Twilio status: {call_sid} | {call_status} | {call_duration}s")
+    
+    # Tylko dla zakończonych rozmów
+    if call_status in ["completed", "busy", "no-answer", "failed", "canceled"]:
+        try:
+            duration = int(call_duration) if call_duration else 0
+            duration_minutes = duration / 60.0
+            
+            # Znajdź tenant po numerze telefonu
+            phone_suffix = called.replace(" ", "").replace("-", "")[-9:]
+            rows = await db.execute(
+                "SELECT id FROM tenants WHERE phone_number LIKE ?",
+                [f"%{phone_suffix}"]
+            )
+            
+            if rows:
+                tenant_id = rows[0]["id"]
+                
+                # Sprawdź czy już mamy log dla tego call_sid (unikaj duplikatów)
+                existing = await db.execute(
+                    "SELECT id FROM call_logs WHERE call_sid = ?",
+                    [call_sid]
+                )
+                
+                if existing:
+                    # Aktualizuj istniejący log z dokładnym czasem
+                    await db.execute(
+                        """UPDATE call_logs 
+                           SET duration_seconds = ?, status = ?
+                           WHERE call_sid = ?""",
+                        [duration, call_status, call_sid]
+                    )
+                    logger.info(f"📊 Updated call log: {call_sid} → {duration}s")
+                else:
+                    # Utwórz nowy log
+                    await db.execute(
+                        """INSERT INTO call_logs 
+                           (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                        [
+                            f"call_{int(datetime.utcnow().timestamp())}",
+                            tenant_id,
+                            call_sid,
+                            caller,
+                            duration,
+                            call_status,
+                        ]
+                    )
+                    logger.info(f"📊 Created call log: {call_sid} → {duration}s")
+                
+                # Aktualizuj zużycie minut (tylko dla completed)
+                if call_status == "completed" and duration > 0:
+                    await db.execute(
+                        "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
+                        [duration_minutes, tenant_id]
+                    )
+                    logger.info(f"📊 Updated minutes: +{duration_minutes:.2f} min for {tenant_id}")
+                    
+                    # Sprawdź limit
+                    tenant_data = await db.execute(
+                        "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?",
+                        [tenant_id]
+                    )
+                    if tenant_data:
+                        used = float(tenant_data[0].get("minutes_used", 0))
+                        limit = int(tenant_data[0].get("minutes_limit", 100))
+                        if used >= limit * 0.99:
+                            await db.execute(
+                                "UPDATE tenants SET is_blocked = 1 WHERE id = ?",
+                                [tenant_id]
+                            )
+                            logger.warning(f"⚠️ Tenant {tenant_id} BLOCKED - limit reached")
+            else:
+                logger.warning(f"⚠️ No tenant found for {called}")
+                
+        except Exception as e:
+            logger.error(f"Twilio status error: {e}")
+    
+    return Response(content="OK", media_type="text/plain")
 # ==========================================
 # HEALTH CHECK
 # ==========================================
