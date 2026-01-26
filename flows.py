@@ -84,9 +84,10 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         task_content = """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
 WAŻNE: Rezerwacje telefoniczne są WYŁĄCZONE.
-Jeśli klient chce się umówić → poinformuj że rezerwacja telefoniczna nie jest dostępna, można zadzwonić bezpośrednio lub odwiedzić osobiście.
+Jeśli klient chce się umówić → poinformuj że rezerwacja telefoniczna nie jest dostępna, ale ZAPROPONUJ że możesz przekazać prośbę o kontakt do właściciela który oddzwoni. Użyj escalate_to_human jeśli klient się zgodzi.
 
 - Ma PYTANIE (cennik, godziny, usługi, inne) → answer_question  
+- Chce się UMÓWIĆ → poinformuj o braku rezerwacji online i zaproponuj przekazanie wiadomości
 - Chce się POŻEGNAĆ → end_conversation"""
     
     return {
@@ -588,14 +589,19 @@ def escalate_to_human_function(tenant: dict) -> FlowsFunctionSchema:
 - Klient 2-3 razy prosi o to samo czego nie możesz zrobić
 - Klient mówi że chce rozmawiać z człowiekiem/właścicielem
 - Klient prosi o zostawienie wiadomości
-- Nie możesz pomóc klientowi mimo prób""",
+- Nie możesz pomóc klientowi mimo prób
+
+WAŻNE: Jeśli klient od razu podał imię i treść wiadomości w swojej wypowiedzi, 
+wyciągnij te dane i przekaż w reason, np: "Klient Paweł prosi o kontakt".""",
         properties={
-            "reason": {"type": "string", "description": "Powód eskalacji"},
+            "reason": {"type": "string", "description": "Powód eskalacji - jeśli klient podał imię i wiadomość, zapisz to tutaj"},
             "initiated_by": {
                 "type": "string", 
                 "enum": ["bot", "customer"],
                 "description": "Kto inicjuje: 'bot' = wykryłeś problem, 'customer' = klient sam poprosił"
-            }
+            },
+            "customer_name": {"type": "string", "description": "Imię klienta jeśli podał"},
+            "message": {"type": "string", "description": "Treść wiadomości jeśli klient już ją podał"},
         },
         required=["reason", "initiated_by"],
         handler=lambda args, fm: handle_escalation(args, fm, tenant),
@@ -606,11 +612,32 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     """Obsługa eskalacji - różne ścieżki w zależności kto inicjuje"""
     reason = args.get("reason", "").lower()
     initiated_by = args.get("initiated_by", "bot")
+    customer_name = args.get("customer_name", "")
+    message = args.get("message", "")
     
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
     
     logger.info(f"🚨 Escalation: {reason} (initiated by: {initiated_by})")
+    
+    # Jeśli klient od razu podał imię i wiadomość - zapisz od razu!
+    if customer_name and message:
+        logger.info(f"📧 Direct message from {customer_name}: {message}")
+        flow_manager.state["prefilled_name"] = customer_name
+        flow_manager.state["prefilled_message"] = message
+        # Od razu zapisz
+        caller_phone = flow_manager.state.get("caller_phone", "nieznany")
+        owner_email = tenant.get("notification_email") or tenant.get("email")
+        
+        if owner_email:
+            try:
+                await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
+                logger.info(f"📧 Email sent to: {owner_email}")
+            except Exception as e:
+                logger.error(f"📧 Email error: {e}")
+        
+        return (f"Dziękuję {customer_name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe. Do widzenia!",
+                create_end_node())
     
     # BOT inicjuje (wykrył frustrację) → pytaj czy chce wiadomość
     if initiated_by == "bot":
@@ -624,7 +651,6 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     if transfer_enabled and transfer_number:
         return (None, create_escalation_choice_node(tenant))
     else:
-        # Brak transferu - od razu zbieraj wiadomość
         return (None, create_collect_message_node_with_prompt(tenant))
 
 def create_message_only_node(tenant: dict) -> dict:
@@ -754,19 +780,39 @@ def save_message_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Zapisz wiadomość i wyślij email"""
+    """Zapisz wiadomość i wyślij email z kontekstem rozmowy"""
     name = args.get("customer_name", "Nieznany")
     message = args.get("message", "")
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     
     logger.info(f"📧 Message from {name}: {message[:50]}...")
     
+    # Zbierz kontekst rozmowy - ostatnie wiadomości
+    conversation_context = ""
+    try:
+        # Spróbuj pobrać historię z context aggregatora (jeśli dostępny)
+        if hasattr(flow_manager, '_context_aggregator') and flow_manager._context_aggregator:
+            context = flow_manager._context_aggregator.context
+            if hasattr(context, 'messages'):
+                # Zbierz ostatnie wiadomości user/assistant (bez system)
+                messages = []
+                for msg in context.messages[-10:]:  # Ostatnie 10
+                    role = msg.get('role', '')
+                    content = msg.get('content', '')
+                    if role == 'user' and content:
+                        messages.append(f"Klient: {content}")
+                    elif role == 'assistant' and content and not msg.get('tool_calls'):
+                        messages.append(f"Asystent: {content}")
+                conversation_context = "\n".join(messages)
+    except Exception as e:
+        logger.warning(f"📧 Could not get conversation context: {e}")
+    
     # Wyślij email do właściciela
     owner_email = tenant.get("notification_email") or tenant.get("email") or tenant.get("owner_email")
     
     if owner_email:
         try:
-            await send_message_email(tenant, name, message, caller_phone, owner_email)
+            await send_message_email(tenant, name, message, caller_phone, owner_email, conversation_context)
             logger.info(f"📧 Email sent to: {owner_email}")
         except Exception as e:
             logger.error(f"📧 Email error: {e}")
@@ -777,10 +823,11 @@ async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dic
             create_end_node())
 
 
-async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str):
-    """Wyślij email z wiadomością do właściciela"""
+async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str, conversation_context: str = ""):
+    """Wyślij email z wiadomością do właściciela - z GPT streszczeniem"""
     import httpx
     import os
+    import openai
     
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
@@ -789,15 +836,59 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
     
     business_name = tenant.get("name", "Firma")
     
+    # GPT streszczenie kontekstu (jeśli jest)
+    summary = ""
+    if conversation_context:
+        try:
+            oai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = oai_client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[
+                    {"role": "system", "content": "Streść rozmowę w 2-3 zdaniach po polsku. Skup się na tym czego klient szukał i dlaczego zostawia wiadomość. Pisz zwięźle."},
+                    {"role": "user", "content": conversation_context}
+                ],
+                max_tokens=150,
+                temperature=0.3
+            )
+            summary = response.choices[0].message.content.strip()
+            logger.info(f"📧 GPT summary: {summary[:50]}...")
+        except Exception as e:
+            logger.error(f"📧 GPT summary error: {e}")
+            summary = ""
+    
+    # HTML emaila
+    summary_html = f"""
+    <p><strong>📋 Kontekst rozmowy:</strong></p>
+    <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; font-style: italic;">{summary}</p>
+    """ if summary else ""
+    
     html_content = f"""
-    <h2>Nowa wiadomość od klienta</h2>
-    <p><strong>Firma:</strong> {business_name}</p>
-    <p><strong>Od:</strong> {customer_name}</p>
-    <p><strong>Telefon:</strong> {phone}</p>
-    <p><strong>Wiadomość:</strong></p>
-    <p style="background: #f5f5f5; padding: 15px; border-radius: 5px;">{message}</p>
-    <hr>
-    <p style="color: #666; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego Voice AI</p>
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+        <h2 style="color: #333;">📞 Nowa wiadomość od klienta</h2>
+        
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Firma:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{business_name}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Od:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{customer_name}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Telefon:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{phone}" style="color: #2196F3;">{phone}</a></td>
+            </tr>
+        </table>
+        
+        <p><strong>💬 Wiadomość:</strong></p>
+        <p style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0;">{message}</p>
+        
+        {summary_html}
+        
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+        <p style="color: #999; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego Voice AI • {business_name}</p>
+    </div>
     """
     
     try:
@@ -838,7 +929,10 @@ def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Przekieruj rozmowę na numer właściciela"""
+    """Przekieruj rozmowę na numer właściciela przez Twilio"""
+    import os
+    import httpx
+    
     transfer_number = tenant.get("transfer_number", "")
     
     if not transfer_number:
@@ -846,15 +940,63 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
         return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", 
                 create_message_only_node(tenant))
     
-    logger.info(f"📞 Transfer to: {transfer_number}")
+    call_sid = flow_manager.state.get("call_sid")
     
-    # Zapisz w state że chcemy transfer - bot.py obsłuży
-    flow_manager.state["transfer_requested"] = True
-    flow_manager.state["transfer_number"] = transfer_number
+    if not call_sid:
+        logger.error("📞 No call_sid for transfer!")
+        return ("Przepraszam, wystąpił problem. Czy mogę przekazać wiadomość?", 
+                create_message_only_node(tenant))
     
-    # TODO: Faktyczne przekierowanie przez Twilio <Dial> - zrobimy później
-    # Na razie kończymy z komunikatem
-    return ("Przekierowuję do właściciela. Proszę czekać.", create_end_node())
+    # Formatuj numer (dodaj +48 jeśli brak)
+    if not transfer_number.startswith("+"):
+        transfer_number = f"+48{transfer_number.replace(' ', '').replace('-', '')}"
+    
+    logger.info(f"📞 Transferring call {call_sid} to {transfer_number}")
+    
+    # Twilio credentials
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    
+    if not account_sid or not auth_token:
+        logger.error("📞 Twilio credentials not configured!")
+        return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", 
+                create_message_only_node(tenant))
+    
+    # TwiML do przekierowania
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Łączę z właścicielem, proszę czekać.</Say>
+    <Dial timeout="30" callerId="{tenant.get('phone_number', '')}">
+        {transfer_number}
+    </Dial>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Przepraszamy, nie udało się połączyć. Prosimy spróbować później.</Say>
+</Response>'''
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}.json",
+                auth=(account_sid, auth_token),
+                data={"Twiml": twiml},
+                timeout=10.0
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"📞 Transfer initiated successfully!")
+                # Zapisz w state
+                flow_manager.state["transfer_requested"] = True
+                flow_manager.state["transfer_number"] = transfer_number
+                # Nie mówimy nic - Twilio przejmuje
+                return (None, create_end_node())
+            else:
+                logger.error(f"📞 Twilio transfer error: {response.status_code} - {response.text}")
+                return ("Przepraszam, nie udało się przekierować. Czy mogę przekazać wiadomość?", 
+                        create_message_only_node(tenant))
+                
+    except Exception as e:
+        logger.error(f"📞 Transfer error: {e}")
+        return ("Przepraszam, wystąpił problem z przekierowaniem. Czy mogę przekazać wiadomość?", 
+                create_message_only_node(tenant))
 # ==========================================
 # NODE: Zakończenie
 # ==========================================

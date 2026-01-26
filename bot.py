@@ -603,6 +603,25 @@ async def twilio_status(request: Request):
 async def health():
     return {"status": "ok", "framework": "pipecat", "version": "1.2"}
 
+# ==========================================
+# TWILIO FALLBACK - gdy bot nie odpowiada
+# ==========================================
+@app.post("/twilio/fallback")
+async def twilio_fallback(request: Request):
+    """Fallback gdy główny bot nie odpowiada"""
+    logger.error("🚨 FALLBACK TRIGGERED - main bot unavailable!")
+    
+    twiml = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">
+        Przepraszamy, asystent głosowy jest chwilowo niedostępny. 
+        Prosimy spróbować za kilka minut.
+    </Say>
+    <Pause length="1"/>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Do widzenia.</Say>
+</Response>'''
+    
+    return Response(content=twiml, media_type="application/xml")
 
 if __name__ == "__main__":
     import uvicorn
