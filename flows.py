@@ -706,17 +706,46 @@ def collect_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Klient chce zostawić wiadomość"""
     return FlowsFunctionSchema(
         name="collect_message",
-        description="Klient chce zostawić wiadomość dla właściciela",
-        properties={},
+        description="""Klient chce zostawić wiadomość dla właściciela.
+WAŻNE: Jeśli klient JUŻ podał imię i/lub treść wiadomości, przekaż je w parametrach!""",
+        properties={
+            "customer_name": {"type": "string", "description": "Imię klienta jeśli już podał"},
+            "message": {"type": "string", "description": "Treść wiadomości jeśli już podał"},
+        },
         required=[],
         handler=lambda args, fm: handle_collect_message_start(args, fm, tenant),
     )
 
 
 async def handle_collect_message_start(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Rozpocznij zbieranie wiadomości"""
+    """Rozpocznij zbieranie wiadomości - lub zapisz od razu jeśli dane podane"""
+    customer_name = args.get("customer_name", "")
+    message = args.get("message", "")
+    
+    # Jeśli mamy oba - zapisz od razu!
+    if customer_name and message:
+        logger.info(f"📧 Direct save - {customer_name}: {message}")
+        caller_phone = flow_manager.state.get("caller_phone", "nieznany")
+        owner_email = tenant.get("notification_email") or tenant.get("email")
+        
+        if owner_email:
+            try:
+                await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
+                logger.info(f"📧 Email sent to: {owner_email}")
+            except Exception as e:
+                logger.error(f"📧 Email error: {e}")
+        
+        return (f"Dziękuję {customer_name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe.",
+                create_end_node())
+    
+    # Jeśli mamy tylko imię - zapytaj o wiadomość
+    if customer_name:
+        flow_manager.state["prefilled_name"] = customer_name
+        return (f"Dziękuję {customer_name}. Co mam przekazać właścicielowi?",
+                create_collect_message_only_node(tenant))
+    
+    # Brak danych - pytaj o wszystko
     logger.info("📝 Starting message collection")
-    # Tekst będzie w pre_actions node'a, nie tutaj
     return (None, create_collect_message_node_with_prompt(tenant))
 
 def create_collect_message_node_with_prompt(tenant: dict) -> dict:
@@ -743,6 +772,25 @@ def create_collect_message_node_with_prompt(tenant: dict) -> dict:
         ]
     }
 
+def create_collect_message_only_node(tenant: dict) -> dict:
+    """Node: mamy imię, zbieramy tylko wiadomość"""
+    return {
+        "name": "collect_message_only",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": "Masz już imię klienta. Teraz zbierz treść wiadomości."
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": """Klient poda treść wiadomości.
+Gdy ją masz → save_message (użyj imienia z wcześniej)
+Jeśli klient rezygnuje → end_conversation"""
+        }],
+        "functions": [
+            save_message_function(tenant),
+        ]
+    }
 
 def create_collect_message_node(tenant: dict) -> dict:
     """Node do zbierania wiadomości - bez promptu (już powiedziano)"""
@@ -781,22 +829,21 @@ def save_message_function(tenant: dict) -> FlowsFunctionSchema:
 
 async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dict):
     """Zapisz wiadomość i wyślij email z kontekstem rozmowy"""
-    name = args.get("customer_name", "Nieznany")
+    # Użyj prefilled name jeśli jest
+    name = args.get("customer_name") or flow_manager.state.get("prefilled_name", "Nieznany")
     message = args.get("message", "")
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     
     logger.info(f"📧 Message from {name}: {message[:50]}...")
     
-    # Zbierz kontekst rozmowy - ostatnie wiadomości
+    # Zbierz kontekst rozmowy
     conversation_context = ""
     try:
-        # Spróbuj pobrać historię z context aggregatora (jeśli dostępny)
         if hasattr(flow_manager, '_context_aggregator') and flow_manager._context_aggregator:
             context = flow_manager._context_aggregator.context
             if hasattr(context, 'messages'):
-                # Zbierz ostatnie wiadomości user/assistant (bez system)
                 messages = []
-                for msg in context.messages[-10:]:  # Ostatnie 10
+                for msg in context.messages[-10:]:
                     role = msg.get('role', '')
                     content = msg.get('content', '')
                     if role == 'user' and content:
@@ -807,8 +854,8 @@ async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dic
     except Exception as e:
         logger.warning(f"📧 Could not get conversation context: {e}")
     
-    # Wyślij email do właściciela
-    owner_email = tenant.get("notification_email") or tenant.get("email") or tenant.get("owner_email")
+    # Wyślij email
+    owner_email = tenant.get("notification_email") or tenant.get("email")
     
     if owner_email:
         try:
@@ -819,7 +866,7 @@ async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dic
     else:
         logger.warning("📧 No owner email configured!")
     
-    return (f"Dziękuję {name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe. Do widzenia!",
+    return (f"Dziękuję {name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe.",
             create_end_node())
 
 
@@ -989,7 +1036,9 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
                 # Nie mówimy nic - Twilio przejmuje
                 return (None, create_end_node())
             else:
-                logger.error(f"📞 Twilio transfer error: {response.status_code} - {response.text}")
+                logger.error(f"📞 Twilio transfer error: {response.status_code}")
+                logger.error(f"📞 Response: {response.text}")
+                logger.error(f"📞 Call SID: {call_sid}, Transfer to: {transfer_number}")
                 return ("Przepraszam, nie udało się przekierować. Czy mogę przekazać wiadomość?", 
                         create_message_only_node(tenant))
                 
