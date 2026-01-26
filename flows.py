@@ -21,31 +21,23 @@ from flows_helpers import (
     build_business_context, POLISH_DAYS
 )
 
-# ==========================================
-# HELPER: Sprawdzanie frustracji
-# ==========================================
-
-def check_frustration(flow_manager: FlowManager, tenant: dict) -> tuple[bool, dict | None]:
-    """
-    Sprawdza czy osiągnięto limit nieudanych prób.
-    Zwraca (True, fallback_node) jeśli tak, (False, None) jeśli nie.
-    """
-    count = flow_manager.state.get("misunderstanding_count", 0) + 1
-    flow_manager.state["misunderstanding_count"] = count
-    logger.info(f"⚠️ Misunderstanding #{count}")
+async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dict):
+    staff_name = args.get("staff_name", "").lower()
+    staff_list = tenant.get("staff", [])
     
-    if count >= 3:
-        logger.warning(f"🚨 Frustration limit reached ({count})")
-        return (True, create_fallback_node(tenant))
+    found = None
+    for s in staff_list:
+        if staff_name in s["name"].lower() or s["name"].lower() in staff_name:
+            found = s
+            break
     
-    return (False, None)
-
-
-def reset_frustration(flow_manager: FlowManager):
-    """Resetuje licznik po udanej interakcji"""
-    if flow_manager.state.get("misunderstanding_count", 0) > 0:
-        flow_manager.state["misunderstanding_count"] = 0
-        logger.info("✅ Frustration counter reset")
+    if not found:
+        available = ", ".join([s["name"] for s in staff_list])
+        return (f"Nie mamy pracownika {staff_name}. U nas pracują: {available}.", None)
+    
+    flow_manager.state["selected_staff"] = found
+    logger.info(f"✅ Staff: {found['name']}")
+    return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
 # ==========================================
 # NODE: Powitanie
 # ==========================================
@@ -221,16 +213,9 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
             break
     
     if not found:
-        # Sprawdź frustrację
-        is_frustrated, fallback_node = check_frustration(flow_manager, tenant)
-        if is_frustrated:
-            return (None, fallback_node)
-        
         available = ", ".join([s["name"] for s in services])
         return (f"Nie mamy usługi '{service_name}'. Dostępne: {available}.", None)
     
-    # Sukces - reset licznika
-    reset_frustration(flow_manager)
     flow_manager.state["selected_service"] = found
     logger.info(f"✅ Service: {found['name']}")
     return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant))
@@ -289,16 +274,9 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
             break
     
     if not found:
-        # Sprawdź frustrację
-        is_frustrated, fallback_node = check_frustration(flow_manager, tenant)
-        if is_frustrated:
-            return (None, fallback_node)
-        
         available = ", ".join([s["name"] for s in staff_list])
         return (f"Nie mamy pracownika {staff_name}. U nas pracują: {available}.", None)
     
-    # Sukces - reset licznika
-    reset_frustration(flow_manager)
     flow_manager.state["selected_staff"] = found
     logger.info(f"✅ Staff: {found['name']}")
     return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
@@ -350,11 +328,6 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     
     parsed_date = parse_polish_date(date_str)
     if not parsed_date:
-        # Sprawdź frustrację
-        is_frustrated, fallback_node = check_frustration(flow_manager, tenant)
-        if is_frustrated:
-            return (None, fallback_node)
-        
         return (f"Nie rozumiem daty '{date_str}'. Powiedz np. jutro, w poniedziałek.", None)
     
     if parsed_date.date() < datetime.now().date():
@@ -372,8 +345,6 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     if not slots:
         return (f"Na {format_date_polish(parsed_date)} brak wolnych terminów.", None)
     
-    # Sukces - reset licznika
-    reset_frustration(flow_manager)
     flow_manager.state["selected_date"] = parsed_date
     flow_manager.state["available_slots"] = slots
     
@@ -420,24 +391,12 @@ async def handle_confirm_time(args: dict, flow_manager: FlowManager, tenant: dic
     slots = flow_manager.state.get("available_slots", [])
     
     if hour is None:
-        # Sprawdź frustrację
-        is_frustrated, fallback_node = check_frustration(flow_manager, tenant)
-        if is_frustrated:
-            return (None, fallback_node)
-        
         return (f"Nie rozumiem godziny '{time_str}'.", None)
     
     if hour not in slots:
-        # Sprawdź frustrację
-        is_frustrated, fallback_node = check_frustration(flow_manager, tenant)
-        if is_frustrated:
-            return (None, fallback_node)
-        
         slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
         return (f"Godzina {format_hour_polish(hour)} niedostępna. Mam: {slots_text}.", None)
     
-    # Sukces - reset licznika
-    reset_frustration(flow_manager)
     flow_manager.state["selected_time"] = hour
     return (f"Godzina {format_hour_polish(hour)}. Jak się Pan nazywa?", create_get_name_node(tenant))
 
@@ -594,88 +553,138 @@ async def handle_leave_message(args: dict, flow_manager: FlowManager, tenant: di
     return (f"Dziękuję {name}. Przekażę wiadomość, oddzwonimy!", create_end_node())
 
 # ==========================================
-# NODE: Fallback (bot nie rozumie)
+# ESKALACJA DO CZŁOWIEKA (fallback)
 # ==========================================
 
-def create_fallback_node(tenant: dict) -> dict:
-    """Node gdy bot nie rozumie po 3 próbach"""
+def escalate_to_human_function(tenant: dict) -> FlowsFunctionSchema:
+    """Globalna funkcja eskalacji - LLM sam decyduje kiedy użyć"""
+    return FlowsFunctionSchema(
+        name="escalate_to_human",
+        description="""Użyj gdy:
+- Klient jest wyraźnie sfrustrowany lub zdenerwowany
+- Klient 2-3 razy prosi o to samo czego nie możesz zrobić
+- Klient mówi że chce rozmawiać z człowiekiem/właścicielem
+- Klient prosi o zostawienie wiadomości
+- Nie możesz pomóc klientowi mimo prób""",
+        properties={
+            "reason": {"type": "string", "description": "Powód eskalacji"},
+            "initiated_by": {
+                "type": "string", 
+                "enum": ["bot", "customer"],
+                "description": "Kto inicjuje: 'bot' = wykryłeś problem, 'customer' = klient sam poprosił"
+            }
+        },
+        required=["reason", "initiated_by"],
+        handler=lambda args, fm: handle_escalation(args, fm, tenant),
+    )
+
+
+async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Obsługa eskalacji - różne ścieżki w zależności kto inicjuje"""
+    reason = args.get("reason", "")
+    initiated_by = args.get("initiated_by", "bot")
     
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
-    business_name = tenant.get("name", "salon")
     
-    # Buduj tekst w zależności od dostępnych opcji
+    logger.info(f"🚨 Escalation: {reason} (initiated by: {initiated_by})")
+    
+    # BOT inicjuje (wykrył frustrację) → TYLKO wiadomość
+    if initiated_by == "bot":
+        return (None, create_message_only_node(tenant))
+    
+    # KLIENT inicjuje → zależy od ustawień
     if transfer_enabled and transfer_number:
-        options_text = "Czy chcesz zostawić wiadomość, żeby właściciel oddzwonił, czy wolisz przekierowanie na jego numer?"
-        functions = [
-            leave_message_fallback_function(tenant),
-            transfer_call_function(tenant),
-            try_again_function(tenant),
-        ]
+        # Daj wybór: wiadomość lub przekierowanie
+        return (None, create_escalation_choice_node(tenant))
     else:
-        options_text = "Czy mogę przekazać wiadomość do właściciela? Oddzwoni najszybciej jak to możliwe."
-        functions = [
-            leave_message_fallback_function(tenant),
-            try_again_function(tenant),
-        ]
-    
+        # Tylko wiadomość
+        return (None, create_message_only_node(tenant))
+
+
+def create_message_only_node(tenant: dict) -> dict:
+    """Node: bot proponuje tylko wiadomość (bez przekierowania)"""
     return {
-        "name": "fallback",
+        "name": "message_only",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Przepraszam, mam problem ze zrozumieniem. {options_text}"}
+            {"type": "tts_say", "text": "Przepraszam za trudności. Czy mogę przekazać wiadomość do właściciela? Oddzwoni najszybciej jak to możliwe."}
         ],
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": f"""Jesteś asystentem {business_name}. Miałeś problem ze zrozumieniem klienta.
-Zaproponowałeś opcje: wiadomość do właściciela{', przekierowanie' if transfer_enabled else ''}, lub spróbować ponownie.
-Czekaj na wybór klienta."""
+            "content": "Zaproponowałeś przekazanie wiadomości do właściciela. Czekaj na odpowiedź klienta."
         }],
         "task_messages": [{
-            "role": "system", 
-            "content": """Klient wybiera opcję:
-- Chce zostawić WIADOMOŚĆ → leave_message
-- Chce PRZEKIEROWANIE → transfer_call (jeśli dostępne)
-- Chce SPRÓBOWAĆ PONOWNIE → try_again
-- Chce się POŻEGNAĆ → end_conversation"""
+            "role": "system",
+            "content": """Klient odpowiada:
+- TAK, chce zostawić wiadomość → collect_message
+- NIE, nie chce → end_conversation
+- Coś innego → odpowiedz naturalnie i zapytaj ponownie"""
         }],
-        "functions": functions
+        "functions": [
+            collect_message_function(tenant),
+        ]
     }
 
 
-def leave_message_fallback_function(tenant: dict) -> FlowsFunctionSchema:
+def create_escalation_choice_node(tenant: dict) -> dict:
+    """Node: klient sam poprosił o kontakt - daj wybór"""
+    return {
+        "name": "escalation_choice",
+        "pre_actions": [
+            {"type": "tts_say", "text": "Oczywiście. Czy wolisz zostawić wiadomość, żeby właściciel oddzwonił, czy przekierować rozmowę teraz?"}
+        ],
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": "Klient chce kontakt z właścicielem. Dałeś wybór: wiadomość lub przekierowanie."
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": """Klient wybiera:
+- Chce WIADOMOŚĆ (oddzwonić, zostawić wiadomość) → collect_message
+- Chce PRZEKIEROWANIE (teraz, połączyć) → transfer_call
+- Rezygnuje → end_conversation"""
+        }],
+        "functions": [
+            collect_message_function(tenant),
+            transfer_call_function(tenant),
+        ]
+    }
+
+
+def collect_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Klient chce zostawić wiadomość"""
     return FlowsFunctionSchema(
-        name="leave_message",
+        name="collect_message",
         description="Klient chce zostawić wiadomość dla właściciela",
         properties={},
         required=[],
-        handler=lambda args, fm: handle_leave_message_start(args, fm, tenant),
+        handler=lambda args, fm: handle_collect_message_start(args, fm, tenant),
     )
 
 
-async def handle_leave_message_start(args: dict, flow_manager: FlowManager, tenant: dict):
+async def handle_collect_message_start(args: dict, flow_manager: FlowManager, tenant: dict):
     """Rozpocznij zbieranie wiadomości"""
     logger.info("📝 Starting message collection")
-    flow_manager.state["misunderstanding_count"] = 0  # Reset
-    return ("Oczywiście. Powiedz jak masz na imię i jaką wiadomość przekazać.", 
+    return ("Powiedz proszę jak masz na imię i co mam przekazać.", 
             create_collect_message_node(tenant))
 
 
 def create_collect_message_node(tenant: dict) -> dict:
-    """Node do zbierania wiadomości od klienta"""
+    """Node do zbierania wiadomości"""
     return {
         "name": "collect_message",
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": "Zbierasz wiadomość od klienta. Zapisz imię i treść wiadomości."
+            "content": "Zbierasz wiadomość od klienta dla właściciela. Potrzebujesz: imię i treść wiadomości."
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient podaje imię i wiadomość.
-Gdy masz dane → save_message
-Jeśli klient się rozmyślił → end_conversation"""
+            "content": """Zapisz dane klienta:
+- Gdy masz imię i wiadomość → save_message
+- Jeśli klient się rozmyślił → end_conversation"""
         }],
         "functions": [
             save_message_function(tenant),
@@ -687,7 +696,7 @@ def save_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Zapisz wiadomość"""
     return FlowsFunctionSchema(
         name="save_message",
-        description="Zapisz wiadomość od klienta (masz imię i treść)",
+        description="Zapisz wiadomość (masz imię i treść)",
         properties={
             "customer_name": {"type": "string", "description": "Imię klienta"},
             "message": {"type": "string", "description": "Treść wiadomości"},
@@ -701,25 +710,80 @@ async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dic
     """Zapisz wiadomość i wyślij email"""
     name = args.get("customer_name", "Nieznany")
     message = args.get("message", "")
+    caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     
     logger.info(f"📧 Message from {name}: {message[:50]}...")
     
-    # TODO: Wysłanie emaila do właściciela (zrobimy w kroku 2.4)
-    # Na razie tylko logujemy
+    # Wyślij email do właściciela
+    owner_email = tenant.get("notification_email") or tenant.get("email") or tenant.get("owner_email")
     
-    owner_email = tenant.get("email") or tenant.get("owner_email")
     if owner_email:
-        logger.info(f"📧 Would send email to: {owner_email}")
+        try:
+            await send_message_email(tenant, name, message, caller_phone, owner_email)
+            logger.info(f"📧 Email sent to: {owner_email}")
+        except Exception as e:
+            logger.error(f"📧 Email error: {e}")
+    else:
+        logger.warning("📧 No owner email configured!")
     
-    return (f"Dziękuję {name}. Przekażę wiadomość, właściciel oddzwoni najszybciej jak to możliwe. Do widzenia!",
+    return (f"Dziękuję {name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe. Do widzenia!",
             create_end_node())
+
+
+async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str):
+    """Wyślij email z wiadomością do właściciela"""
+    import httpx
+    import os
+    
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        logger.warning("📧 RESEND_API_KEY not configured")
+        return
+    
+    business_name = tenant.get("name", "Firma")
+    
+    html_content = f"""
+    <h2>Nowa wiadomość od klienta</h2>
+    <p><strong>Firma:</strong> {business_name}</p>
+    <p><strong>Od:</strong> {customer_name}</p>
+    <p><strong>Telefon:</strong> {phone}</p>
+    <p><strong>Wiadomość:</strong></p>
+    <p style="background: #f5f5f5; padding: 15px; border-radius: 5px;">{message}</p>
+    <hr>
+    <p style="color: #666; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego Voice AI</p>
+    """
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": "Voice AI <noreply@yourdomain.com>",
+                    "to": [to_email],
+                    "subject": f"📞 Wiadomość od {customer_name} - {business_name}",
+                    "html": html_content
+                },
+                timeout=10.0
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"📧 Email sent successfully")
+            else:
+                logger.error(f"📧 Resend error: {response.status_code} - {response.text}")
+                
+    except Exception as e:
+        logger.error(f"📧 Send email error: {e}")
 
 
 def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
     """Przekierowanie na numer właściciela"""
     return FlowsFunctionSchema(
         name="transfer_call",
-        description="Klient chce przekierowanie na numer właściciela",
+        description="Klient chce przekierowanie rozmowy do właściciela teraz",
         properties={},
         required=[],
         handler=lambda args, fm: handle_transfer_call(args, fm, tenant),
@@ -727,41 +791,23 @@ def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Przekieruj rozmowę - TODO: implementacja Twilio Dial"""
+    """Przekieruj rozmowę na numer właściciela"""
     transfer_number = tenant.get("transfer_number", "")
     
     if not transfer_number:
-        return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", None)
+        logger.warning("📞 Transfer requested but no number configured")
+        return ("Przepraszam, przekierowanie nie jest teraz dostępne. Czy mogę przekazać wiadomość?", 
+                create_message_only_node(tenant))
     
-    logger.info(f"📞 Transfer requested to: {transfer_number}")
+    logger.info(f"📞 Transfer to: {transfer_number}")
     
-    # TODO: Implementacja Twilio <Dial> w kroku 2.7
-    # Na razie informujemy że przekierowujemy
-    
+    # Zapisz w state że chcemy transfer - bot.py obsłuży
     flow_manager.state["transfer_requested"] = True
     flow_manager.state["transfer_number"] = transfer_number
     
+    # TODO: Faktyczne przekierowanie przez Twilio <Dial> - zrobimy później
+    # Na razie kończymy z komunikatem
     return ("Przekierowuję do właściciela. Proszę czekać.", create_end_node())
-
-
-def try_again_function(tenant: dict) -> FlowsFunctionSchema:
-    """Klient chce spróbować ponownie"""
-    return FlowsFunctionSchema(
-        name="try_again",
-        description="Klient chce spróbować ponownie (od początku)",
-        properties={},
-        required=[],
-        handler=lambda args, fm: handle_try_again(args, fm, tenant),
-    )
-
-
-async def handle_try_again(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Wróć do początku"""
-    logger.info("🔄 Client wants to try again")
-    flow_manager.state["misunderstanding_count"] = 0  # Reset
-    return ("Dobrze, spróbujmy jeszcze raz. W czym mogę pomóc?", 
-            create_continue_conversation_node(tenant))
-
 # ==========================================
 # NODE: Zakończenie
 # ==========================================
@@ -787,7 +833,7 @@ def create_end_node() -> dict:
         "name": "end",
         "respond_immediately": False,  # ← TO JEST KLUCZOWE
         "pre_actions": [
-            {"type": "tts_say", "text": "Do widzenia, miłego dnia!"}
+            {"type": "tts_say", "text": "Dziękuję, miłego dnia!"}
         ],
         "post_actions": [
             {"type": "end_conversation"}

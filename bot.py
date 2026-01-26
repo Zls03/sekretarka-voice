@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from flows import end_conversation_function, escalate_to_human_function
+
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response
@@ -98,6 +100,7 @@ async def twilio_incoming(request: Request):
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
             <Parameter name="greetingPlayed" value="true" />
+            <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
 </Response>'''
@@ -177,6 +180,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = custom_params.get("greetingPlayed", "false") == "true"
+                caller_phone = custom_params.get("callerPhone", "nieznany")
                 
                 logger.info(f"📋 Stream started: {stream_sid}")
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
@@ -421,11 +425,15 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
     from flows import end_conversation_function
     
+    
     flow_manager = FlowManager(
         task=task,
         llm=llm,
         context_aggregator=context_aggregator,
-        global_functions=[end_conversation_function()],
+        global_functions=[
+            end_conversation_function(),
+            escalate_to_human_function(tenant),  # NOWE: globalna eskalacja
+        ],
     )
     
     # Zapisz dane tenant w state
@@ -434,6 +442,7 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["stream_sid"] = stream_sid
     flow_manager.state["started_at"] = datetime.utcnow()
     flow_manager.state["greeting_played"] = greeting_played
+    flow_manager.state["caller_phone"] = caller_phone
     
     # ==========================================
     # EVENT HANDLERS
