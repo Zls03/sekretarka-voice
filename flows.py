@@ -46,7 +46,19 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         services_list = ", ".join([s["name"] + (f" - {s['price']}" if s.get('price') else "") for s in info_services]) if info_services else "brak usług"
     
     staff = tenant.get("staff", [])
-    staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
+    # Pokaż kto robi jakie usługi
+    if booking_enabled and staff:
+        staff_info = []
+        for s in staff:
+            staff_services = s.get("services", [])
+            if staff_services:
+                svc_names = [svc["name"] for svc in staff_services]
+                staff_info.append(f"{s['name']} ({', '.join(svc_names)})")
+            else:
+                staff_info.append(f"{s['name']} (wszystkie usługi)")
+        staff_list = ", ".join(staff_info)
+    else:
+        staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
     
     # Jeśli powitanie już odtworzone przez Twilio <Play> - nie mów znowu
     if greeting_played:
@@ -384,16 +396,21 @@ def create_get_staff_node(tenant: dict, selected_service: dict = None) -> dict:
     staff_names = [s["name"] for s in available_staff]
     staff_list = ", ".join(staff_names)
     
-    # Jeśli tylko jeden pracownik - wybierz automatycznie!
+    # Jeśli tylko jeden pracownik - zapytaj czy OK (nie auto-select!)
     if len(available_staff) == 1:
         single_staff = available_staff[0]
         return {
-            "name": "get_staff_auto",
+            "name": "get_staff_single",
             "task_messages": [{
                 "role": "system", 
-                "content": f"Pracownik wybrany automatycznie: {single_staff['name']}. Przejdź do wyboru daty."
+                "content": f"""Tę usługę wykonuje tylko {single_staff['name']}. 
+Zapytaj KRÓTKO czy umówić do {single_staff['name']}.
+Jeśli TAK → auto_continue
+Jeśli NIE → powiedz że niestety tylko ta osoba wykonuje tę usługę, zapytaj czy może inna usługa?"""
             }],
-            "functions": [auto_select_staff_function(tenant, single_staff)]
+            "functions": [
+                auto_select_staff_function(tenant, single_staff),
+            ]
         }
     
     return {
@@ -874,28 +891,53 @@ def create_message_only_node(tenant: dict) -> dict:
     }
 
 def create_escalation_choice_node(tenant: dict) -> dict:
-    """Node: klient sam poprosił o kontakt - daj wybór"""
+    """Node: klient potrzebuje kontaktu - proponuj wiadomość"""
+    transfer_enabled = tenant.get("transfer_enabled", 0) == 1
+    transfer_number = tenant.get("transfer_number", "")
+    
+    # Domyślnie proponuj tylko wiadomość
+    if transfer_enabled and transfer_number:
+        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
+        functions = [
+            collect_message_function(tenant),
+            transfer_call_function(tenant),
+        ]
+        task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
+Zaproponowałeś zostawienie wiadomości.
+
+Klient wybiera:
+- Chce WIADOMOŚĆ (tak, zostawić, przekazać) → collect_message
+- SAM PROSI o przekierowanie/połączenie teraz → transfer_call
+- Rezygnuje → end_conversation
+
+WAŻNE: Proponuj WIADOMOŚĆ, nie przekierowanie. Przekierowanie tylko gdy klient SAM o nie poprosi."""
+    else:
+        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
+        functions = [
+            collect_message_function(tenant),
+        ]
+        task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
+Zaproponowałeś zostawienie wiadomości.
+
+Klient wybiera:
+- Chce WIADOMOŚĆ → collect_message
+- Rezygnuje → end_conversation"""
+    
     return {
         "name": "escalation_choice",
         "pre_actions": [
-            {"type": "tts_say", "text": "Oczywiście. Czy chce Pan zostawić wiadomość, żeby właściciel oddzwonił, czy przekierować rozmowę teraz?"}
+            {"type": "tts_say", "text": prompt_text}
         ],
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": "Klient chce kontakt z właścicielem. Dałeś wybór: wiadomość lub przekierowanie."
+            "content": "Klient potrzebuje kontaktu z właścicielem. Zaproponowałeś zostawienie wiadomości."
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient wybiera:
-- Chce WIADOMOŚĆ (oddzwonić, zostawić wiadomość) → collect_message
-- Chce PRZEKIEROWANIE (teraz, połączyć) → transfer_call
-- Rezygnuje → end_conversation"""
+            "content": task_content
         }],
-        "functions": [
-            collect_message_function(tenant),
-            transfer_call_function(tenant),
-        ]
+        "functions": functions
     }
 
 
