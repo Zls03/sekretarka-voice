@@ -47,6 +47,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     business_name = tenant.get("name", "salon")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
     booking_enabled = tenant.get("booking_enabled", 1) == 1
+    assistant_name = tenant.get("assistant_name", "Ania")
     
     # Usługi z kalendarza lub info_services
     if booking_enabled:
@@ -67,29 +68,40 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         pre_actions = [{"type": "tts_say", "text": first_message}]
         logger.info("🔊 Using TTS for greeting")
     
-    # Różne funkcje w zależności od trybu
+    # Różne funkcje i instrukcje w zależności od trybu
     if booking_enabled:
         functions = [
             start_booking_function(),
             answer_question_function(tenant),
         ]
-        task_content = """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+        task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
-- Chce się UMÓWIĆ → start_booking
-- Ma PYTANIE → answer_question  
+TWOJE ZADANIA:
+- Chce się UMÓWIĆ na wizytę → start_booking
+- Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
 - Chce się POŻEGNAĆ → end_conversation"""
+
+        role_extra = f"""
+USŁUGI: {services_list}
+PRACOWNICY: {staff_list}"""
+
     else:
         functions = [
             answer_question_function(tenant),
         ]
-        task_content = """Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+        task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
-WAŻNE: Rezerwacje telefoniczne są WYŁĄCZONE.
-Jeśli klient chce się umówić → poinformuj że rezerwacja telefoniczna nie jest dostępna, ale ZAPROPONUJ że możesz przekazać prośbę o kontakt do właściciela który oddzwoni. Użyj escalate_to_human jeśli klient się zgodzi.
+WAŻNE - REZERWACJE SĄ WYŁĄCZONE:
+Jeśli klient chce się umówić, powiedz KRÓTKO: "Niestety rezerwacja telefoniczna nie jest dostępna. Mogę przekazać prośbę o kontakt do właściciela, który oddzwoni. Czy chce Pan/Pani zostawić wiadomość?"
+Jeśli się zgodzi → użyj escalate_to_human
 
-- Ma PYTANIE (cennik, godziny, usługi, inne) → answer_question  
-- Chce się UMÓWIĆ → poinformuj o braku rezerwacji online i zaproponuj przekazanie wiadomości
+TWOJE ZADANIA:
+- Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
+- Chce ZOSTAWIĆ WIADOMOŚĆ lub UMÓWIĆ SIĘ → zaproponuj przekazanie wiadomości, potem escalate_to_human
 - Chce się POŻEGNAĆ → end_conversation"""
+
+        role_extra = f"""
+USŁUGI/CENNIK: {services_list}"""
     
     return {
         "name": "greeting",
@@ -100,21 +112,18 @@ Jeśli klient chce się umówić → poinformuj że rezerwacja telefoniczna nie 
             "content": f"""Jesteś wirtualną asystentką (sekretarką) firmy "{business_name}".
 
 TOŻSAMOŚĆ:
-- Masz na imię {tenant.get("assistant_name", "Ania")}
+- Masz na imię {assistant_name}
 - Jesteś kobietą - mów w rodzaju żeńskim (zrobiłam, powiedziałam, zapisałam, pomogę)
-- Jeśli ktoś pyta kim jesteś: "Jestem {tenant.get("assistant_name", "Ania")}, wirtualna asystentka {business_name}"
+- Jeśli ktoś pyta kim jesteś: "Jestem {assistant_name}, wirtualna asystentka {business_name}"
 - Jeśli ktoś pyta czy jesteś robotem/AI: "Jestem wirtualną asystentką, ale chętnie pomogę"
 
 ZASADY:
-- Mów krótko i naturalnie
+- Mów KRÓTKO i naturalnie (max 2 zdania na raz)
 - Używaj polskiego języka
 - NIE używaj emoji
 - Godziny mów słownie (dziesiąta, nie 10:00)
-
-{"REZERWACJE TELEFONICZNE SĄ WYŁĄCZONE. Informuj tylko o usługach, cenach, godzinach." if not booking_enabled else ""}
-
-USŁUGI/CENNIK: {services_list}
-{"PRACOWNICY: " + staff_list if booking_enabled else ""}"""
+- NIE powtarzaj tych samych informacji dwukrotnie
+{role_extra}"""
         }],
         "task_messages": [{
             "role": "system",
