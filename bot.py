@@ -310,11 +310,11 @@ async def websocket_endpoint(websocket: WebSocket):
         
         Zwraca True żeby kontynuować monitoring, False żeby zakończyć.
         """
-        # Jeśli rozmowa już zakończona (node "end") - nie rób nic
+        # Jeśli rozmowa już zakończona (node "end" lub "transfer_end") - nie rób nic
         try:
             current_node = flow_manager.current_node.get("name", "") if flow_manager.current_node else ""
-            if current_node == "end":
-                logger.info("⏰ Idle triggered but already in end node - stopping monitor")
+            if current_node in ["end", "transfer_end"]:
+                logger.info(f"⏰ Idle triggered but already in {current_node} node - stopping monitor")
                 return False
         except:
             pass
@@ -641,10 +641,9 @@ async def twilio_after_stream(request: Request):
             )
             caller_id = tenant_data[0]["phone_number"] if tenant_data else ""
             
-            # Zwróć TwiML z Dial - przekieruj do właściciela z muzyką na czekanie
+            # Zwróć TwiML z Dial - przekieruj do właściciela
             twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Play>http://twimlets.com/holdmusic?Bucket=com.twilio.music.ambient</Play>
     <Dial timeout="30" callerId="{caller_id}">
         {transfer_number}
     </Dial>

@@ -1029,11 +1029,13 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
 
 
 def create_transfer_end_node() -> dict:
-    """Specjalny node końcowy dla transferu - bez pożegnania!"""
+    """Specjalny node końcowy dla transferu - z komunikatem o łączeniu"""
     return {
         "name": "transfer_end",
         "respond_immediately": False,
-        "pre_actions": [],  # Brak pożegnania - klient czeka na transfer
+        "pre_actions": [
+            {"type": "tts_say", "text": "Łączę z właścicielem, proszę chwilę poczekać."}
+        ],
         "post_actions": [
             {"type": "end_conversation"}
         ],
