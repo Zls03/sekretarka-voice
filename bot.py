@@ -276,7 +276,9 @@ async def websocket_endpoint(websocket: WebSocket):
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
         model="eleven_multilingual_v2",
-        output_format="pcm_24000",  # Standard PCM, serializer skonwertuje
+        output_format="pcm_24000",
+        stability=0.6,
+        similarity_boost=0.75,
     )
     
     # Groq - ultra szybki LLM (4-10x szybszy niż OpenAI)
