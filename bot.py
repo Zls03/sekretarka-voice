@@ -206,17 +206,36 @@ async def websocket_endpoint(websocket: WebSocket):
                         tenant = await get_tenant_by_phone(rows[0]["phone_number"])
                         
                         if tenant:
-                            # Dodaj staff (get_tenant_by_phone tego nie pobiera)
+                            # Dodaj staff z ich usługami
                             staff = await db.execute(
                                 "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
                                 [tenant_id]
                             )
-                            tenant["staff"] = [dict(s) for s in staff]
+                            
+                            # Pobierz usługi dla każdego pracownika
+                            staff_list = []
+                            for s in staff:
+                                staff_dict = dict(s)
+                                # Pobierz usługi tego pracownika
+                                staff_services = await db.execute(
+                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
+                                       FROM services srv
+                                       JOIN staff_services ss ON srv.id = ss.service_id
+                                       WHERE ss.staff_id = ?""",
+                                    [s["id"]]
+                                )
+                                staff_dict["services"] = [dict(svc) for svc in staff_services]
+                                staff_list.append(staff_dict)
+                            
+                            tenant["staff"] = staff_list
                             
                             logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
                             logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
                             logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
                             logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
+                            for st in staff_list:
+                                logger.info(f"   Staff {st['name']}: {[svc['name'] for svc in st.get('services', [])]}")
+
                 
                 # Mamy stream_sid - możemy utworzyć pipeline
                 break

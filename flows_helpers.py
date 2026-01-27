@@ -163,13 +163,22 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
     """Sprawdza ograniczenia daty (min wyprzedzenie, max dni w przód)"""
     now = datetime.now()
     
-    min_advance_hours = staff.get("min_advance_hours") or staff.get("min_booking_hours") or 12
+    # Konwertuj na int (mogą być stringi z bazy lub None)
+    try:
+        min_advance_hours = int(staff.get("min_advance_hours") or staff.get("min_booking_hours") or 12)
+    except (ValueError, TypeError):
+        min_advance_hours = 12
+    
     min_booking_time = now + timedelta(hours=min_advance_hours)
     
     if date < min_booking_time:
         return (False, f"Rezerwacje przyjmujemy z minimum {min_advance_hours} godzinnym wyprzedzeniem.")
     
-    max_days_ahead = staff.get("max_days_ahead") or staff.get("max_booking_days") or 14
+    try:
+        max_days_ahead = int(staff.get("max_days_ahead") or staff.get("max_booking_days") or 14)
+    except (ValueError, TypeError):
+        max_days_ahead = 14
+    
     max_date = now + timedelta(days=max_days_ahead)
     
     if date > max_date:

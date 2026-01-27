@@ -378,6 +378,29 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
         available = ", ".join([s["name"] for s in staff_list])
         return (f"Nie mamy pracownika {staff_name}. U nas pracują: {available}.", None)
     
+    # NOWE: Sprawdź czy pracownik wykonuje wybraną usługę
+    selected_service = flow_manager.state.get("selected_service")
+    if selected_service:
+        # Pobierz usługi pracownika
+        staff_services = found.get("services", [])
+        staff_service_ids = [s.get("id") for s in staff_services if s.get("id")]
+        
+        # Jeśli pracownik ma przypisane usługi - sprawdź
+        if staff_service_ids and selected_service.get("id") not in staff_service_ids:
+            # Znajdź kto wykonuje tę usługę
+            available_staff = []
+            for st in staff_list:
+                st_services = st.get("services", [])
+                st_service_ids = [svc.get("id") for svc in st_services if svc.get("id")]
+                if not st_service_ids or selected_service.get("id") in st_service_ids:
+                    available_staff.append(st["name"])
+            
+            if available_staff:
+                return (f"Niestety {found['name']} nie wykonuje usługi {selected_service['name']}. "
+                        f"Tę usługę wykonuje: {', '.join(available_staff)}. Do kogo chce się Pan umówić?", None)
+            else:
+                return (f"Niestety {found['name']} nie wykonuje tej usługi.", None)
+    
     flow_manager.state["selected_staff"] = found
     logger.info(f"✅ Staff: {found['name']}")
     return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
@@ -1161,6 +1184,7 @@ def create_end_node(message_saved: bool = False) -> dict:
     
     return {
         "name": "end",
+        "respond_immediately": False,
         "pre_actions": [
             {"type": "tts_say", "text": goodbye_text}
         ],
@@ -1168,6 +1192,6 @@ def create_end_node(message_saved: bool = False) -> dict:
             {"type": "end_conversation"}
         ],
         "role_messages": [],
-        "task_messages": [],  # Wymagane przez Pipecat
+        "task_messages": [],
         "functions": []
     }
