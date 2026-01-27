@@ -11,6 +11,7 @@ from loguru import logger
 import random
 import string
 
+
 # Import helperów
 from helpers import db
 from flows_helpers import (
@@ -33,13 +34,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     
     # Aktualna data dla GPT
     polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
-    today = datetime.now()
-    today_info = f"DZIŚ: {today.strftime('%d.%m.%Y')} ({polish_days[today.weekday()]})"
-    # Aktualna data dla GPT
-    from datetime import datetime
-    today = datetime.now()
-    polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
-    today_info = f"DZIŚ: {today.strftime('%d.%m.%Y')} ({polish_days[today.weekday()]})"
+    now = datetime.now()
+    today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({polish_days[now.weekday()]})"
     
     # Usługi z kalendarza lub info_services
     if booking_enabled:
