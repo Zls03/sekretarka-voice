@@ -519,16 +519,33 @@ async def handle_auto_staff(args: dict, flow_manager: FlowManager, tenant: dict,
 # ==========================================
 
 def create_get_date_node(tenant: dict) -> dict:
+    # Aktualna data i limity
+    now = datetime.now()
+    polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
+    today_str = f"{now.strftime('%d.%m.%Y')} ({polish_days[now.weekday()]})"
+    
+    # Pobierz max dni z tenant lub domyślnie 30
+    max_days = tenant.get("max_booking_days", 30)
+    max_date = now + timedelta(days=max_days)
+    max_date_str = max_date.strftime('%d.%m.%Y')
+    
     return {
         "name": "get_date",
         "task_messages": [{
             "role": "system",
-            "content": """Zapytaj kiedy klient chce się umówić.
+            "content": f"""Zapytaj kiedy klient chce się umówić.
+
+DZIŚ JEST: {today_str}
+MOŻNA REZERWOWAĆ: od dziś do {max_date_str} (max {max_days} dni do przodu)
+
+WAŻNE: 
+- NIE przyjmuj dat z przeszłości!
+- NIE przyjmuj dat dalej niż {max_days} dni
+
 Gdy poda datę (i opcjonalnie godzinę) → check_availability"""
         }],
         "functions": [check_availability_function(tenant)]
     }
-
 
 def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
@@ -672,7 +689,9 @@ async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant:
     logger.info(f"💾 Booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}")
     
     try:
-        await save_booking_to_api(tenant, staff, service, date, hour, name)
+        # Pobierz numer telefonu klienta z Twilio
+        caller_phone = flow_manager.state.get("caller_phone", "")
+        await save_booking_to_api(tenant, staff, service, date, hour, name, caller_phone)
     except Exception as e:
         logger.error(f"❌ Save error: {e}")
     

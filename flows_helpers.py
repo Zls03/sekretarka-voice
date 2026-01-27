@@ -193,7 +193,7 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
 async def get_available_slots_from_api(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
-    """Pobiera wolne sloty z API panelu (Google Calendar)"""
+    """Pobiera wolne sloty z API panelu (Google Calendar) - z retry"""
     staff_id = staff.get("id")
     service_id = service.get("id")
     date_str = date.strftime("%Y-%m-%d")
@@ -203,33 +203,39 @@ async def get_available_slots_from_api(
         logger.warning("⚠️ No panel slug configured")
         return []
     
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
-                params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                slots = data.get("slots", [])
-                hours = []
-                for slot in slots:
-                    if isinstance(slot, str) and ":" in slot:
-                        hours.append(int(slot.split(":")[0]))
-                    elif isinstance(slot, int):
-                        hours.append(slot)
-                logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
-                return hours
-            else:
-                logger.warning(f"⚠️ Calendar API returned {response.status_code}")
-                return []
+    # Retry logic - 3 próby
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
+                    params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
+                )
                 
-    except Exception as e:
-        logger.error(f"❌ Calendar API error: {e}")
-        return []
-
-
+                if response.status_code == 200:
+                    data = response.json()
+                    slots = data.get("slots", [])
+                    hours = []
+                    for slot in slots:
+                        if isinstance(slot, str) and ":" in slot:
+                            hours.append(int(slot.split(":")[0]))
+                        elif isinstance(slot, int):
+                            hours.append(slot)
+                    logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
+                    return hours
+                else:
+                    logger.warning(f"⚠️ Calendar API returned {response.status_code} (attempt {attempt + 1}/3)")
+                    
+        except Exception as e:
+            logger.error(f"❌ Calendar API error (attempt {attempt + 1}/3): {e}")
+        
+        # Czekaj przed kolejną próbą (tylko jeśli nie ostatnia)
+        if attempt < 2:
+            import asyncio
+            await asyncio.sleep(0.5)
+    
+    logger.error(f"❌ Calendar API failed after 3 attempts for {date_str}")
+    return []
 async def get_available_slots_from_working_hours(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
@@ -404,5 +410,29 @@ def build_business_context(tenant: dict) -> str:
     additional = tenant.get("additional_info", "")
     if additional:
         parts.append(f"DODATKOWE INFO: {additional}")
+    
+    # Godziny pracy pracowników (dla trybu z rezerwacjami)
+    if booking_enabled:
+        staff = tenant.get("staff", [])
+        if staff:
+            staff_hours = []
+            for s in staff:
+                wh_json = s.get("working_hours_json", "")
+                if wh_json and wh_json != "'{}'":
+                    try:
+                        import json
+                        wh = json.loads(wh_json) if isinstance(wh_json, str) else wh_json
+                        days_pl = {"mon": "pon", "tue": "wt", "wed": "śr", "thu": "czw", "fri": "pt", "sat": "sob", "sun": "niedz"}
+                        hours_list = []
+                        for day_en, day_pl in days_pl.items():
+                            day_data = wh.get(day_en, {})
+                            if day_data and not day_data.get("closed", False) and day_data.get("open"):
+                                hours_list.append(f"{day_pl}: {day_data['open']}-{day_data['close']}")
+                        if hours_list:
+                            staff_hours.append(f"{s['name']}: {', '.join(hours_list)}")
+                    except:
+                        pass
+            if staff_hours:
+                parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
     
     return "\n\n".join(parts)
