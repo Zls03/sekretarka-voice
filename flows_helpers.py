@@ -8,6 +8,7 @@ Zawiera:
 """
 
 import os
+import asyncio
 import httpx
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -289,40 +290,119 @@ async def save_booking_to_api(
     tenant: dict, staff: dict, service: dict, 
     date: datetime, hour: int, customer_name: str, customer_phone: str = ""
 ) -> dict:
-    """Zapisuje rezerwację przez API panelu"""
+    """Zapisuje rezerwację przez API panelu - z retry i kodem wizyty"""
+    import random
+    
     slug = tenant.get("slug") or PANEL_SLUG
     
     if not slug:
         logger.warning("⚠️ No panel slug configured")
         return {}
     
+    # Generuj unikalny 4-cyfrowy kod wizyty
+    booking_code = str(random.randint(1000, 9999))
+    
+    # Retry logic - 3 próby
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{PANEL_API_URL}/api/panel/{slug}/bookings",
+                    json={
+                        "staff_id": staff.get("id"),
+                        "service_id": service.get("id"),
+                        "date": date.strftime("%Y-%m-%d") if date else None,
+                        "time": f"{hour:02d}:00" if hour else None,
+                        "client_name": customer_name,
+                        "client_phone": customer_phone,
+                        "booking_code": booking_code,
+                    }
+                )
+                
+                if response.status_code in [200, 201]:
+                    data = response.json()
+                    data["booking_code"] = booking_code  # Dodaj kod do odpowiedzi
+                    logger.info(f"✅ Booking saved: {data.get('bookingId')} (code: {booking_code})")
+                    return data
+                else:
+                    logger.warning(f"⚠️ Booking API error: {response.status_code} (attempt {attempt + 1}/3)")
+                    
+        except Exception as e:
+            logger.error(f"❌ Booking API error (attempt {attempt + 1}/3): {e}")
+        
+        # Czekaj przed kolejną próbą
+        if attempt < 2:
+            await asyncio.sleep(0.5)
+    
+    logger.error(f"❌ Booking API failed after 3 attempts")
+    return {}
+
+
+async def send_booking_sms(
+    tenant: dict, customer_phone: str, service_name: str, 
+    staff_name: str, date_str: str, time_str: str, booking_code: str
+) -> bool:
+    """Wysyła SMS z potwierdzeniem wizyty przez Twilio"""
+    import os
+    
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+    
+    if not all([twilio_sid, twilio_token, twilio_number]):
+        logger.warning("⚠️ Twilio SMS not configured")
+        return False
+    
+    if not customer_phone or len(customer_phone) < 9:
+        logger.warning(f"⚠️ Invalid phone for SMS: {customer_phone}")
+        return False
+    
+    # Formatuj numer
+    phone = customer_phone.replace(" ", "").replace("-", "")
+    if not phone.startswith("+"):
+        phone = f"+48{phone[-9:]}"
+    
+    business_name = tenant.get("name", "Salon")
+    
+    # Krótki SMS (max 160 znaków)
+    sms_text = f"{business_name}: {service_name} {date_str} g.{time_str}, {staff_name}. Kod:{booking_code}. Do zobaczenia!"
+    
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{PANEL_API_URL}/api/panel/{slug}/bookings",
-                json={
-                    "staff_id": staff.get("id"),
-                    "service_id": service.get("id"),
-                    "date": date.strftime("%Y-%m-%d") if date else None,
-                    "time": f"{hour:02d}:00" if hour else None,
-                    "client_name": customer_name,
-                    "client_phone": customer_phone,
+                f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
+                auth=(twilio_sid, twilio_token),
+                data={
+                    "From": twilio_number,
+                    "To": phone,
+                    "Body": sms_text,
                 }
             )
             
             if response.status_code in [200, 201]:
-                data = response.json()
-                logger.info(f"✅ Booking saved: {data.get('bookingId')}")
-                return data
+                logger.info(f"📱 SMS sent to {phone}: {sms_text[:50]}...")
+                return True
             else:
-                logger.warning(f"⚠️ Booking API error: {response.status_code}")
-                return {}
+                logger.error(f"📱 SMS error: {response.status_code} - {response.text}")
+                return False
                 
     except Exception as e:
-        logger.error(f"❌ Booking API error: {e}")
-        return {}
+        logger.error(f"📱 SMS error: {e}")
+        return False
 
 
+async def increment_sms_count(tenant_id: str):
+    """Zwiększa licznik SMS dla tenant"""
+    from helpers import db
+    
+    try:
+        await db.execute(
+            "UPDATE tenants SET sms_count = COALESCE(sms_count, 0) + 1 WHERE id = ?",
+            [tenant_id]
+        )
+        logger.info(f"📱 SMS count incremented for {tenant_id}")
+    except Exception as e:
+        logger.error(f"📱 SMS count error: {e}")
 # ==========================================
 # BUDOWANIE KONTEKSTU DLA ODPOWIEDZI
 # ==========================================

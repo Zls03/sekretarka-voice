@@ -72,12 +72,14 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     if booking_enabled:
         functions = [
             start_booking_function(),
+            manage_booking_function(tenant),
             answer_question_function(tenant),
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
 TWOJE ZADANIA:
 - Chce się UMÓWIĆ na wizytę → start_booking
+- Chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę → manage_booking
 - Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
 - Chce się POŻEGNAĆ → end_conversation"""
 
@@ -88,6 +90,7 @@ PRACOWNICY: {staff_list}"""
     else:
         functions = [
             answer_question_function(tenant),
+            manage_booking_function(tenant),
             collect_message_function(tenant),  
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
@@ -97,6 +100,7 @@ Jeśli klient chce się umówić, powiedz KRÓTKO: "Niestety rezerwacja telefoni
 
 TWOJE ZADANIA:
 - Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
+- Chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę → manage_booking
 - Chce ZOSTAWIĆ WIADOMOŚĆ → od razu użyj collect_message (wyciągnij imię i treść z wypowiedzi)
 - Chce PRZEKIEROWANIE do właściciela → escalate_to_human
 - Chce się POŻEGNAĆ → end_conversation
@@ -194,6 +198,86 @@ Po odpowiedzi CZEKAJ na reakcję klienta."""
         "functions": [
             start_booking_function(),
             answer_question_function(tenant),
+        ]
+    }
+
+# ==========================================
+# FUNKCJA: Zarządzanie wizytą (przełóż/odwołaj) - FALLBACK
+# ==========================================
+
+def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient chce przełożyć lub odwołać wizytę - fallback do właściciela"""
+    return FlowsFunctionSchema(
+        name="manage_booking",
+        description="""Klient chce PRZEŁOŻYĆ lub ODWOŁAĆ istniejącą wizytę.
+Użyj gdy klient mówi: "chcę przełożyć wizytę", "muszę odwołać", "zmienić termin", "anulować rezerwację".""",
+        properties={
+            "action": {
+                "type": "string",
+                "enum": ["przełożyć", "odwołać"],
+                "description": "Czy klient chce przełożyć czy odwołać wizytę"
+            },
+            "booking_code": {
+                "type": "string",
+                "description": "Kod wizyty jeśli klient podał (4 cyfry)"
+            },
+        },
+        required=["action"],
+        handler=lambda args, fm: handle_manage_booking(args, fm, tenant),
+    )
+
+
+async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Obsługa przełożenia/odwołania - fallback do właściciela"""
+    action = args.get("action", "przełożyć")
+    booking_code = args.get("booking_code", "")
+    
+    logger.info(f"📅 Manage booking request: {action}, code: {booking_code}")
+    
+    transfer_enabled = tenant.get("transfer_enabled", 0) == 1
+    transfer_number = tenant.get("transfer_number", "")
+    
+    # Zapisz kontekst
+    flow_manager.state["manage_action"] = action
+    flow_manager.state["manage_booking_code"] = booking_code
+    
+    action_text = "przełożenie" if action == "przełożyć" else "odwołanie"
+    
+    # Jeśli transfer dostępny - daj wybór (bo klient potrzebuje realnej pomocy)
+    if transfer_enabled and transfer_number:
+        return (f"Rozumiem, chce Pan {action_text} wizyty. Mogę przekierować do właściciela, który pomoże ze zmianą terminu, lub przekazać wiadomość. Co Pan woli?",
+                create_manage_booking_choice_node(tenant, action))
+    else:
+        # Tylko wiadomość
+        return (f"Rozumiem, chce Pan {action_text} wizyty. Przekażę wiadomość do właściciela, który oddzwoni i pomoże ze zmianą. Czy mogę prosić o imię?",
+                create_take_message_node(tenant))
+
+
+def create_manage_booking_choice_node(tenant: dict, action: str) -> dict:
+    """Node: klient chce przełożyć/odwołać - daj wybór transfer lub wiadomość"""
+    action_text = "przełożeniem" if action == "przełożyć" else "odwołaniem"
+    
+    return {
+        "name": "manage_booking_choice",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"Klient chce pomoc z {action_text} wizyty. Zaproponowałeś przekierowanie lub wiadomość."
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": f"""Klient chce {action_text} wizyty i potrzebuje pomocy właściciela.
+
+Klient wybiera:
+- Chce PRZEKIEROWANIE (tak, połącz, teraz) → transfer_call
+- Chce WIADOMOŚĆ (nie, wiadomość, oddzwonić) → collect_message
+- Rezygnuje → end_conversation
+
+WAŻNE: W tej sytuacji przekierowanie jest OK bo klient potrzebuje realnej pomocy z wizytą."""
+        }],
+        "functions": [
+            collect_message_function(tenant),
+            transfer_call_function(tenant),
         ]
     }
 
@@ -685,23 +769,58 @@ async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant:
     staff = flow_manager.state.get("selected_staff", {})
     date = flow_manager.state.get("selected_date")
     hour = flow_manager.state.get("selected_time")
+    caller_phone = flow_manager.state.get("caller_phone", "")
     
     logger.info(f"💾 Booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}")
     
+    booking_code = None
+    booking_saved = False
+    
     try:
-        # Pobierz numer telefonu klienta z Twilio
-        caller_phone = flow_manager.state.get("caller_phone", "")
-        await save_booking_to_api(tenant, staff, service, date, hour, name, caller_phone)
+        # Zapisz rezerwację z numerem telefonu
+        result = await save_booking_to_api(tenant, staff, service, date, hour, name, caller_phone)
+        if result:
+            booking_saved = True
+            booking_code = result.get("booking_code")
     except Exception as e:
         logger.error(f"❌ Save error: {e}")
+    
+    # Wyślij SMS tylko jeśli rezerwacja zapisana pomyślnie
+    if booking_saved and booking_code and caller_phone:
+        try:
+            from flows_helpers import send_booking_sms, increment_sms_count
+            
+            date_str = date.strftime("%d.%m") if date else ""
+            time_str = f"{hour}:00" if hour else ""
+            
+            sms_sent = await send_booking_sms(
+                tenant=tenant,
+                customer_phone=caller_phone,
+                service_name=service.get("name", "Wizyta"),
+                staff_name=staff.get("name", ""),
+                date_str=date_str,
+                time_str=time_str,
+                booking_code=booking_code
+            )
+            
+            if sms_sent:
+                await increment_sms_count(tenant.get("id"))
+        except Exception as e:
+            logger.error(f"📱 SMS error: {e}")
     
     date_text = format_date_polish(date) if date else "wybrany dzień"
     time_text = format_hour_polish(hour) if hour else "wybraną godzinę"
     
-    return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. Do zobaczenia!",
-            create_anything_else_node(tenant))
-
-
+    # Komunikat z kodem jeśli SMS wysłany
+    if booking_saved and booking_code:
+        return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. Wysłałam potwierdzenie SMS z kodem wizyty. Do zobaczenia!",
+                create_anything_else_node(tenant))
+    elif booking_saved:
+        return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. Do zobaczenia!",
+                create_anything_else_node(tenant))
+    else:
+        return (f"Przepraszam, wystąpił problem z zapisem rezerwacji. Czy mogę przekazać wiadomość do właściciela?",
+                create_take_message_node(tenant))
 # ==========================================
 # NODE: Czy coś jeszcze?
 # ==========================================
