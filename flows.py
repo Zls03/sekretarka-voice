@@ -22,23 +22,6 @@ from flows_helpers import (
     build_business_context, POLISH_DAYS
 )
 
-async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dict):
-    staff_name = args.get("staff_name", "").lower()
-    staff_list = tenant.get("staff", [])
-    
-    found = None
-    for s in staff_list:
-        if staff_name in s["name"].lower() or s["name"].lower() in staff_name:
-            found = s
-            break
-    
-    if not found:
-        available = ", ".join([s["name"] for s in staff_list])
-        return (f"Nie mamy pracownika {staff_name}. U nas pracują: {available}.", None)
-    
-    flow_manager.state["selected_staff"] = found
-    logger.info(f"✅ Staff: {found['name']}")
-    return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
 # ==========================================
 # NODE: Powitanie
 # ==========================================
@@ -88,17 +71,20 @@ PRACOWNICY: {staff_list}"""
     else:
         functions = [
             answer_question_function(tenant),
+            collect_message_function(tenant),  
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
 WAŻNE - REZERWACJE SĄ WYŁĄCZONE:
-Jeśli klient chce się umówić, powiedz KRÓTKO: "Niestety rezerwacja telefoniczna nie jest dostępna. Mogę przekazać prośbę o kontakt do właściciela, który oddzwoni. Czy chce Pan/Pani zostawić wiadomość?"
-Jeśli się zgodzi → użyj escalate_to_human
+Jeśli klient chce się umówić, powiedz KRÓTKO: "Niestety rezerwacja telefoniczna nie jest dostępna. Mogę przekazać prośbę o kontakt do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
 
 TWOJE ZADANIA:
 - Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
-- Chce ZOSTAWIĆ WIADOMOŚĆ lub UMÓWIĆ SIĘ → zaproponuj przekazanie wiadomości, potem escalate_to_human
-- Chce się POŻEGNAĆ → end_conversation"""
+- Chce ZOSTAWIĆ WIADOMOŚĆ → od razu użyj collect_message (wyciągnij imię i treść z wypowiedzi)
+- Chce PRZEKIEROWANIE do właściciela → escalate_to_human
+- Chce się POŻEGNAĆ → end_conversation
+
+WAŻNE: Jeśli klient już podał imię i treść wiadomości, NIE pytaj ponownie - od razu zapisz używając collect_message."""
 
         role_extra = f"""
 USŁUGI/CENNIK: {services_list}"""
@@ -697,7 +683,7 @@ def create_escalation_choice_node(tenant: dict) -> dict:
     return {
         "name": "escalation_choice",
         "pre_actions": [
-            {"type": "tts_say", "text": "Oczywiście. Czy wolisz zostawić wiadomość, żeby właściciel oddzwonił, czy przekierować rozmowę teraz?"}
+            {"type": "tts_say", "text": "Oczywiście. Czy chce Pan zostawić wiadomość, żeby właściciel oddzwonił, czy przekierować rozmowę teraz?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -751,7 +737,7 @@ async def handle_collect_message_start(args: dict, flow_manager: FlowManager, te
             except Exception as e:
                 logger.error(f"📧 Email error: {e}")
         
-        return (f"Dziękuję {customer_name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe.",
+        return (f"Dziękuję {customer_name}. Wiadomość została przekazana do właściciela.",
                 create_end_node())
     
     # Jeśli mamy tylko imię - zapytaj o wiadomość
@@ -769,7 +755,7 @@ def create_collect_message_node_with_prompt(tenant: dict) -> dict:
     return {
         "name": "collect_message",
         "pre_actions": [
-            {"type": "tts_say", "text": "Powiedz proszę jak masz na imię i co mam przekazać."}
+            {"type": "tts_say", "text": "Proszę powiedzieć, jak ma Pan na imię i co mam przekazać."}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -882,7 +868,7 @@ async def handle_save_message(args: dict, flow_manager: FlowManager, tenant: dic
     else:
         logger.warning("📧 No owner email configured!")
     
-    return (f"Dziękuję {name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe.",
+    return (f"Dziękuję {name}. Wiadomość została przekazana do właściciela, który oddzwoni.",
             create_end_node())
 
 
@@ -1078,12 +1064,16 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     return (None, create_end_node())
 
 
-def create_end_node() -> dict:
+def create_end_node(message_saved: bool = False) -> dict:
+    if message_saved:
+        goodbye_text = "Wiadomość została przekazana do właściciela. Dziękuję za kontakt, miłego dnia!"
+    else:
+        goodbye_text = "Dziękuję za kontakt, miłego dnia!"
+    
     return {
         "name": "end",
-        "respond_immediately": False,  # ← TO JEST KLUCZOWE
         "pre_actions": [
-            {"type": "tts_say", "text": "Dziękuję, miłego dnia!"}
+            {"type": "tts_say", "text": goodbye_text}
         ],
         "post_actions": [
             {"type": "end_conversation"}
