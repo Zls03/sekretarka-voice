@@ -364,12 +364,20 @@ def build_business_context(tenant: dict) -> str:
         # Dodaj informację że rezerwacje są wyłączone
         parts.append("UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon.")
     
-    # Adres - formatuj ładnie
+    # Adres - formatuj ładnie dla wymowy TTS
     address = tenant.get("address", "")
     if address:
+        import re
+        
+        # Zamień skróty
         address = address.replace("ul.", "ulica").replace("ul ", "ulica ")
         address = address.replace("al.", "aleja").replace("al ", "aleja ")
         address = address.replace("pl.", "plac").replace("pl ", "plac ")
+        
+        # Dodaj "numer" przed liczbą w adresie (np. "Kwiatowa 15" → "Kwiatowa numer 15")
+        # Szuka: spacja + cyfry + (koniec lub przecinek lub spacja)
+        address = re.sub(r' (\d+)([,\s]|$)', r' numer \1\2', address)
+        
         parts.append(f"ADRES: {address}")
     
     # FAQ

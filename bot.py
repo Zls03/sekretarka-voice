@@ -88,13 +88,21 @@ async def twilio_incoming(request: Request):
     host = request.headers.get("host", "localhost")
     
     # Powitanie - używamy Twilio Say dla instant response
+    # Powitanie - MP3 z ElevenLabs (jeśli istnieje) lub Twilio Say
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
     
-    logger.info(f"🔊 Using Twilio Say for instant greeting")
+    if tenant.get("greeting_audio"):
+        # Mamy pre-generowane MP3 z ElevenLabs - użyj go!
+        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}</Play>'
+        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
+    else:
+        # Brak MP3 - użyj Twilio TTS
+        greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
+        logger.info(f"🔊 Using Twilio Say for instant greeting")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>
+    {greeting_twiml}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
@@ -314,6 +322,11 @@ async def websocket_endpoint(websocket: WebSocket):
         # Jeśli rozmowa już zakończona - nie rób nic
         if conversation_ended:
             logger.info("⏰ Idle triggered but conversation already ended")
+            return False
+        
+        # Jeśli transfer w toku - nie przeszkadzaj!
+        if flow_manager.state.get("transfer_requested"):
+            logger.info("⏰ Idle triggered but transfer in progress - ignoring")
             return False
             
         try:
