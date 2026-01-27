@@ -186,7 +186,6 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
     
     return (True, "")
 
-
 # ==========================================
 # API - KALENDARZ
 # ==========================================

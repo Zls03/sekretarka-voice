@@ -205,6 +205,7 @@ Np. "chcę strzyżenie u Ani" → mentioned_service="strzyżenie", mentioned_sta
 
 
 async def handle_start_booking(args: dict, flow_manager: FlowManager):
+    """Rozpocznij rezerwację - smart routing z kontekstem"""
     logger.info("📅 Starting booking flow")
     tenant = flow_manager.state.get("tenant", {})
     
@@ -215,7 +216,11 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
         return ("Przepraszam, nie mamy skonfigurowanych pracowników. Czy mogę przekazać wiadomość?", 
                 create_take_message_node(tenant))
     
-    # Sprawdź czy klient już wspomniał usługę
+    if not services:
+        return ("Przepraszam, nie mamy skonfigurowanych usług. Czy mogę przekazać wiadomość?",
+                create_take_message_node(tenant))
+    
+    # Sprawdź czy klient już wspomniał usługę/pracownika
     mentioned_service = args.get("mentioned_service", "")
     mentioned_staff = args.get("mentioned_staff", "")
     
@@ -236,184 +241,262 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
         for st in staff_list:
             if mentioned_staff.lower() in st["name"].lower() or st["name"].lower() in mentioned_staff.lower():
                 selected_staff = st
-                flow_manager.state["selected_staff"] = st
-                logger.info(f"✅ Pre-selected staff: {st['name']}")
+                logger.info(f"✅ Found mentioned staff: {st['name']}")
                 break
     
-    # Walidacja: czy pracownik wykonuje tę usługę?
+    # WALIDACJA: czy pracownik wykonuje tę usługę?
     if selected_service and selected_staff:
-        # Sprawdź czy pracownik ma przypisaną tę usługę
         staff_service_ids = [svc.get("id") for svc in selected_staff.get("services", [])]
+        
+        # Jeśli pracownik ma przypisane usługi - sprawdź
         if staff_service_ids and selected_service.get("id") not in staff_service_ids:
-            # Pracownik nie wykonuje tej usługi
-            flow_manager.state.pop("selected_staff", None)
-            available_for_service = [st["name"] for st in staff_list 
-                                     if selected_service.get("id") in [svc.get("id") for svc in st.get("services", [])]]
+            # Pracownik NIE wykonuje tej usługi!
+            available_for_service = []
+            for st in staff_list:
+                st_service_ids = [svc.get("id") for svc in st.get("services", [])]
+                if not st_service_ids or selected_service.get("id") in st_service_ids:
+                    available_for_service.append(st["name"])
+            
+            # Wyczyść wybranego pracownika - niech wybierze ponownie
+            selected_staff = None
+            
             if available_for_service:
-                return (f"Niestety {selected_staff['name']} nie wykonuje usługi {selected_service['name']}. "
+                return (f"Niestety {mentioned_staff} nie wykonuje usługi {selected_service['name']}. "
                         f"Tę usługę wykonuje: {', '.join(available_for_service)}. Do kogo chce się Pan umówić?",
-                        create_get_staff_node(tenant))
-            else:
-                return (f"Świetnie, {selected_service['name']}.", create_get_staff_node(tenant))
+                        create_get_staff_node(tenant, selected_service))
+        else:
+            # Pracownik OK - zapisz
+            flow_manager.state["selected_staff"] = selected_staff
     
-    # Jeśli mamy obu - przejdź do daty
+    # ROUTING na podstawie tego co mamy:
+    
+    # Mamy obu - przejdź do daty
     if selected_service and selected_staff:
         return (f"Świetnie, {selected_service['name']} u {selected_staff['name']}. Na kiedy chciałby Pan umówić wizytę?", 
                 create_get_date_node(tenant))
     
-    # Jeśli mamy usługę - przejdź do wyboru pracownika
+    # Mamy usługę - przejdź do wyboru pracownika (FILTROWANEGO!)
     if selected_service:
-        return (f"Świetnie, {selected_service['name']}.", create_get_staff_node(tenant))
+        return (f"Świetnie, {selected_service['name']}.", 
+                create_get_staff_node(tenant, selected_service))
     
-    # Jeśli mamy pracownika - przejdź do wyboru usługi
+    # Mamy pracownika bez usługi - przejdź do wyboru usługi
     if selected_staff:
+        flow_manager.state["selected_staff"] = selected_staff
         return (f"Świetnie, do {selected_staff['name']}.", create_get_service_node(tenant))
     
     # Brak kontekstu - zacznij od usługi
     return ("Świetnie, umówmy wizytę.", create_get_service_node(tenant))
-
-
 # ==========================================
 # NODE: Wybór usługi
 # ==========================================
 
 def create_get_service_node(tenant: dict) -> dict:
     services = tenant.get("services", [])
-    services_list = ", ".join([s["name"] for s in services]) if services else "brak"
+    service_names = [s["name"] for s in services]
+    services_list = ", ".join(service_names) if service_names else "brak"
     
     return {
         "name": "get_service",
         "task_messages": [{
             "role": "system",
             "content": f"""Zapytaj jaką usługę klient wybiera.
-DOSTĘPNE: {services_list}
-Gdy powie usługę → select_service"""
+
+DOSTĘPNE USŁUGI (TYLKO TE!): {services_list}
+
+WAŻNE: Klient MUSI wybrać jedną z powyższych. Jeśli pyta o coś czego nie ma - powiedz że nie oferujemy i wymień dostępne.
+
+Gdy klient wybierze → select_service"""
         }],
-        "functions": [select_service_function(tenant)]
+        "functions": [select_service_function(tenant, service_names)]
     }
 
 
-def select_service_function(tenant: dict) -> FlowsFunctionSchema:
+def select_service_function(tenant: dict, available_services: list = None) -> FlowsFunctionSchema:
+    # Pobierz listę usług jeśli nie podano
+    if available_services is None:
+        available_services = [s["name"] for s in tenant.get("services", [])]
+    
+    properties = {
+        "service_name": {
+            "type": "string", 
+            "description": "Nazwa wybranej usługi"
+        }
+    }
+    
+    # Dodaj enum tylko jeśli mamy usługi
+    if available_services:
+        properties["service_name"]["enum"] = available_services
+    
     return FlowsFunctionSchema(
         name="select_service",
-        description="Klient wybrał usługę",
-        properties={"service_name": {"type": "string", "description": "Nazwa usługi"}},
+        description="Klient wybrał usługę z dostępnej listy",
+        properties=properties,
         required=["service_name"],
         handler=lambda args, fm: handle_select_service(args, fm, tenant),
     )
 
 
 async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: dict):
-    service_name = args.get("service_name", "").lower()
+    service_name = args.get("service_name", "")
     services = tenant.get("services", [])
     
     found = None
     for s in services:
-        if service_name in s["name"].lower() or s["name"].lower() in service_name:
+        if service_name.lower() == s["name"].lower() or service_name.lower() in s["name"].lower() or s["name"].lower() in service_name.lower():
             found = s
             break
     
     if not found:
         available = ", ".join([s["name"] for s in services])
-        return (f"Nie mamy usługi '{service_name}'. Dostępne: {available}.", None)
+        return (f"Nie mamy takiej usługi. Dostępne: {available}.", None)
     
     flow_manager.state["selected_service"] = found
     logger.info(f"✅ Service: {found['name']}")
-    return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant))
-
+    
+    # Przejdź do wyboru pracownika - FILTROWANEGO po usłudze!
+    return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant, found))
 # ==========================================
 # NODE: Wybór pracownika
 # ==========================================
 
-def create_get_staff_node(tenant: dict) -> dict:
-    staff = tenant.get("staff", [])
-    staff_list = ", ".join([s["name"] for s in staff])
+def create_get_staff_node(tenant: dict, selected_service: dict = None) -> dict:
+    """Tworzy node wyboru pracownika - TYLKO ci którzy wykonują wybraną usługę"""
+    all_staff = tenant.get("staff", [])
+    
+    # Filtruj pracowników którzy wykonują wybraną usługę
+    if selected_service:
+        service_id = selected_service.get("id")
+        available_staff = []
+        for s in all_staff:
+            staff_service_ids = [svc.get("id") for svc in s.get("services", [])]
+            # Jeśli pracownik nie ma przypisanych usług (= robi wszystko) LUB ma tę usługę
+            if not staff_service_ids or service_id in staff_service_ids:
+                available_staff.append(s)
+        
+        if not available_staff:
+            # Fallback - pokaż wszystkich jeśli nikt nie pasuje
+            available_staff = all_staff
+            logger.warning(f"⚠️ No staff found for service {selected_service.get('name')}, showing all")
+    else:
+        available_staff = all_staff
+    
+    staff_names = [s["name"] for s in available_staff]
+    staff_list = ", ".join(staff_names)
+    
+    # Jeśli tylko jeden pracownik - wybierz automatycznie!
+    if len(available_staff) == 1:
+        single_staff = available_staff[0]
+        return {
+            "name": "get_staff_auto",
+            "task_messages": [{
+                "role": "system", 
+                "content": f"Pracownik wybrany automatycznie: {single_staff['name']}. Przejdź do wyboru daty."
+            }],
+            "functions": [auto_select_staff_function(tenant, single_staff)]
+        }
     
     return {
         "name": "get_staff",
         "task_messages": [{
             "role": "system",
             "content": f"""Zapytaj do kogo klient chce się umówić.
-PRACOWNICY: {staff_list}
+
+DOSTĘPNI PRACOWNICY: {staff_list}
+
+WAŻNE: Możesz umówić TYLKO do tych pracowników!
+
+Gdy klient wybierze → select_staff
 Jeśli bez preferencji → any_available_staff"""
         }],
         "functions": [
-            select_staff_function(tenant),
-            any_staff_function(tenant),
+            select_staff_function(tenant, staff_names),
+            any_staff_function(tenant, available_staff),
         ]
     }
 
 
-def select_staff_function(tenant: dict) -> FlowsFunctionSchema:
+def select_staff_function(tenant: dict, available_names: list = None) -> FlowsFunctionSchema:
+    # Pobierz listę pracowników jeśli nie podano
+    if available_names is None:
+        available_names = [s["name"] for s in tenant.get("staff", [])]
+    
+    properties = {
+        "staff_name": {
+            "type": "string", 
+            "description": "Imię pracownika"
+        }
+    }
+    
+    # Dodaj enum tylko jeśli mamy pracowników
+    if available_names:
+        properties["staff_name"]["enum"] = available_names
+    
     return FlowsFunctionSchema(
         name="select_staff",
-        description="Klient wybrał pracownika",
-        properties={"staff_name": {"type": "string", "description": "Imię"}},
+        description="Klient wybrał pracownika z dostępnej listy",
+        properties=properties,
         required=["staff_name"],
         handler=lambda args, fm: handle_select_staff(args, fm, tenant),
     )
 
 
-def any_staff_function(tenant: dict) -> FlowsFunctionSchema:
+def any_staff_function(tenant: dict, available_staff: list = None) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="any_available_staff",
-        description="Klient nie ma preferencji",
+        description="Klient nie ma preferencji - wybierz pierwszego dostępnego",
         properties={},
         required=[],
-        handler=lambda args, fm: handle_any_staff(args, fm, tenant),
+        handler=lambda args, fm: handle_any_staff(args, fm, tenant, available_staff),
     )
 
 
 async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dict):
-    staff_name = args.get("staff_name", "").lower()
+    staff_name = args.get("staff_name", "")
     staff_list = tenant.get("staff", [])
     
     found = None
     for s in staff_list:
-        if staff_name in s["name"].lower() or s["name"].lower() in staff_name:
+        if staff_name.lower() == s["name"].lower() or staff_name.lower() in s["name"].lower() or s["name"].lower() in staff_name.lower():
             found = s
             break
     
     if not found:
+        # Nie powinno się zdarzyć dzięki enum, ale dla bezpieczeństwa
         available = ", ".join([s["name"] for s in staff_list])
-        return (f"Nie mamy pracownika {staff_name}. U nas pracują: {available}.", None)
-    
-    # NOWE: Sprawdź czy pracownik wykonuje wybraną usługę
-    selected_service = flow_manager.state.get("selected_service")
-    if selected_service:
-        # Pobierz usługi pracownika
-        staff_services = found.get("services", [])
-        staff_service_ids = [s.get("id") for s in staff_services if s.get("id")]
-        
-        # Jeśli pracownik ma przypisane usługi - sprawdź
-        if staff_service_ids and selected_service.get("id") not in staff_service_ids:
-            # Znajdź kto wykonuje tę usługę
-            available_staff = []
-            for st in staff_list:
-                st_services = st.get("services", [])
-                st_service_ids = [svc.get("id") for svc in st_services if svc.get("id")]
-                if not st_service_ids or selected_service.get("id") in st_service_ids:
-                    available_staff.append(st["name"])
-            
-            if available_staff:
-                return (f"Niestety {found['name']} nie wykonuje usługi {selected_service['name']}. "
-                        f"Tę usługę wykonuje: {', '.join(available_staff)}. Do kogo chce się Pan umówić?", None)
-            else:
-                return (f"Niestety {found['name']} nie wykonuje tej usługi.", None)
+        return (f"Nie mamy takiego pracownika. Dostępni: {available}.", None)
     
     flow_manager.state["selected_staff"] = found
     logger.info(f"✅ Staff: {found['name']}")
-    return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
+    return (f"Dobrze, do {found['name']}. Na kiedy chciałby Pan umówić wizytę?", create_get_date_node(tenant))
 
-async def handle_any_staff(args: dict, flow_manager: FlowManager, tenant: dict):
-    staff_list = tenant.get("staff", [])
-    if staff_list:
-        first = staff_list[0]
+async def handle_any_staff(args: dict, flow_manager: FlowManager, tenant: dict, available_staff: list = None):
+    # Użyj przefiltrowanej listy lub wszystkich
+    if available_staff is None:
+        available_staff = tenant.get("staff", [])
+    
+    if available_staff:
+        first = available_staff[0]
         flow_manager.state["selected_staff"] = first
         return (f"Umówię do {first['name']}.", create_get_date_node(tenant))
     return ("Brak dostępnych pracowników.", create_end_node())
 
+def auto_select_staff_function(tenant: dict, staff: dict) -> FlowsFunctionSchema:
+    """Automatycznie wybiera pracownika gdy jest tylko jeden dostępny"""
+    return FlowsFunctionSchema(
+        name="auto_continue",
+        description="Kontynuuj - pracownik już wybrany automatycznie",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_auto_staff(args, fm, tenant, staff),
+    )
 
+
+async def handle_auto_staff(args: dict, flow_manager: FlowManager, tenant: dict, staff: dict):
+    """Handler dla automatycznego wyboru pracownika"""
+    flow_manager.state["selected_staff"] = staff
+    logger.info(f"✅ Auto-selected staff: {staff['name']}")
+    return (f"Umówię do {staff['name']}. Na kiedy chciałby Pan umówić wizytę?", create_get_date_node(tenant))
 # ==========================================
 # NODE: Wybór daty
 # ==========================================
@@ -1175,7 +1258,6 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     flow_manager.state["conversation_ended"] = True
     return (None, create_end_node())
 
-
 def create_end_node(message_saved: bool = False) -> dict:
     if message_saved:
         goodbye_text = "Wiadomość została przekazana do właściciela. Dziękuję za kontakt, miłego dnia!"
@@ -1184,7 +1266,7 @@ def create_end_node(message_saved: bool = False) -> dict:
     
     return {
         "name": "end",
-        "respond_immediately": False,
+        "respond_immediately": False,  # Zapobiega dodatkowej odpowiedzi po zakończeniu
         "pre_actions": [
             {"type": "tts_say", "text": goodbye_text}
         ],

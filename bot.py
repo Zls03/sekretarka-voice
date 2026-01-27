@@ -216,7 +216,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             staff_list = []
                             for s in staff:
                                 staff_dict = dict(s)
-                                # Pobierz usługi tego pracownika
+                                # Pobierz usługi tego pracownika z tabeli staff_services
                                 staff_services = await db.execute(
                                     """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
                                        FROM services srv
@@ -234,7 +234,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
                             logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
                             for st in staff_list:
-                                logger.info(f"   Staff {st['name']}: {[svc['name'] for svc in st.get('services', [])]}")
+                                svc_names = [svc['name'] for svc in st.get('services', [])]
+                                logger.info(f"   Staff {st['name']}: {svc_names if svc_names else 'wszystkie usługi'}")
 
                 
                 # Mamy stream_sid - możemy utworzyć pipeline
