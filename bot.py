@@ -93,7 +93,10 @@ async def twilio_incoming(request: Request):
     
     if tenant.get("greeting_audio"):
         # Mamy pre-generowane MP3 z ElevenLabs - użyj go!
-        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}</Play>'
+        # Dodaj timestamp żeby uniknąć cache
+        import time
+        cache_buster = int(time.time())
+        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
         logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
     else:
         # Brak MP3 - użyj Twilio TTS
