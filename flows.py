@@ -1484,7 +1484,6 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
         logger.info(f"📧 Direct message from {customer_name}: {message}")
         flow_manager.state["prefilled_name"] = customer_name
         flow_manager.state["prefilled_message"] = message
-        # Od razu zapisz
         caller_phone = flow_manager.state.get("caller_phone", "nieznany")
         owner_email = tenant.get("notification_email") or tenant.get("email")
         
@@ -1505,8 +1504,14 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     # KLIENT inicjuje i chce zostawić WIADOMOŚĆ → od razu zbieraj dane
     if "wiadomość" in reason or "wiadomosc" in reason:
         return (None, create_collect_message_node_with_prompt(tenant))
-    # KLIENT inicjuje i chce rozmawiać z WŁAŚCICIELEM → daj wybór (jeśli transfer ON)
+    
+    # ✅ KLIENT mówi "połączenie/połączyć" → OD RAZU TRANSFERUJ!
     if transfer_enabled and transfer_number:
+        if "połącz" in reason or "połączenie" in reason:
+            logger.info("📞 Direct transfer - customer said 'połączenie' in reason")
+            return await handle_transfer_call({}, flow_manager, state_tenant)
+        
+        # Inny powód → daj wybór
         return (None, create_escalation_choice_node(state_tenant))
     else:
         return (None, create_collect_message_node_with_prompt(state_tenant))
@@ -1557,14 +1562,16 @@ async def handle_escalation_select(args: dict, flow_manager: FlowManager, tenant
     """Handler wyboru eskalacji - KOD DECYDUJE!"""
     choice = args.get("choice", "")
     
-    logger.info(f"📞 Escalation choice: {choice}")
+    logger.info(f"📞 Escalation SELECT called with choice: '{choice}'")
     
     if choice == "połączenie":
-        # Sprawdź czy transfer możliwy
         transfer_number = tenant.get("transfer_number", "")
+        logger.info(f"📞 Transfer requested, number: '{transfer_number}'")
+        
         if transfer_number:
             return await handle_transfer_call({}, flow_manager, tenant)
         else:
+            logger.error("📞 No transfer number configured!")
             return ("Przepraszam, połączenie nie jest teraz dostępne. Czy mogę przekazać wiadomość?",
                     create_collect_message_node_with_prompt(tenant))
     
@@ -1572,9 +1579,8 @@ async def handle_escalation_select(args: dict, flow_manager: FlowManager, tenant
         return (None, create_collect_message_node_with_prompt(tenant))
     
     else:
-        # Nierozpoznany wybór - zapytaj ponownie
+        logger.warning(f"📞 Unknown choice: '{choice}'")
         return ("Przepraszam, nie dosłyszałam. Wiadomość czy połączenie?", None)
-
 
 def create_escalation_choice_node(tenant: dict) -> dict:
     """Node: klient wybiera transfer lub wiadomość - z ENUM!"""
