@@ -13,7 +13,6 @@ import asyncio
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
-from pipecat.audio.interruptions import MinWordsInterruptionStrategy
 load_dotenv()
 
 from flows import end_conversation_function, escalate_to_human_function
