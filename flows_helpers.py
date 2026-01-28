@@ -302,6 +302,13 @@ async def save_booking_to_api(
     # Generuj unikalny 4-cyfrowy kod wizyty
     booking_code = str(random.randint(1000, 9999))
     
+    # POPRAWKA: Użyj tylko daty (bez czasu) - czysta data YYYY-MM-DD
+    date_only = date.date() if date else None
+    date_str = date_only.strftime("%Y-%m-%d") if date_only else None
+    time_str = f"{hour:02d}:00" if hour is not None else None
+    
+    logger.info(f"📅 Booking request: {date_str} at {time_str} for {customer_name}")
+    
     # Retry logic - 3 próby
     for attempt in range(3):
         try:
@@ -311,8 +318,8 @@ async def save_booking_to_api(
                     json={
                         "staff_id": staff.get("id"),
                         "service_id": service.get("id"),
-                        "date": date.strftime("%Y-%m-%d") if date else None,
-                        "time": f"{hour:02d}:00" if hour else None,
+                        "date": date_str,
+                        "time": time_str,
                         "client_name": customer_name,
                         "client_phone": customer_phone,
                         "booking_code": booking_code,
@@ -321,7 +328,7 @@ async def save_booking_to_api(
                 
                 if response.status_code in [200, 201]:
                     data = response.json()
-                    data["booking_code"] = booking_code  # Dodaj kod do odpowiedzi
+                    data["booking_code"] = booking_code
                     logger.info(f"✅ Booking saved: {data.get('bookingId')} (code: {booking_code})")
                     return data
                 else:
@@ -330,7 +337,6 @@ async def save_booking_to_api(
         except Exception as e:
             logger.error(f"❌ Booking API error (attempt {attempt + 1}/3): {e}")
         
-        # Czekaj przed kolejną próbą
         if attempt < 2:
             await asyncio.sleep(0.5)
     
@@ -347,7 +353,17 @@ async def send_booking_sms(
     
     twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
     twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+    
+    # Użyj numeru firmy z bazy (tenant), nie globalnego!
+    twilio_number = tenant.get("phone_number")
+    
+    if not twilio_number:
+        logger.warning(f"⚠️ No phone_number for tenant {tenant.get('name')}")
+        return False
+    
+    # Upewnij się że numer ma format +48...
+    if not twilio_number.startswith("+"):
+        twilio_number = f"+48{twilio_number.replace(' ', '').replace('-', '')[-9:]}"
     
     if not all([twilio_sid, twilio_token, twilio_number]):
         logger.warning("⚠️ Twilio SMS not configured")
