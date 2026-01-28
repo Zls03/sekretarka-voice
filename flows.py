@@ -1416,9 +1416,8 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
         return (None, create_message_only_node(tenant))
     
     # KLIENT inicjuje i chce zostawić WIADOMOŚĆ → od razu zbieraj dane
-    if "wiadomość" in reason or "wiadomosc" in reason or "przekazać" in reason or "przekazac" in reason:
+    if "wiadomość" in reason or "wiadomosc" in reason:
         return (None, create_collect_message_node_with_prompt(tenant))
-    
     # KLIENT inicjuje i chce rozmawiać z WŁAŚCICIELEM → daj wybór (jeśli transfer ON)
     if transfer_enabled and transfer_number:
         return (None, create_escalation_choice_node(tenant))
@@ -1455,7 +1454,7 @@ def create_escalation_choice_node(tenant: dict) -> dict:
     
     # Domyślnie proponuj tylko wiadomość
     if transfer_enabled and transfer_number:
-        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
+        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Mogę też spróbować połączyć bezpośrednio. Co Pan woli?"
         functions = [
             collect_message_function(tenant),
             transfer_call_function(tenant),
