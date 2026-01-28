@@ -11,7 +11,58 @@ from loguru import logger
 import random
 import string
 import asyncio
+import random
+import base64
+import io
 
+# Import wygenerowanych snippetów
+from audio_snippets import AUDIO_SNIPPETS
+
+async def play_snippet(flow_manager, category: str):
+    """
+    Puszcza losowy MP3 snippet z danej kategorii.
+    Konwertuje MP3 → PCM dla Pipecat.
+    """
+    try:
+        from pydub import AudioSegment
+        from pipecat.frames.frames import OutputAudioRawFrame
+        
+        # Wybierz losowy snippet z kategorii (checking_1, checking_2, ...)
+        matching = [k for k in AUDIO_SNIPPETS.keys() if k.startswith(category)]
+        if not matching:
+            logger.warning(f"🔊 No snippets for category: {category}")
+            return
+        
+        snippet_name = random.choice(matching)
+        audio_b64 = AUDIO_SNIPPETS[snippet_name]
+        
+        # Dekoduj base64 → MP3 bytes
+        mp3_bytes = base64.b64decode(audio_b64)
+        
+        # Konwertuj MP3 → PCM (8kHz mono, 16-bit) dla Twilio
+        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+        audio = audio.set_frame_rate(8000).set_channels(1).set_sample_width(2)
+        pcm_bytes = audio.raw_data
+        
+        # Wyślij do pipeline
+        await flow_manager.task.queue_frame(
+            OutputAudioRawFrame(
+                audio=pcm_bytes,
+                sample_rate=8000,
+                num_channels=1
+            )
+        )
+        logger.info(f"🔊 Playing snippet: {snippet_name}")
+        
+    except Exception as e:
+        logger.warning(f"🔊 Snippet error: {e}, falling back to TTS")
+        # Fallback do TTS
+        try:
+            from pipecat.frames.frames import TTSSpeakFrame
+            fallback = "Sprawdzam..." if category == "checking" else "Zapisuję..."
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=fallback))
+        except:
+            pass
 
 # Import helperów
 from helpers import db
@@ -349,12 +400,7 @@ async def handle_smart_booking(args: dict, flow_manager: FlowManager):
     
     # ✅ Jeśli 2+ parametry - będzie sprawdzanie kalendarza, daj feedback
     if params_count >= 2:
-        try:
-            from pipecat.frames.frames import TTSSpeakFrame
-            await flow_manager.task.queue_frame(TTSSpeakFrame(text="Sprawdzam..."))
-            logger.info("💬 Sent 'checking' snippet")
-        except Exception as e:
-            logger.warning(f"Snippet error: {e}")
+        await play_snippet(flow_manager, "checking")
     
     # RESET STATE - czysta karta
     flow_manager.state["selected_service"] = None
@@ -1077,12 +1123,7 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     logger.info("✅ [6/6] Booking CONFIRMED by customer")
     
     # ✅ Daj feedback że zapisujemy (będzie API call)
-    try:
-        from pipecat.frames.frames import TTSSpeakFrame
-        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Już zapisuję..."))
-        logger.info("💬 Sent 'saving' snippet")
-    except Exception as e:
-        logger.warning(f"Snippet error: {e}")
+    await play_snippet(flow_manager, "saving")
     
     # Pobierz wszystkie dane
     service = flow_manager.state.get("selected_service", {})

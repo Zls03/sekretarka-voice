@@ -1,6 +1,6 @@
 """
-Jednorazowy skrypt - generuje MP3 przerywniki przez ElevenLabs
-Uruchom: python generate_snippets.py
+Jednorazowy skrypt - generuje MP3 snippety przez ElevenLabs
+Uruchom lokalnie: python generate_snippets.py
 """
 import os
 import requests
@@ -13,13 +13,18 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
 SNIPPETS = {
-    "checking": "Sprawdzam dostępność...",
-    "saving": "Już zapisuję...",
-    "moment": "Chwileczkę...",
+    "checking_1": "Sprawdzam...",
+    "checking_2": "Moment, sprawdzam...",
+    "checking_3": "Już patrzę...",
+    "saving_1": "Już zapisuję...",
+    "saving_2": "Rezerwuję termin...",
+    "saving_3": "Sekundkę, zapisuję...",
 }
 
-def generate_mp3(text: str, filename: str):
-    """Generuje MP3 przez ElevenLabs"""
+def generate_mp3(name: str, text: str) -> str | None:
+    """Generuje MP3 przez ElevenLabs i zwraca base64"""
+    print(f"🎙️ Generating: {name} = '{text}'")
+    
     response = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
         headers={
@@ -37,23 +42,32 @@ def generate_mp3(text: str, filename: str):
     )
     
     if response.status_code == 200:
-        # Zapisz MP3
-        with open(filename, "wb") as f:
-            f.write(response.content)
-        
-        # Zapisz też base64 (do użycia w kodzie)
         b64 = base64.b64encode(response.content).decode()
-        with open(filename.replace(".mp3", ".b64"), "w") as f:
-            f.write(b64)
-        
-        print(f"✅ Generated: {filename} ({len(response.content)} bytes)")
+        print(f"   ✅ OK ({len(response.content)} bytes)")
+        return b64
     else:
-        print(f"❌ Error: {response.status_code} - {response.text}")
+        print(f"   ❌ Error: {response.status_code} - {response.text}")
+        return None
+
+def main():
+    print("🎵 Generating audio snippets...\n")
+    
+    results = {}
+    for name, text in SNIPPETS.items():
+        b64 = generate_mp3(name, text)
+        if b64:
+            results[name] = b64
+    
+    # Zapisz do pliku Python
+    with open("audio_snippets.py", "w", encoding="utf-8") as f:
+        f.write('"""\nAuto-generated audio snippets (MP3 base64)\nNie edytuj ręcznie!\n"""\n\n')
+        f.write("AUDIO_SNIPPETS = {\n")
+        for name, b64 in results.items():
+            f.write(f'    "{name}": "{b64}",\n')
+        f.write("}\n")
+    
+    print(f"\n✅ Zapisano: audio_snippets.py ({len(results)} snippets)")
+    print("   Teraz możesz deployować na Railway")
 
 if __name__ == "__main__":
-    os.makedirs("snippets", exist_ok=True)
-    
-    for name, text in SNIPPETS.items():
-        generate_mp3(text, f"snippets/{name}.mp3")
-    
-    print("\n🎉 Done! MP3 files in ./snippets/")
+    main()
