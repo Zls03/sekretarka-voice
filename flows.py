@@ -20,39 +20,22 @@ from audio_snippets import AUDIO_SNIPPETS
 
 async def play_snippet(flow_manager, category: str):
     """
-    Puszcza losowy MP3 snippet z danej kategorii.
-    Konwertuje MP3 → PCM dla Pipecat.
+    Puszcza snippet przez TTS (tymczasowo zamiast MP3).
     """
     try:
-        from pydub import AudioSegment
-        from pipecat.frames.frames import OutputAudioRawFrame
+        from pipecat.frames.frames import TTSSpeakFrame
         
-        # Wybierz losowy snippet z kategorii (checking_1, checking_2, ...)
-        matching = [k for k in AUDIO_SNIPPETS.keys() if k.startswith(category)]
-        if not matching:
-            logger.warning(f"🔊 No snippets for category: {category}")
-            return
+        if category == "checking":
+            phrases = ["Sprawdzam...", "Moment, sprawdzam...", "Już patrzę..."]
+        else:  # saving
+            phrases = ["Już zapisuję...", "Rezerwuję termin...", "Sekundkę, zapisuję..."]
         
-        snippet_name = random.choice(matching)
-        audio_b64 = AUDIO_SNIPPETS[snippet_name]
+        phrase = random.choice(phrases)
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=phrase))
+        logger.info(f"🔊 TTS snippet: {phrase}")
         
-        # Dekoduj base64 → MP3 bytes
-        mp3_bytes = base64.b64decode(audio_b64)
-        
-        # Konwertuj MP3 → PCM (8kHz mono, 16-bit) dla Twilio
-        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        audio = audio.set_frame_rate(8000).set_channels(1).set_sample_width(2)
-        pcm_bytes = audio.raw_data
-        
-        # Wyślij do pipeline
-        await flow_manager.task.queue_frame(
-            OutputAudioRawFrame(
-                audio=pcm_bytes,
-                sample_rate=8000,
-                num_channels=1
-            )
-        )
-        logger.info(f"🔊 Playing snippet: {snippet_name}")
+    except Exception as e:
+        logger.warning(f"🔊 Snippet error: {e}")
         
     except Exception as e:
         logger.warning(f"🔊 Snippet error: {e}, falling back to TTS")
