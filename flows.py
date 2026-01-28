@@ -1014,14 +1014,27 @@ def set_customer_name_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler imienia - STRICT: zawsze idź do CONFIRM"""
+    """Handler imienia - STRICT z WALIDACJĄ: odrzuca śmieci"""
     name = args.get("customer_name", "").strip()
     
-    if not name or len(name) < 2:
-        return ("Przepraszam, nie dosłyszałam. Jak się Pan nazywa?", None)
+    # ✅ WALIDACJA - odrzuć śmieci które GPT może wymyślić
+    invalid_names = [
+        "pan", "pani", "tak", "nie", "halo", "cześć", "dziękuję", 
+        "proszę", "dobrze", "ok", "okej", "słucham", "yes", "no",
+        "przepraszam", "moment", "chwila", "sekunda", "jasne"
+    ]
     
-    # Zapisz i przejdź ZAWSZE do potwierdzenia
-    flow_manager.state["customer_name"] = name
+    if not name or len(name) < 2 or name.lower() in invalid_names:
+        logger.warning(f"⚠️ Invalid customer name rejected: '{name}'")
+        return ("Przepraszam, nie dosłyszałam imienia. Jak mogę zapisać?", None)
+    
+    # Usuń "pan/pani" z początku jeśli jest (np. "Pan Kowalski" → "Kowalski")
+    for prefix in ["pan ", "pani "]:
+        if name.lower().startswith(prefix):
+            name = name[len(prefix):]
+    
+    # Zapisz i przejdź do potwierdzenia
+    flow_manager.state["customer_name"] = name.strip().title()
     logger.info(f"✅ [5/6] Customer name: {name}")
     
     return (f"Dziękuję, {name}.", create_confirm_booking_node(tenant))
