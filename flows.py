@@ -1465,56 +1465,22 @@ wyciągnij te dane i przekaż w reason, np: "Klient Paweł prosi o kontakt".""",
 
 
 async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Obsługa eskalacji - różne ścieżki w zależności kto inicjuje"""
-    reason = args.get("reason", "").lower()
-    initiated_by = args.get("initiated_by", "bot")
-    customer_name = args.get("customer_name", "")
-    message = args.get("message", "")
+    """Obsługa eskalacji - UPROSZCZONA"""
+    reason = args.get("reason", "")
     
-    # ✅ Użyj tenant z flow_manager.state (ma pewne dane z bazy)
     state_tenant = flow_manager.state.get("tenant", tenant)
     transfer_enabled = state_tenant.get("transfer_enabled", 0) == 1
     transfer_number = state_tenant.get("transfer_number", "")
     
-    logger.info(f"🚨 Escalation: {reason} (initiated by: {initiated_by})")
+    logger.info(f"🚨 Escalation: {reason}")
     logger.info(f"🔍 Transfer: enabled={transfer_enabled}, number='{transfer_number}'")
     
-    # Jeśli klient od razu podał imię i wiadomość - zapisz od razu!
-    if customer_name and message:
-        logger.info(f"📧 Direct message from {customer_name}: {message}")
-        flow_manager.state["prefilled_name"] = customer_name
-        flow_manager.state["prefilled_message"] = message
-        caller_phone = flow_manager.state.get("caller_phone", "nieznany")
-        owner_email = tenant.get("notification_email") or tenant.get("email")
-        
-        if owner_email:
-            try:
-                await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
-                logger.info(f"📧 Email sent to: {owner_email}")
-            except Exception as e:
-                logger.error(f"📧 Email error: {e}")
-        
-        return (f"Dziękuję {customer_name}. Przekazałem wiadomość, właściciel oddzwoni najszybciej jak to możliwe. Do widzenia!",
-                create_end_node())
-    
-    # BOT inicjuje (wykrył frustrację) → pytaj czy chce wiadomość
-    if initiated_by == "bot":
-        return (None, create_message_only_node(tenant))
-    
-    # KLIENT inicjuje i chce zostawić WIADOMOŚĆ → od razu zbieraj dane
-    if "wiadomość" in reason or "wiadomosc" in reason:
-        return (None, create_collect_message_node_with_prompt(tenant))
-    
-    # ✅ KLIENT mówi "połączenie/połączyć" → OD RAZU TRANSFERUJ!
+    # Jeśli transfer włączony - daj wybór
     if transfer_enabled and transfer_number:
-        if "połącz" in reason or "połączenie" in reason:
-            logger.info("📞 Direct transfer - customer said 'połączenie' in reason")
-            return await handle_transfer_call({}, flow_manager, state_tenant)
-        
-        # Inny powód → daj wybór
         return (None, create_escalation_choice_node(state_tenant))
-    else:
-        return (None, create_collect_message_node_with_prompt(state_tenant))
+    
+    # Brak transferu - tylko wiadomość
+    return (None, create_collect_message_node_with_prompt(state_tenant))
 
 def create_message_only_node(tenant: dict) -> dict:
     """Node: bot proponuje tylko wiadomość (gdy BOT wykrył problem)"""
@@ -1558,42 +1524,27 @@ def escalation_select_function(tenant: dict) -> FlowsFunctionSchema:
     )
 #cv
 async def handle_escalation_select(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler wyboru eskalacji - KOD DECYDUJE!"""
+    """Klient wybrał - połączenie lub wiadomość"""
     choice = args.get("choice", "")
     
-    logger.info(f"📞 Escalation SELECT called with choice: '{choice}'")
+    logger.info(f"📞 Escalation choice: '{choice}'")
     
     if choice == "połączenie":
-        transfer_number = tenant.get("transfer_number", "")
-        logger.info(f"📞 Transfer requested, number: '{transfer_number}'")
-        
-        if transfer_number:
-            return await handle_transfer_call({}, flow_manager, tenant)
-        else:
-            logger.error("📞 No transfer number configured!")
-            return ("Przepraszam, połączenie nie jest teraz dostępne. Czy mogę przekazać wiadomość?",
-                    create_collect_message_node_with_prompt(tenant))
-    
-    elif choice == "wiadomość":
-        return (None, create_collect_message_node_with_prompt(tenant))
-    
+        return await handle_transfer_call({}, flow_manager, tenant)
     else:
-        logger.warning(f"📞 Unknown choice: '{choice}'")
-        return ("Przepraszam, nie dosłyszałam. Wiadomość czy połączenie?", None)
-
+        return (None, create_collect_message_node_with_prompt(tenant))
 def create_escalation_choice_node(tenant: dict) -> dict:
-    """Node: klient wybiera transfer lub wiadomość - z ENUM!"""
+    """Node: klient wybiera - wiadomość czy połączenie (ENUM)"""
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
     
+    logger.info(f"🔧 Creating escalation_choice node: transfer_enabled={transfer_enabled}, number='{transfer_number}'")
+    
     if transfer_enabled and transfer_number:
-        logger.info("🔧 Using ENUM escalation_select_function")
-        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni, lub połączyć bezpośrednio. Co Pan woli - wiadomość czy połączenie?"
-        
         return {
             "name": "escalation_choice",
             "pre_actions": [
-                {"type": "tts_say", "text": prompt_text}
+                {"type": "tts_say", "text": "Mogę przekazać wiadomość do właściciela, który oddzwoni, lub połączyć bezpośrednio. Co Pan woli - wiadomość czy połączenie?"}
             ],
             "respond_immediately": False,
             "role_messages": [{
@@ -1607,19 +1558,20 @@ def create_escalation_choice_node(tenant: dict) -> dict:
 Wywołaj escalation_select z wyborem klienta:
 - "wiadomość", "zostawić", "niech oddzwoni" → choice="wiadomość"
 - "połączenie", "połączyć", "bezpośrednio", "teraz" → choice="połączenie"
-- "nie", "dziękuję" → end_conversation"""
+- "nie", "dziękuję" → end_conversation
+
+MUSISZ użyć escalation_select. NIE odpowiadaj tekstem!"""
             }],
             "functions": [
                 escalation_select_function(tenant),
-                end_conversation_function(),
             ]
         }
     else:
-        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
+        # Bez transferu - tylko wiadomość
         return {
             "name": "escalation_choice",
             "pre_actions": [
-                {"type": "tts_say", "text": prompt_text}
+                {"type": "tts_say", "text": "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"}
             ],
             "respond_immediately": False,
             "role_messages": [{
@@ -1628,16 +1580,15 @@ Wywołaj escalation_select z wyborem klienta:
             }],
             "task_messages": [{
                 "role": "system",
-                "content": """Klient odpowiada tak/nie na wiadomość.
-- TAK → collect_message
-- NIE → end_conversation"""
+                "content": """Klient odpowiada czy chce zostawić wiadomość.
+
+- "tak", "zostawię", "proszę" → collect_message
+- "nie", "dziękuję" → end_conversation"""
             }],
             "functions": [
                 collect_message_function(tenant),
-                end_conversation_function(),
             ]
         }
-
 
 def collect_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Klient chce zostawić wiadomość"""
