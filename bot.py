@@ -36,6 +36,7 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq import GroqLLMService
+from pipecat.services.cerebras import CerebrasLLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
@@ -318,9 +319,9 @@ async def websocket_endpoint(websocket: WebSocket):
      #  model="gpt-4.1-mini",
     #)
 
-    llm = GroqLLMService(
-        api_key=os.getenv("GROQ_API_KEY"),
-        model="llama-3.3-70b-versatile",  # lub "llama-3.1-70b-versatile"
+    llm = CerebrasLLMService(
+        api_key=os.getenv("CEREBRAS_API_KEY"),
+        model="llama-3.3-70b",
     )
     
     # Context
