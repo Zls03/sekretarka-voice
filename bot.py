@@ -34,10 +34,10 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 # Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.cartesia import CartesiaTTSService
+from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.groq import GroqLLMService
-from pipecat.services.cerebras import CerebrasLLMService
+from pipecat.services.groq.llm import GroqLLMService
+from pipecat.services.cerebras.llm import CerebrasLLMService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
@@ -175,7 +175,7 @@ def create_tts_service(tenant: dict):
         logger.info(f"🎙️ Using Cartesia TTS (fast mode)")
         return CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",  # Polski głos
+            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",
             model_id="sonic-2",
             language="pl",
             sample_rate=24000,
