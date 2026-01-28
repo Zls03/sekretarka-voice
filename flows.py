@@ -1974,8 +1974,21 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
     
     # Oznacz że to transfer (nie zwykłe zakończenie)
     flow_manager.state["transfer_requested"] = True
+    flow_manager.state["conversation_ended"] = True
     
-    # Powiedz że łączysz i zamknij stream - Twilio wykona transfer w /twilio/after-stream
+    # Zaplanuj zamknięcie WebSocket po 3 sekundach (czas na TTS)
+    async def close_for_transfer():
+        await asyncio.sleep(3.0)
+        try:
+            from pipecat.frames.frames import EndFrame
+            await flow_manager.task.queue_frame(EndFrame())
+            logger.info("🔚 EndFrame sent for transfer - WebSocket closing")
+        except Exception as e:
+            logger.error(f"Error sending EndFrame for transfer: {e}")
+    
+    asyncio.create_task(close_for_transfer())
+    
+    # Powiedz że łączysz
     return ("Łączę z właścicielem, proszę chwilę poczekać.", create_transfer_end_node())
 
 
