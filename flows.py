@@ -305,33 +305,33 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
 
 
 def create_manage_booking_choice_node(tenant: dict, action: str) -> dict:
-    """Node: klient chce przełożyć/odwołać - daj wybór transfer lub wiadomość"""
+    """Node: klient chce przełożyć/odwołać - daj wybór z ENUM"""
     action_text = "przełożeniem" if action == "przełożyć" else "odwołaniem"
     
     return {
         "name": "manage_booking_choice",
+        "pre_actions": [
+            {"type": "tts_say", "text": f"Rozumiem, chce Pan pomoc z {action_text} wizyty. Mogę przekazać wiadomość do właściciela lub spróbować połączyć bezpośrednio. Co Pan woli?"}
+        ],
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": f"Klient chce pomoc z {action_text} wizyty. Zaproponowałeś przekierowanie lub wiadomość."
+            "content": f"Klient chce pomoc z {action_text} wizyty. Wybiera: wiadomość lub połączenie."
         }],
         "task_messages": [{
             "role": "system",
-            "content": f"""Klient chce {action_text} wizyty i potrzebuje pomocy właściciela.
+            "content": """Klient odpowiada: wiadomość czy połączenie?
 
-Klient wybiera:
-- Chce PRZEKIEROWANIE (tak, połącz, teraz) → transfer_call
-- Chce WIADOMOŚĆ (nie, wiadomość, oddzwonić) → collect_message
-- Rezygnuje → end_conversation
-
-WAŻNE: W tej sytuacji przekierowanie jest OK bo klient potrzebuje realnej pomocy z wizytą."""
+Wywołaj escalation_select z wyborem klienta:
+- "wiadomość", "zostawić", "niech oddzwoni" → choice="wiadomość"
+- "połączenie", "połączyć", "bezpośrednio", "teraz" → choice="połączenie"
+- "nie", "dziękuję" → end_conversation"""
         }],
         "functions": [
-            collect_message_function(tenant),
-            transfer_call_function(tenant),
+            escalation_select_function(tenant),
+            end_conversation_function(),
         ]
     }
-
 # ==========================================
 # FUNKCJA: Rozpocznij rezerwację (SMART)
 # ==========================================
@@ -1491,57 +1491,101 @@ def create_message_only_node(tenant: dict) -> dict:
         ]
     }
 
+def escalation_select_function(tenant: dict) -> FlowsFunctionSchema:
+    """Wybór eskalacji z ENUM - GPT nie może wymyślić!"""
+    return FlowsFunctionSchema(
+        name="escalation_select",
+        description="Klient wybrał sposób kontaktu z właścicielem",
+        properties={
+            "choice": {
+                "type": "string",
+                "enum": ["wiadomość", "połączenie"],
+                "description": "Wybór klienta: wiadomość lub połączenie"
+            }
+        },
+        required=["choice"],
+        handler=lambda args, fm: handle_escalation_select(args, fm, tenant),
+    )
+
+
+async def handle_escalation_select(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler wyboru eskalacji - KOD DECYDUJE!"""
+    choice = args.get("choice", "")
+    
+    logger.info(f"📞 Escalation choice: {choice}")
+    
+    if choice == "połączenie":
+        # Sprawdź czy transfer możliwy
+        transfer_number = tenant.get("transfer_number", "")
+        if transfer_number:
+            return await handle_transfer_call({}, flow_manager, tenant)
+        else:
+            return ("Przepraszam, połączenie nie jest teraz dostępne. Czy mogę przekazać wiadomość?",
+                    create_collect_message_node_with_prompt(tenant))
+    
+    elif choice == "wiadomość":
+        return (None, create_collect_message_node_with_prompt(tenant))
+    
+    else:
+        # Nierozpoznany wybór - zapytaj ponownie
+        return ("Przepraszam, nie dosłyszałam. Wiadomość czy połączenie?", None)
+
+
 def create_escalation_choice_node(tenant: dict) -> dict:
-    """Node: klient potrzebuje kontaktu - proponuj wiadomość"""
+    """Node: klient wybiera transfer lub wiadomość - z ENUM!"""
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
     
-    # Domyślnie proponuj tylko wiadomość
     if transfer_enabled and transfer_number:
-        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Mogę też spróbować połączyć bezpośrednio. Co Pan woli?"
-        functions = [
-            collect_message_function(tenant),
-            transfer_call_function(tenant),
-            end_conversation_function(),
-        ]
-        task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
-Zaproponowałeś zostawienie wiadomości.
+        prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni, lub połączyć bezpośrednio. Co Pan woli - wiadomość czy połączenie?"
+        
+        return {
+            "name": "escalation_choice",
+            "pre_actions": [
+                {"type": "tts_say", "text": prompt_text}
+            ],
+            "respond_immediately": False,
+            "role_messages": [{
+                "role": "system",
+                "content": "Klient wybiera: wiadomość lub połączenie z właścicielem."
+            }],
+            "task_messages": [{
+                "role": "system",
+                "content": """Klient odpowiada na pytanie: wiadomość czy połączenie?
 
-Klient wybiera:
-- Chce WIADOMOŚĆ (tak, zostawić, przekazać) → collect_message
-- SAM PROSI o przekierowanie/połączenie teraz → transfer_call
-- Rezygnuje → end_conversation
-
-WAŻNE: Proponuj WIADOMOŚĆ, nie przekierowanie. Przekierowanie tylko gdy klient SAM o nie poprosi."""
+Wywołaj escalation_select z wyborem klienta:
+- "wiadomość", "zostawić", "niech oddzwoni" → choice="wiadomość"
+- "połączenie", "połączyć", "bezpośrednio", "teraz" → choice="połączenie"
+- "nie", "dziękuję" → end_conversation"""
+            }],
+            "functions": [
+                escalation_select_function(tenant),
+                end_conversation_function(),
+            ]
+        }
     else:
         prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
-        functions = [
-            collect_message_function(tenant),
-            end_conversation_function(),
-        ]
-        task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
-Zaproponowałeś zostawienie wiadomości.
-
-Klient wybiera:
-- Chce WIADOMOŚĆ → collect_message
-- Rezygnuje → end_conversation"""
-    
-    return {
-        "name": "escalation_choice",
-        "pre_actions": [
-            {"type": "tts_say", "text": prompt_text}
-        ],
-        "respond_immediately": False,
-        "role_messages": [{
-            "role": "system",
-            "content": "Klient potrzebuje kontaktu z właścicielem. Zaproponowałeś zostawienie wiadomości."
-        }],
-        "task_messages": [{
-            "role": "system",
-            "content": task_content
-        }],
-        "functions": functions
-    }
+        return {
+            "name": "escalation_choice",
+            "pre_actions": [
+                {"type": "tts_say", "text": prompt_text}
+            ],
+            "respond_immediately": False,
+            "role_messages": [{
+                "role": "system",
+                "content": "Klient decyduje czy zostawić wiadomość."
+            }],
+            "task_messages": [{
+                "role": "system",
+                "content": """Klient odpowiada tak/nie na wiadomość.
+- TAK → collect_message
+- NIE → end_conversation"""
+            }],
+            "functions": [
+                collect_message_function(tenant),
+                end_conversation_function(),
+            ]
+        }
 
 
 def collect_message_function(tenant: dict) -> FlowsFunctionSchema:
