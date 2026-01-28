@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
-
+from pipecat.audio.interruptions import MinWordsInterruptionStrategy
 load_dotenv()
 
 from flows import end_conversation_function, escalate_to_human_function
@@ -499,15 +499,16 @@ async def websocket_endpoint(websocket: WebSocket):
         transport.output(),
         context_aggregator.assistant(),
     ])
-    
-    # Task - WAŻNE: sample rate 8000 dla Twilio!
+
+    from pipecat.audio.interruptions import MinWordsInterruptionStrategy
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
             allow_interruptions=True,
             enable_metrics=True,
-            audio_in_sample_rate=8000,   # Twilio wysyła 8kHz
-            audio_out_sample_rate=8000,  # Twilio odbiera 8kHz
+            audio_in_sample_rate=8000,
+            audio_out_sample_rate=8000,
+            interruption_strategies=[MinWordsInterruptionStrategy(min_words=1)],  # ← DODAJ TO!
         )
     )
     

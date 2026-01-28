@@ -597,74 +597,84 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
     return best_match
 
 
-def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.6) -> dict | None:
+def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.85) -> dict | None:
     """
-    Dopasuj pracownika z tolerancją na literówki.
-    Obsługuje polskie zdrobnienia imion.
+    Dopasuj pracownika - STRICT MODE.
+    Zwraca None jeśli nie ma pewności (bot dopyta).
     
-    Przykłady:
-    - "ania" → "Anna" ✓
-    - "kasia" → "Katarzyna" ✓
-    - "tomek" → "Tomasz" ✓
+    Zasada: Lepiej dopytać niż źle dopasować!
     """
     if not query or not staff_list:
         return None
     
     query = query.lower().strip()
     
-    # Polskie zdrobnienia - uniwersalne dla wszystkich branż
+    # Polskie zdrobnienia - mapowanie na pełne imiona
     name_aliases = {
-        "ania": ["anna", "ania", "ani", "aneczka"],
-        "kasia": ["katarzyna", "kasia", "kaśka", "kasieńka"],
-        "asia": ["joanna", "asia", "joasia", "aśka"],
-        "basia": ["barbara", "basia", "baśka"],
-        "gosia": ["małgorzata", "gosia", "gośka"],
-        "ela": ["elżbieta", "ela", "elka"],
-        "ola": ["aleksandra", "ola", "olka"],
-        "ewa": ["ewa", "ewka", "ewunia"],
-        "magda": ["magdalena", "magda", "magdzia"],
-        "tomek": ["tomasz", "tomek"],
-        "bartek": ["bartłomiej", "bartosz", "bartek"],
-        "krzysiek": ["krzysztof", "krzysiek", "krzyś"],
-        "piotrek": ["piotr", "piotrek"],
-        "marcin": ["marcin", "marciniek"],
-        "michał": ["michał", "michałek"],
-        "wiktor": ["wiktor", "wiktoria", "wika"],
-        "janek": ["jan", "janek"],
-        "maciek": ["maciej", "maciek"],
+        # Kobiece
+        "ania": "anna", "ani": "anna", "aneczka": "anna",
+        "kasia": "katarzyna", "kaśka": "katarzyna", "kasieńka": "katarzyna",
+        "asia": "joanna", "joasia": "joanna", "aśka": "joanna",
+        "basia": "barbara", "baśka": "barbara",
+        "gosia": "małgorzata", "gośka": "małgorzata",
+        "ela": "elżbieta", "elka": "elżbieta",
+        "ola": "aleksandra", "olka": "aleksandra",
+        "ewka": "ewa", "ewunia": "ewa",
+        "magda": "magdalena", "magdzia": "magdalena",
+        "wika": "wiktoria",
+        # Męskie
+        "tomek": "tomasz",
+        "bartek": "bartłomiej", "bartuś": "bartłomiej",
+        "krzysiek": "krzysztof", "krzyś": "krzysztof",
+        "piotrek": "piotr",
+        "marciniek": "marcin",
+        "michałek": "michał",
+        "janek": "jan", "jasiek": "jan",
+        "maciek": "maciej",
+        "witek": "wiktor",
     }
     
-    # Rozszerz query o aliasy
-    query_variants = [query]
-    for alias, names in name_aliases.items():
-        if query in names or query == alias:
-            query_variants.extend(names)
-            query_variants.append(alias)
+    # Zamień zdrobnienie na pełne imię (jeśli jest w słowniku)
+    normalized_query = name_aliases.get(query, query)
     
-    # Usuń duplikaty
-    query_variants = list(set(query_variants))
-    
-    # Szukaj exact/contains match
+    # KROK 1: Exact match (case insensitive)
     for staff in staff_list:
-        name = staff["name"].lower()
-        for variant in query_variants:
-            if variant == name or variant in name or name in variant:
+        name = staff["name"].lower().strip()
+        if normalized_query == name:
+            return staff
+        # Sprawdź też oryginalne query
+        if query == name:
+            return staff
+    
+    # KROK 2: Imię zawiera się w pełnej nazwie (np. "anna" w "Anna Kowalska")
+    for staff in staff_list:
+        name = staff["name"].lower().strip()
+        first_name = name.split()[0] if " " in name else name
+        
+        if normalized_query == first_name:
+            return staff
+        if query == first_name:
+            return staff
+    
+    # KROK 3: Sprawdź czy zdrobnienie pasuje do imienia pracownika
+    for staff in staff_list:
+        staff_name = staff["name"].lower().strip()
+        staff_first_name = staff_name.split()[0] if " " in staff_name else staff_name
+        
+        # Czy query to zdrobnienie od imienia pracownika?
+        for alias, full_name in name_aliases.items():
+            if alias == query and full_name == staff_first_name:
+                return staff
+            if alias == query and staff_first_name.startswith(full_name[:3]):
                 return staff
     
-    # Fuzzy match jako fallback
-    best_match = None
-    best_score = 0
+    # KROK 4: NIE ZGADUJ - zwróć None, bot dopyta
+    # (usunięty fuzzy matching - zbyt ryzykowny)
     
-    for staff in staff_list:
-        name = staff["name"].lower()
-        for variant in query_variants:
-            score = SequenceMatcher(None, variant, name).ratio()
-            if score > best_score and score >= threshold:
-                best_score = score
-                best_match = staff
+    from loguru import logger
+    logger.warning(f"⚠️ Staff not found: '{query}' (normalized: '{normalized_query}'). Bot will ask.")
     
-    return best_match
-
+    return None
 
 def staff_can_do_service(staff: dict, service: dict) -> bool:
     """

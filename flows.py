@@ -112,7 +112,8 @@ PRACOWNICY: {staff_list}"""
         functions = [
             answer_question_function(tenant),
             manage_booking_function(tenant),
-            collect_message_function(tenant),  
+            collect_message_function(tenant),
+            escalate_to_human_function(tenant),
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
