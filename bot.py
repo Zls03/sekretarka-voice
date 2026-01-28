@@ -15,8 +15,8 @@ from loguru import logger
 from dotenv import load_dotenv
 load_dotenv()
 
-from flows import end_conversation_function, escalate_to_human_function
-
+from flows import end_conversation_function
+from flows_contact import contact_owner_function
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response
@@ -510,15 +510,10 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_sample_rate=8000,
         )
     )
-    
-    # Import funkcji end_conversation z flows
-    from flows import end_conversation_function
-    
-    # ==========================================
+
+    # =========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
-    from flows import end_conversation_function
-    
     
     flow_manager = FlowManager(
         task=task,
@@ -526,7 +521,7 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator=context_aggregator,
         global_functions=[
             end_conversation_function(),
-            escalate_to_human_function(tenant),  # NOWE: globalna eskalacja
+            contact_owner_function(tenant),  # Kontakt z właścicielem
         ],
     )
     
