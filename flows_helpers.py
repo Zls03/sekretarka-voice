@@ -194,7 +194,7 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
 async def get_available_slots_from_api(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
-    """Pobiera wolne sloty z API panelu (Google Calendar) - z retry"""
+    """Pobiera wolne sloty z API panelu (Google Calendar) - SZYBKA WERSJA"""
     staff_id = staff.get("id")
     service_id = service.get("id")
     date_str = date.strftime("%Y-%m-%d")
@@ -204,39 +204,32 @@ async def get_available_slots_from_api(
         logger.warning("⚠️ No panel slug configured")
         return []
     
-    # Retry logic - 3 próby
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
-                    params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
-                )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
+                params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                slots = data.get("slots", [])
+                hours = []
+                for slot in slots:
+                    if isinstance(slot, str) and ":" in slot:
+                        hours.append(int(slot.split(":")[0]))
+                    elif isinstance(slot, int):
+                        hours.append(slot)
+                logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
+                return hours
+            else:
+                logger.warning(f"⚠️ Calendar API returned {response.status_code}")
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    slots = data.get("slots", [])
-                    hours = []
-                    for slot in slots:
-                        if isinstance(slot, str) and ":" in slot:
-                            hours.append(int(slot.split(":")[0]))
-                        elif isinstance(slot, int):
-                            hours.append(slot)
-                    logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
-                    return hours
-                else:
-                    logger.warning(f"⚠️ Calendar API returned {response.status_code} (attempt {attempt + 1}/3)")
-                    
-        except Exception as e:
-            logger.error(f"❌ Calendar API error (attempt {attempt + 1}/3): {e}")
-        
-        # Czekaj przed kolejną próbą (tylko jeśli nie ostatnia)
-        if attempt < 2:
-            import asyncio
-            await asyncio.sleep(0.5)
+    except Exception as e:
+        logger.error(f"❌ Calendar API error: {e}")
     
-    logger.error(f"❌ Calendar API failed after 3 attempts for {date_str}")
     return []
+
 async def get_available_slots_from_working_hours(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
@@ -266,21 +259,37 @@ async def get_available_slots_from_working_hours(
     return slots
 
 
+# Cache dla slotów (żeby nie odpytywać API wielokrotnie)
+_slots_cache = {}
+
 async def get_available_slots(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
-    """Główna funkcja - kalendarz lub godziny pracy"""
+    """Główna funkcja - z cache 60s"""
+    # Cache key
+    cache_key = f"{staff.get('id')}_{date.strftime('%Y-%m-%d')}"
+    
+    # Sprawdź cache (ważny 60 sekund)
+    if cache_key in _slots_cache:
+        cached_time, cached_slots = _slots_cache[cache_key]
+        if (datetime.now() - cached_time).seconds < 60:
+            logger.info(f"📅 Cache hit for {cache_key}: {len(cached_slots)} slots")
+            return cached_slots
+    
+    # Pobierz z API lub working hours
     calendar_connected = staff.get("google_calendar_id") or staff.get("google_connected")
     
     if calendar_connected:
         logger.info(f"📅 Staff {staff.get('name')} has calendar, using API")
         slots = await get_available_slots_from_api(tenant, staff, service, date)
         if slots:
+            _slots_cache[cache_key] = (datetime.now(), slots)
             return slots
         logger.warning("⚠️ API returned no slots, falling back")
     
-    return await get_available_slots_from_working_hours(tenant, staff, service, date)
-
+    slots = await get_available_slots_from_working_hours(tenant, staff, service, date)
+    _slots_cache[cache_key] = (datetime.now(), slots)
+    return slots
 
 # ==========================================
 # API - REZERWACJE
@@ -672,50 +681,3 @@ def staff_can_do_service(staff: dict, service: dict) -> bool:
         return True
     
     return service.get("id") in staff_service_ids
-
-# ==========================================
-# AUDIO SNIPPETS - Pre-recorded MP3
-# ==========================================
-
-import base64
-
-# Pre-generated MP3 (base64) - wklej zawartość plików .b64 tutaj
-AUDIO_SNIPPETS = {
-    "checking": "//uQxAAAAAANIAAAAAE...",  # <- wklej z snippets/checking.b64
-    "saving": "//uQxAAAAAANIAAAAAE...",     # <- wklej z snippets/saving.b64
-    "moment": "//uQxAAAAAANIAAAAAE...",     # <- wklej z snippets/moment.b64
-}
-
-async def play_audio_snippet(flow_manager, snippet_name: str):
-    """
-    Puszcza pre-recorded MP3 snippet.
-    Nie blokuje - audio gra w tle podczas przetwarzania.
-    """
-    try:
-        if snippet_name not in AUDIO_SNIPPETS:
-            logger.warning(f"🔊 Unknown snippet: {snippet_name}")
-            return
-        
-        audio_b64 = AUDIO_SNIPPETS[snippet_name]
-        audio_bytes = base64.b64decode(audio_b64)
-        
-        from pipecat.frames.frames import AudioRawFrame
-        
-        # Twilio wymaga 8kHz mulaw, ale nasze MP3 to PCM
-        # Użyjmy TTSSpeakFrame jako fallback (prostsze)
-        from pipecat.frames.frames import TTSSpeakFrame
-        
-        # Mapowanie snippet → tekst (fallback jeśli MP3 nie działa)
-        texts = {
-            "checking": "Sprawdzam...",
-            "saving": "Zapisuję...",
-            "moment": "Chwileczkę...",
-        }
-        
-        await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text=texts.get(snippet_name, "Chwileczkę..."))
-        )
-        logger.info(f"🔊 Playing snippet: {snippet_name}")
-        
-    except Exception as e:
-        logger.warning(f"🔊 Snippet error: {e}")
