@@ -814,11 +814,13 @@ INSTRUKCJA:
 5. Jeśli klient pyta o coś innego → powiedz: "Już połowa! Tylko data i zaraz pokażę dostępne terminy."
 6. Jeśli cisza → powiedz: "Proszę powiedzieć dzień, np. jutro, w piątek..."
 
+⛔ ZAKAZ: NIE WYMYŚLAJ daty! NIE wywołuj check_availability jeśli klient nie podał daty!
+⛔ Jeśli klient milczy lub mówi "halo" - odpowiedz TYLKO tekstem, NIE wywołuj funkcji!
+
 MUSISZ użyć funkcji check_availability. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [check_availability_function(tenant)]
     }
-
 def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="check_availability",
@@ -913,11 +915,13 @@ INSTRUKCJA:
 4. Jeśli klient pyta o inną godzinę → powiedz: "Niestety ta jest zajęta. Z wolnych mam: {slots_text}"
 5. Jeśli cisza → powiedz: "Która z tych godzin Panu pasuje?"
 
+⛔ ZAKAZ: NIE WYMYŚLAJ godziny! NIE wywołuj select_time jeśli klient nie wybrał!
+⛔ Jeśli klient milczy lub mówi "halo" - odpowiedz TYLKO tekstem, NIE wywołuj funkcji!
+
 MUSISZ użyć funkcji select_time. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [select_time_function(tenant, available_slots)]
     }
-
 
 def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSchema:
     """Funkcja wyboru godziny z ENUM - GPT nie może wymyślić!"""

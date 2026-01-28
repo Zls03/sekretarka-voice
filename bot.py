@@ -374,11 +374,11 @@ async def websocket_endpoint(websocket: WebSocket):
     
     async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
         """
-        Obsługa ciszy od użytkownika.
-        retry_count=1 → pytanie (po 10s)
-        retry_count>=2 → rozłącz (po kolejnych 5s)
+        NAPRAWIONE: Używa TTSSpeakFrame - omija GPT całkowicie!
+        GPT NIE MOŻE halucynować dat bo w ogóle nie jest wywoływany.
         
-        Razem: 15 sekund do rozłączenia
+        retry_count=1 → "Halo?" (direct TTS)
+        retry_count>=2 → rozłącz (direct TTS)
         """
         # Jeśli rozmowa już zakończona - nie rób nic
         if conversation_ended:
@@ -401,35 +401,24 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"⏰ User idle - retry #{retry_count}")
         
         if retry_count == 1:
-            # Pierwsze pytanie po 10s ciszy
-            from pipecat.frames.frames import LLMMessagesAppendFrame
+            # ✅ NAPRAWIONE: TTSSpeakFrame omija GPT całkowicie!
+            # GPT nie jest wywoływany = nie może wymyślać dat
+            from pipecat.frames.frames import TTSSpeakFrame
             await processor.push_frame(
-                LLMMessagesAppendFrame(
-                    messages=[{
-                        "role": "system",
-                        "content": "Użytkownik milczy. Zapytaj KRÓTKO: 'Halo, czy jest Pan jeszcze przy telefonie?'"
-                    }],
-                    run_llm=True
-                )
+                TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?")
             )
-            # Skróć timeout na 5s dla kolejnego sprawdzenia
+            # Skróć timeout na kolejne sprawdzenie
             processor._timeout = 10.0
             return True
             
         else:
-            # Po kolejnych 5s ciszy - rozłącz
+            # ✅ NAPRAWIONE: Direct TTS - żadnego GPT!
             logger.info("⏰ User idle too long - ending call")
-            from pipecat.frames.frames import LLMMessagesAppendFrame, EndFrame
+            from pipecat.frames.frames import TTSSpeakFrame, EndFrame
             await processor.push_frame(
-                LLMMessagesAppendFrame(
-                    messages=[{
-                        "role": "system",
-                        "content": "Użytkownik nie odpowiada. Powiedz KRÓTKO: 'Dziękuję za kontakt, do widzenia!' i zakończ."
-                    }],
-                    run_llm=True
-                )
+                TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!")
             )
-            await asyncio.sleep(2)
+            await asyncio.sleep(2.5)
             await processor.push_frame(EndFrame())
             return False
     
