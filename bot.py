@@ -278,6 +278,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
                             logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
                             logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
+                            logger.info(f"   transfer_enabled: {tenant.get('transfer_enabled')}")
+                            logger.info(f"   transfer_number: {tenant.get('transfer_number')}")
                             for st in staff_list:
                                 svc_names = [svc['name'] for svc in st.get('services', [])]
                                 logger.info(f"   Staff {st['name']}: {svc_names if svc_names else 'wszystkie usługi'}")
@@ -365,7 +367,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # Konfiguracja timeoutów
     MAX_CALL_DURATION = 4 * 60  # 4 minuty max
-    IDLE_TIMEOUT = 15.0      # 15 sekund ciszy → pytanie
+    IDLE_TIMEOUT = 10.0     # 10 sekund ciszy → pytanie
     
     call_start_time = datetime.utcnow()
     call_logged = False

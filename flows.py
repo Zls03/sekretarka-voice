@@ -1387,10 +1387,13 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     customer_name = args.get("customer_name", "")
     message = args.get("message", "")
     
-    transfer_enabled = tenant.get("transfer_enabled", 0) == 1
-    transfer_number = tenant.get("transfer_number", "")
+    # ✅ Użyj tenant z flow_manager.state (ma pewne dane z bazy)
+    state_tenant = flow_manager.state.get("tenant", tenant)
+    transfer_enabled = state_tenant.get("transfer_enabled", 0) == 1
+    transfer_number = state_tenant.get("transfer_number", "")
     
     logger.info(f"🚨 Escalation: {reason} (initiated by: {initiated_by})")
+    logger.info(f"🔍 Transfer: enabled={transfer_enabled}, number='{transfer_number}'")
     
     # Jeśli klient od razu podał imię i wiadomość - zapisz od razu!
     if customer_name and message:
@@ -1420,9 +1423,9 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
         return (None, create_collect_message_node_with_prompt(tenant))
     # KLIENT inicjuje i chce rozmawiać z WŁAŚCICIELEM → daj wybór (jeśli transfer ON)
     if transfer_enabled and transfer_number:
-        return (None, create_escalation_choice_node(tenant))
+        return (None, create_escalation_choice_node(state_tenant))
     else:
-        return (None, create_collect_message_node_with_prompt(tenant))
+        return (None, create_collect_message_node_with_prompt(state_tenant))
 
 def create_message_only_node(tenant: dict) -> dict:
     """Node: bot proponuje tylko wiadomość (gdy BOT wykrył problem)"""
@@ -1787,8 +1790,10 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
                 create_message_only_node(tenant))
     
     # Formatuj numer
+    # Formatuj numer - usuń spacje i myślniki
+    transfer_number = transfer_number.replace(' ', '').replace('-', '')
     if not transfer_number.startswith("+"):
-        transfer_number = f"+48{transfer_number.replace(' ', '').replace('-', '')}"
+        transfer_number = f"+48{transfer_number}"
     
     logger.info(f"📞 Saving transfer request: {call_sid} → {transfer_number}")
     
