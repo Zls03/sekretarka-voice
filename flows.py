@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 import random
 import string
-
+import asyncio
 
 # Import helperów
 from helpers import db
@@ -1559,6 +1559,19 @@ def end_conversation_function() -> FlowsFunctionSchema:
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     logger.info("👋 Ending conversation")
     flow_manager.state["conversation_ended"] = True
+    
+    # Zaplanuj rozłączenie po 2.5s (czas na TTS "Do widzenia")
+    async def delayed_hangup():
+        await asyncio.sleep(2.5)
+        try:
+            from pipecat.frames.frames import EndFrame
+            await flow_manager.task.queue_frame(EndFrame())
+            logger.info("🔚 EndFrame sent - disconnecting")
+        except Exception as e:
+            logger.error(f"Error sending EndFrame: {e}")
+    
+    asyncio.create_task(delayed_hangup())
+    
     return (None, create_end_node())
 
 def create_end_node(message_saved: bool = False) -> dict:

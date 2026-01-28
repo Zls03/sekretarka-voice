@@ -540,12 +540,6 @@ async def websocket_endpoint(websocket: WebSocket):
             escalate_to_human_function(tenant),  # NOWE: globalna eskalacja
         ],
     )
-    @flow_manager.on("on_state_changed")
-    async def handle_state_change(state):
-        if state.get("conversation_ended"):
-            logger.info("🔚 Conversation ended - disconnecting in 2s")
-            await asyncio.sleep(2.0)  # Poczekaj na TTS
-            await task.queue_frame(EndFrame())
     
     # Zapisz dane tenant w state
     flow_manager.state["tenant"] = tenant
