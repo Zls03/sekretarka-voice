@@ -507,7 +507,6 @@ async def websocket_endpoint(websocket: WebSocket):
             enable_metrics=True,
             audio_in_sample_rate=8000,
             audio_out_sample_rate=8000,
-            interruption_strategies=[MinWordsInterruptionStrategy(min_words=1)],  # ← DODAJ TO!
         )
     )
     
