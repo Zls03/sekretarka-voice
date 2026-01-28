@@ -737,7 +737,7 @@ async def twilio_after_stream(request: Request):
             twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="30" timeLimit="240" callerId="{caller_id}">
-        {transfer_number}
+        <Number>{transfer_number}</Number>
     </Dial>
     <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Przepraszamy, nie udało się połączyć. Do widzenia.</Say>
 </Response>'''

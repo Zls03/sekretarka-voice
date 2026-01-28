@@ -1493,6 +1493,7 @@ def create_message_only_node(tenant: dict) -> dict:
 
 def escalation_select_function(tenant: dict) -> FlowsFunctionSchema:
     """Wybór eskalacji z ENUM - GPT nie może wymyślić!"""
+    logger.info("🔧 escalation_select_function LOADED") 
     return FlowsFunctionSchema(
         name="escalation_select",
         description="Klient wybrał sposób kontaktu z właścicielem",
@@ -1537,6 +1538,7 @@ def create_escalation_choice_node(tenant: dict) -> dict:
     transfer_number = tenant.get("transfer_number", "")
     
     if transfer_enabled and transfer_number:
+        logger.info("🔧 Using ENUM escalation_select_function")
         prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni, lub połączyć bezpośrednio. Co Pan woli - wiadomość czy połączenie?"
         
         return {
