@@ -230,25 +230,71 @@ async def get_available_slots_from_api(
     
     return []
 
+def get_staff_working_hours(staff: dict, weekday: int) -> tuple[int, int] | None:
+    """Pobierz godziny pracy pracownika dla danego dnia"""
+    import json
+    
+    wh_json = staff.get("working_hours_json", "")
+    if not wh_json or wh_json == "'{}'":
+        return None
+    
+    try:
+        wh = json.loads(wh_json) if isinstance(wh_json, str) else wh_json
+        
+        # Mapowanie weekday (0=pon) na klucze JSON
+        day_keys = {0: "mon", 1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+        day_key = day_keys.get(weekday)
+        
+        if not day_key or day_key not in wh:
+            return None
+        
+        day_data = wh[day_key]
+        
+        # Sprawdź czy pracownik pracuje tego dnia
+        if day_data.get("closed", False):
+            return None
+        
+        open_time = day_data.get("open", "")
+        close_time = day_data.get("close", "")
+        
+        if open_time and close_time:
+            open_hour = int(open_time.split(":")[0])
+            close_hour = int(close_time.split(":")[0])
+            return (open_hour, close_hour)
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error parsing staff working hours: {e}")
+    
+    return None
 async def get_available_slots_from_working_hours(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[int]:
-    """Fallback: generuje sloty z godzin pracy"""
+    """Fallback: generuje sloty z godzin pracy PRACOWNIKA (lub firmy jako fallback)"""
     weekday = date.weekday()
-    opening_hours = get_opening_hours(tenant, weekday)
     
-    if not opening_hours:
-        return []
+    # Najpierw sprawdź godziny pracownika
+    staff_hours = get_staff_working_hours(staff, weekday)
     
-    open_hour, close_hour = opening_hours
+    if staff_hours:
+        open_hour, close_hour = staff_hours
+    else:
+        # Fallback do godzin firmy
+        opening_hours = get_opening_hours(tenant, weekday)
+        if not opening_hours:
+            return []
+        open_hour, close_hour = opening_hours
     service_duration = service.get("duration_minutes", 60)
     
     slots = []
     current_hour = open_hour
     
+    break_between = staff.get("break_between_minutes", 0) or tenant.get("break_between_minutes", 0)
+
     while current_hour + (service_duration / 60) <= close_hour:
         slots.append(current_hour)
-        current_hour += 1
+        # Następny slot = czas usługi + przerwa
+        slot_duration_hours = (service_duration + break_between) / 60
+        current_hour += max(1, int(slot_duration_hours))
     
     now = datetime.now()
     if date.date() == now.date():

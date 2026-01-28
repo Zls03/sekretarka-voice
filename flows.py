@@ -11,6 +11,32 @@ from loguru import logger
 from typing import Optional
 import asyncio
 import random
+
+# ============================================================================
+# LIMIT RETRY'ÓW - max 3 błędne odpowiedzi na krok
+# ============================================================================
+
+MAX_RETRIES_PER_STEP = 3
+
+def check_retry_limit(flow_manager, step: str) -> bool:
+    """
+    Sprawdź czy nie przekroczono limitu prób dla danego kroku.
+    Zwraca True jeśli OK (można kontynuować), False jeśli limit przekroczony.
+    """
+    key = f"retry_{step}"
+    count = flow_manager.state.get(key, 0) + 1
+    flow_manager.state[key] = count
+    
+    if count > MAX_RETRIES_PER_STEP:
+        logger.warning(f"⚠️ Retry limit exceeded for {step}: {count}")
+        return False
+    
+    logger.info(f"🔄 Retry {count}/{MAX_RETRIES_PER_STEP} for {step}")
+    return True
+
+def reset_retry_count(flow_manager, step: str):
+    """Reset licznika po sukcesie"""
+    flow_manager.state[f"retry_{step}"] = 0
 # ============================================================================
 # WALIDACJA W KODZIE - nie w prompcie!
 # ============================================================================
@@ -255,6 +281,57 @@ def answer_question_function(tenant: dict) -> FlowsFunctionSchema:
         handler=lambda args, fm: handle_answer_question(args, fm, tenant),
     )
 
+# ==========================================
+# FUNKCJA: Pytanie W TRAKCIE rezerwacji
+# ==========================================
+
+def answer_question_in_booking_function(tenant: dict) -> FlowsFunctionSchema:
+    """Odpowiedz na pytanie ALE zostań w aktualnym kroku rezerwacji"""
+    return FlowsFunctionSchema(
+        name="answer_question_in_booking",
+        description="""Klient zadał pytanie w trakcie rezerwacji (np. "ile kosztuje?", "gdzie jesteście?").
+Odpowiedz KRÓTKO i wróć do aktualnego kroku. NIE zmieniaj tematu.""",
+        properties={
+            "question": {"type": "string", "description": "Pytanie klienta"}
+        },
+        required=["question"],
+        handler=lambda args, fm: handle_answer_in_booking(args, fm, tenant),
+    )
+
+def create_booking_failed_node(tenant: dict, reason: str = "") -> dict:
+    """Node: rezerwacja nie udała się - eskaluj do człowieka"""
+    return {
+        "name": "booking_failed",
+        "pre_actions": [
+            {"type": "tts_say", "text": "Przepraszam, mam problem ze zrozumieniem. Przekażę do właściciela, który pomoże z rezerwacją."}
+        ],
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"Rezerwacja nie udała się: {reason}. Zaproponuj zostawienie wiadomości."
+        }],
+        "task_messages": [{
+            "role": "system", 
+            "content": "Zapytaj czy klient chce zostawić wiadomość do właściciela."
+        }],
+        "functions": [
+            collect_message_function(tenant),
+            end_conversation_function(),
+        ]
+    }
+
+async def handle_answer_in_booking(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Odpowiedz na pytanie ale NIE zmieniaj node'a - zostań gdzie jesteś"""
+    question = args.get("question", "")
+    context = build_business_context(tenant)
+    
+    logger.info(f"❓ Question during booking: {question}")
+    
+    # Zwróć hint dla GPT ale None jako node = zostań w aktualnym ustawieniu
+    return ({
+        "status": "answered_in_booking",
+        "instruction": f"Odpowiedz KRÓTKO na pytanie: '{question}'. Potem wróć do rezerwacji i powtórz aktualne pytanie (np. 'A wracając do rezerwacji - na jaką usługę?'). Kontekst firmy: {context[:500]}"
+    }, None)
 
 async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: dict):
     question = args.get("question", "")
@@ -457,7 +534,7 @@ Gdy klient powie usługę → wywołaj select_service."""
         }],
         "functions": [
             select_service_function(tenant, service_names),
-            end_conversation_function()
+            answer_question_in_booking_function(tenant),
         ]
     }
 
@@ -496,8 +573,15 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     found = fuzzy_match_service(service_name, services)
     
     if not found:
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "service"):
+            return (None, create_booking_failed_node(tenant, "nie udało się wybrać usługi"))
+        
         available = ", ".join([s["name"] for s in services])
         return ({"status": "error", "message": f"Nie mamy takiej usługi. Dostępne: {available}."}, None)
+    
+    # Sukces - reset licznika
+    reset_retry_count(flow_manager, "service")
     
     # Zapisz i przejdź do wyboru pracownika
     flow_manager.state["selected_service"] = found
@@ -563,7 +647,7 @@ MUSISZ użyć funkcji select_staff. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [
             select_staff_function(tenant, staff_names),
-            end_conversation_function()
+            answer_question_in_booking_function(tenant),
         ]
     }
 
@@ -601,8 +685,15 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     found = fuzzy_match_staff(staff_name, staff_list)
     
     if not found:
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "staff"):
+            return (None, create_booking_failed_node(tenant, "nie udało się wybrać pracownika"))
+        
         available = ", ".join([s["name"] for s in staff_list])
         return ({"status": "error", "message": f"Nie mamy takiego pracownika. Dostępni: {available}."}, None)
+    
+    # Sukces - reset licznika  
+    reset_retry_count(flow_manager, "staff")
     
     # Walidacja: czy pracownik wykonuje tę usługę?
     if selected_service:
@@ -614,8 +705,11 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
                 if not st_service_ids or selected_service.get("id") in st_service_ids:
                     available_for_service.append(st["name"])
             
+            # Sprawdź limit retry'ów
+            if not check_retry_limit(flow_manager, "staff"):
+                return (None, create_booking_failed_node(tenant, "nie udało się wybrać pracownika"))
+            
             return ({"status": "error", "message": f"Niestety {found['name']} nie wykonuje {selected_service['name']}. Tę usługę wykonuje: {', '.join(available_for_service)}."}, None)
-    
     # Zapisz i przejdź ZAWSZE do wyboru daty
     flow_manager.state["selected_staff"] = found
     logger.info(f"✅ [2/6] Staff selected: {found['name']}")
@@ -671,7 +765,7 @@ MUSISZ użyć funkcji check_availability. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [
             check_availability_function(tenant),
-            end_conversation_function()
+            answer_question_in_booking_function(tenant),
         ]
     }
 def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
@@ -698,9 +792,14 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     service = flow_manager.state.get("selected_service", {})
     
     # Parsuj datę
+    # Parsuj datę
     parsed_date = parse_polish_date(date_str)
     if not parsed_date:
-        return (f"Nie rozumiem daty '{date_str}'. Proszę powiedzieć np. jutro, w poniedziałek.", None)
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "date"):
+            return (None, create_booking_failed_node(tenant, "nie udało się wybrać daty"))
+        
+        return ({"status": "error", "message": "Nie rozumiem daty. Proszę powiedzieć np. jutro, w poniedziałek."}, None)
     
     # Popraw rok jeśli data w przeszłości
     today = datetime.now()
@@ -731,7 +830,14 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     # Pobierz sloty z API/kalendarza
     slots = await get_available_slots(tenant, staff, service, parsed_date)
     if not slots:
-        return (f"Na {format_date_polish(parsed_date)} brak wolnych terminów. Proszę wybrać inny dzień.", None)
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "date"):
+            return (None, create_booking_failed_node(tenant, "brak wolnych terminów"))
+        
+        return ({"status": "error", "message": f"Na {format_date_polish(parsed_date)} brak wolnych terminów. Proszę wybrać inny dzień."}, None)
+    
+    # Sukces - reset licznika
+    reset_retry_count(flow_manager, "date")
     
     # Zapisz i przejdź ZAWSZE do wyboru godziny (z ENUM!)
     flow_manager.state["selected_date"] = parsed_date
@@ -771,24 +877,21 @@ DOSTĘPNE GODZINY: {slots_text}
 TWOJE JEDYNE ZADANIE: Zapytaj o godzinę i wywołaj select_time."""
         }],
         "task_messages": [{
-            "role": "system",
-            "content": f"""KROK 4/6: Wybór godziny
+    "role": "system",
+    "content": f"""KROK 4/6: Wybór godziny
 
-INSTRUKCJA:
-1. Powiedz: "To są dokładne wolne terminy: {slots_text}. Która pasuje?"
-2. Gdy klient powie godzinę → NATYCHMIAST wywołaj select_time
-3. WAŻNE: Klient MUSI wybrać z tej listy - to jedyne wolne terminy w systemie
-4. Jeśli klient pyta o inną godzinę → powiedz: "Niestety ta jest zajęta. Z wolnych mam: {slots_text}"
-5. Jeśli cisza → powiedz: "Która z tych godzin Panu pasuje?"
+Klient usłyszał dostępne godziny. CZEKAJ na jego wybór.
 
-⛔ ZAKAZ: NIE WYMYŚLAJ godziny! NIE wywołuj select_time jeśli klient nie wybrał!
-⛔ Jeśli klient milczy lub mówi "halo" - odpowiedz TYLKO tekstem, NIE wywołuj funkcji!
+Gdy klient powie godzinę → wywołaj select_time z TĄ godziną którą powiedział.
+Jeśli powie zajętą → powiedz: "Ta jest zajęta. Mam: {slots_text}"
+Jeśli cisza → powiedz: "Która godzina Panu pasuje?"
 
-MUSISZ użyć funkcji select_time. Nie możesz odpowiedzieć bez niej."""
+⛔ NIE wybieraj za klienta! Przekaż dokładnie to co powiedział."""
+
         }],
         "functions": [
             select_time_function(tenant, available_slots),
-            end_conversation_function()
+            answer_question_in_booking_function(tenant),
         ]
     }
 
@@ -827,9 +930,16 @@ async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict
     
     # Walidacja - czy godzina jest na liście dostępnych?
     if hour is None or hour not in slots:
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "time"):
+            return (None, create_booking_failed_node(tenant, "nie udało się wybrać godziny"))
+        
         slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
         logger.warning(f"⚠️ Invalid time '{hour_str}' (parsed: {hour}), available: {slots[:5]}")
         return ({"status": "error", "message": f"Ta godzina jest niedostępna. Wolne mam: {slots_text}."}, None)
+    
+    # Sukces - reset licznika
+    reset_retry_count(flow_manager, "time")
     
     # Zapisz i przejdź ZAWSZE do imienia
     flow_manager.state["selected_time"] = hour
@@ -871,6 +981,7 @@ MUSISZ użyć funkcji set_customer_name. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [
             set_customer_name_function(tenant),
+            answer_question_in_booking_function(tenant),
         ]
     }
 
@@ -894,7 +1005,14 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
     validated = validate_customer_name(args.get("customer_name", ""))
     
     if not validated:
-        return ({"status": "error", "message": "Nie dosłyszałam imienia."}, None)
+        # Sprawdź limit retry'ów
+        if not check_retry_limit(flow_manager, "name"):
+            return (None, create_booking_failed_node(tenant, "nie udało się zapisać imienia"))
+        
+        return ({"status": "error", "message": "Nie dosłyszałam imienia. Proszę powtórzyć."}, None)
+    
+    # Sukces - reset licznika
+    reset_retry_count(flow_manager, "name")
     
     # Zapisz i przejdź do potwierdzenia
     flow_manager.state["customer_name"] = validated
@@ -1321,7 +1439,6 @@ def create_message_only_node(tenant: dict) -> dict:
         }],
         "functions": [
             collect_message_function(tenant),
-            end_conversation_function(),
         ]
     }
 
