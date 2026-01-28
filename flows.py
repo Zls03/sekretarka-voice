@@ -1556,8 +1556,7 @@ def escalation_select_function(tenant: dict) -> FlowsFunctionSchema:
         required=["choice"],
         handler=lambda args, fm: handle_escalation_select(args, fm, tenant),
     )
-
-
+#cv
 async def handle_escalation_select(args: dict, flow_manager: FlowManager, tenant: dict):
     """Handler wyboru eskalacji - KOD DECYDUJE!"""
     choice = args.get("choice", "")
