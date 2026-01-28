@@ -162,9 +162,10 @@ async def handle_answer_in_booking(args: dict, flow_manager: FlowManager, tenant
 
 
 def create_booking_failed_node(tenant: dict, reason: str = "") -> dict:
-    """Node: rezerwacja nie udała się - eskaluj do człowieka"""
+    """Node: rezerwacja nie udała się - eskaluj do contact_owner"""
     # Lazy import - unikamy circular import
-    from flows import collect_message_function, end_conversation_function
+    from flows import end_conversation_function
+    from flows_contact import contact_owner_function
     
     return {
         "name": "booking_failed",
@@ -181,7 +182,7 @@ def create_booking_failed_node(tenant: dict, reason: str = "") -> dict:
             "content": "Zapytaj czy klient chce zostawić wiadomość do właściciela."
         }],
         "functions": [
-            collect_message_function(tenant),
+            contact_owner_function(tenant),
             end_conversation_function(),
         ]
     }
@@ -207,7 +208,7 @@ async def handle_start_booking_simple(args: dict, flow_manager: FlowManager):
     KOD decyduje o flow, GPT tylko mówi naturalnie.
     """
     # Lazy import - unikamy circular import
-    from flows import create_take_message_node
+    from flows_contact import create_collect_contact_name_node
     
     tenant = flow_manager.state.get("tenant", {})
     caller_phone = flow_manager.state.get("caller_phone", "unknown")
@@ -227,10 +228,10 @@ async def handle_start_booking_simple(args: dict, flow_manager: FlowManager):
     staff_list = tenant.get("staff", [])
     
     if not services:
-        return ({"status": "error", "reason": "no_services"}, create_take_message_node(tenant))
+        return ({"status": "error", "reason": "no_services"}, create_collect_contact_name_node(tenant))
     
     if not staff_list:
-        return ({"status": "error", "reason": "no_staff"}, create_take_message_node(tenant))
+        return ({"status": "error", "reason": "no_staff"}, create_collect_contact_name_node(tenant))
     
     # ZAWSZE zacznij od wyboru usługi - pre_actions w ustawią tekst
     return ({"status": "started"}, create_get_service_node(tenant))
@@ -854,7 +855,8 @@ def confirm_booking_no_function(tenant: dict) -> FlowsFunctionSchema:
 async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tenant: dict):
     """Klient potwierdził - TERAZ zapisz rezerwację"""
     # Lazy import
-    from flows import play_snippet, create_take_message_node, create_anything_else_node
+    from flows import play_snippet, create_anything_else_node
+    from flows_contact import create_collect_contact_name_node
     
     logger.info("✅ [6/6] Booking CONFIRMED by customer")
     
@@ -881,7 +883,7 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
         logger.error("⚠️ Double-check timeout - cannot verify slot!")
         return (
             "Przepraszam, system chwilowo nie odpowiada. Proszę spróbować za chwilę lub zostawić wiadomość.",
-            create_take_message_node(tenant)
+            create_collect_contact_name_node(tenant)
         )
     
     if hour not in current_slots:
@@ -952,7 +954,7 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
                 create_anything_else_node(tenant))
     else:
         return ("Przepraszam, wystąpił problem z zapisem. Czy mogę przekazać wiadomość do właściciela?",
-                create_take_message_node(tenant))
+                create_collect_contact_name_node(tenant))
 
 
 async def handle_confirm_booking_no(args: dict, flow_manager: FlowManager, tenant: dict):
