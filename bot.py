@@ -1,8 +1,8 @@
 # bot.py - Pipecat Voice AI dla salonów
 """
-PIPECAT FLOWS MIGRATION v1.2
+PIPECAT FLOWS MIGRATION v1.3
 ============================
-Naprawiona obsługa TwilioFrameSerializer z auto_hang_up=False
+Dodano wybór TTS provider (ElevenLabs / Cartesia) per tenant
 """
 
 import os
@@ -34,6 +34,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 # Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq import GroqLLMService
 from pipecat.services.cerebras import CerebrasLLMService
@@ -155,6 +156,43 @@ async def get_greeting_audio(tenant_id: str):
     except Exception as e:
         logger.error(f"Greeting audio error: {e}")
         return Response(status_code=500)
+
+
+# ==========================================
+# TTS PROVIDER FACTORY
+# ==========================================
+def create_tts_service(tenant: dict):
+    """
+    Tworzy odpowiedni TTS service na podstawie ustawień tenant.
+    
+    tenant['tts_provider']:
+      - 'elevenlabs' (domyślnie) - najlepsza jakość polskiego
+      - 'cartesia' - najszybszy, ale polski może brzmieć inaczej
+    """
+    tts_provider = tenant.get('tts_provider', 'elevenlabs')
+    
+    if tts_provider == 'cartesia':
+        logger.info(f"🎙️ Using Cartesia TTS (fast mode)")
+        return CartesiaTTSService(
+            api_key=os.getenv("CARTESIA_API_KEY"),
+            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",  # Polski głos
+            model_id="sonic-2",
+            language="pl",
+            sample_rate=24000,
+        )
+    else:
+        # Domyślnie ElevenLabs
+        logger.info(f"🎙️ Using ElevenLabs TTS (quality mode)")
+        return ElevenLabsTTSService(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+            voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+            model="eleven_turbo_v2_5",
+            output_format="pcm_24000",
+            stability=0.6,
+            similarity_boost=0.75,
+        )
+
+
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -201,12 +239,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Pobierz tenant z bazy - używamy get_tenant_by_phone dla pełnych danych
                 if tenant_id:
                     # Najpierw pobierz numer telefonu tenant
-                    rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [tenant_id])
+                    rows = await db.execute("SELECT phone_number, tts_provider FROM tenants WHERE id = ?", [tenant_id])
                     if rows and rows[0].get("phone_number"):
                         # Użyj get_tenant_by_phone - pobiera WSZYSTKIE dane (working_hours, info_services, etc.)
                         tenant = await get_tenant_by_phone(rows[0]["phone_number"])
                         
                         if tenant:
+                            # Dodaj tts_provider (może nie być w get_tenant_by_phone)
+                            tenant['tts_provider'] = rows[0].get('tts_provider', 'elevenlabs')
+                            
                             # Dodaj staff z ich usługami
                             staff = await db.execute(
                                 "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
@@ -231,6 +272,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             tenant["staff"] = staff_list
                             
                             logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
+                            logger.info(f"   tts_provider: {tenant.get('tts_provider')}")
                             logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
                             logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
                             logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
@@ -302,20 +344,13 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
     
-    # TTS - ElevenLabs  
-    # Serializer skonwertuje PCM → mulaw dla Twilio
-    tts = ElevenLabsTTSService(
-        api_key=os.getenv("ELEVENLABS_API_KEY"),
-        voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
-        model="eleven_turbo_v2_5",
-        output_format="pcm_24000",
-        stability=0.6,
-        similarity_boost=0.75,
-    )
+    # TTS - wybór na podstawie ustawień tenant
+    tts = create_tts_service(tenant)
 
+    # LLM - GPT-4o-mini (szybki i stabilny)
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini",  # Szybszy niż 4.1-mini!
+        model="gpt-4o-mini",
     )
 
     
@@ -734,7 +769,7 @@ async def twilio_after_stream(request: Request):
 # ==========================================
 @app.get("/health")
 async def health():
-    return {"status": "ok", "framework": "pipecat", "version": "1.2"}
+    return {"status": "ok", "framework": "pipecat", "version": "1.3", "tts_options": ["elevenlabs", "cartesia"]}
 
 # ==========================================
 # TWILIO FALLBACK - gdy bot nie odpowiada
