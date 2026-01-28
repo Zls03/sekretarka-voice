@@ -8,6 +8,7 @@ Dodano wybór TTS provider (ElevenLabs / Cartesia) per tenant
 import os
 import sys
 import json
+from pipecat.frames.frames import EndFrame
 import asyncio
 from datetime import datetime
 from loguru import logger
@@ -175,7 +176,7 @@ def create_tts_service(tenant: dict):
         logger.info(f"🎙️ Using Cartesia TTS (fast mode)")
         return CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",
+            voice_id="dcf62f33-7cff-4f20-85b2-2efaa68cbc32",  # Polish
             model_id="sonic-2",
             language="pl",
             sample_rate=24000,
@@ -539,6 +540,12 @@ async def websocket_endpoint(websocket: WebSocket):
             escalate_to_human_function(tenant),  # NOWE: globalna eskalacja
         ],
     )
+    @flow_manager.on("on_state_changed")
+    async def handle_state_change(state):
+        if state.get("conversation_ended"):
+            logger.info("🔚 Conversation ended - disconnecting in 2s")
+            await asyncio.sleep(2.0)  # Poczekaj na TTS
+            await task.queue_frame(EndFrame())
     
     # Zapisz dane tenant w state
     flow_manager.state["tenant"] = tenant
