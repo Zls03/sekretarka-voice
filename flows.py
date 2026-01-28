@@ -11,7 +11,6 @@ from loguru import logger
 from typing import Optional
 import asyncio
 import random
-import string
 # ============================================================================
 # WALIDACJA W KODZIE - nie w prompcie!
 # ============================================================================
@@ -81,9 +80,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     assistant_name = tenant.get("assistant_name", "Ania")
     
     # Aktualna data dla GPT
-    polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
     now = datetime.now()
-    today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({polish_days[now.weekday()]})"
+    today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
     
     # Usługi z kalendarza lub info_services
     if booking_enabled:
@@ -122,6 +120,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
             start_booking_function(),
             manage_booking_function(tenant),
             answer_question_function(tenant),
+            escalate_to_human_function(tenant),
+            end_conversation_function(),
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
@@ -247,6 +247,8 @@ Po odpowiedzi CZEKAJ na reakcję klienta."""
         "functions": [
             start_booking_function(),
             answer_question_function(tenant),
+            escalate_to_human_function(tenant),
+            end_conversation_function(),
         ]
     }
 
@@ -679,6 +681,16 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     
     # Użyj fuzzy matching z helpers
     found = fuzzy_match_service(service_name, services)
+    
+    if not found:
+        available = ", ".join([s["name"] for s in services])
+        return (f"Nie mamy takiej usługi. Dostępne: {available}. Którą Pan wybiera?", None)
+    
+    # Zapisz i przejdź do wyboru pracownika
+    flow_manager.state["selected_service"] = found
+    logger.info(f"✅ [1/6] Service selected: {found['name']}")
+    
+    return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant, found))
 # ==========================================
 # NODE: Wybór pracownika
 # ==========================================
@@ -801,8 +813,7 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
 def create_get_date_node(tenant: dict) -> dict:
     """NODE: Wybór daty - STRICT (krok 3/6)"""
     now = datetime.now()
-    polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
-    today_str = f"{now.strftime('%d.%m.%Y')} ({polish_days[now.weekday()]})"
+    today_str = f"{now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
     max_days = tenant.get("max_booking_days", 30)
     max_date = now + timedelta(days=max_days)
     max_date_str = max_date.strftime('%d.%m.%Y')
@@ -1142,8 +1153,11 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
             timeout=5.0
         )
     except asyncio.TimeoutError:
-        logger.error("⚠️ Double-check timeout - proceeding with save")
-        current_slots = [hour]  # Zakładamy że slot wolny jeśli timeout
+        logger.error("⚠️ Double-check timeout - cannot verify slot!")
+        return (
+            "Przepraszam, system chwilowo nie odpowiada. Proszę spróbować za chwilę lub zostawić wiadomość.",
+            create_take_message_node(tenant)
+        )
     if hour not in current_slots:
         logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
         flow_manager.state["available_slots"] = current_slots
@@ -1473,6 +1487,7 @@ def create_message_only_node(tenant: dict) -> dict:
         }],
         "functions": [
             collect_message_function(tenant),
+            end_conversation_function(),
         ]
     }
 
@@ -1487,6 +1502,7 @@ def create_escalation_choice_node(tenant: dict) -> dict:
         functions = [
             collect_message_function(tenant),
             transfer_call_function(tenant),
+            end_conversation_function(),
         ]
         task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
 Zaproponowałeś zostawienie wiadomości.
@@ -1501,6 +1517,7 @@ WAŻNE: Proponuj WIADOMOŚĆ, nie przekierowanie. Przekierowanie tylko gdy klien
         prompt_text = "Mogę przekazać wiadomość do właściciela, który oddzwoni. Czy chce Pan zostawić wiadomość?"
         functions = [
             collect_message_function(tenant),
+            end_conversation_function(),
         ]
         task_content = """Klient potrzebuje pomocy której nie możesz udzielić.
 Zaproponowałeś zostawienie wiadomości.
