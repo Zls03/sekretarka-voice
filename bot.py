@@ -366,7 +366,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # Konfiguracja timeoutów
     MAX_CALL_DURATION = 4 * 60  # 4 minuty max
-    IDLE_TIMEOUT = 10.0         # 10 sekund ciszy → pytanie
+    IDLE_TIMEOUT = 15.0      # 15 sekund ciszy → pytanie
     
     call_start_time = datetime.utcnow()
     call_logged = False
@@ -413,7 +413,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
             )
             # Skróć timeout na 5s dla kolejnego sprawdzenia
-            processor._timeout = 5.0
+            processor._timeout = 10.0
             return True
             
         else:

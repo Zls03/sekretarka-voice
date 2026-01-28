@@ -6,7 +6,7 @@ Zawiera:
 - Integracja z API panelu (kalendarz, rezerwacje)
 - Walidacje
 """
-
+import random
 import os
 import asyncio
 import httpx
@@ -291,16 +291,12 @@ async def save_booking_to_api(
     date: datetime, hour: int, customer_name: str, customer_phone: str = ""
 ) -> dict:
     """Zapisuje rezerwację przez API panelu - z retry i kodem wizyty"""
-    import random
     
     slug = tenant.get("slug") or PANEL_SLUG
     
     if not slug:
         logger.warning("⚠️ No panel slug configured")
         return {}
-    
-    # Generuj unikalny 4-cyfrowy kod wizyty
-    booking_code = str(random.randint(1000, 9999))
     
     # POPRAWKA: Użyj tylko daty (bez czasu) - czysta data YYYY-MM-DD
     date_only = date.date() if date else None
@@ -322,12 +318,13 @@ async def save_booking_to_api(
                         "time": time_str,
                         "client_name": customer_name,
                         "client_phone": customer_phone,
-                        "booking_code": booking_code,
                     }
                 )
                 
                 if response.status_code in [200, 201]:
                     data = response.json()
+                    # Użyj kodu z API (jeśli jest), albo wygeneruj fallback
+                    booking_code = data.get("visitCode") or data.get("booking_code") or str(random.randint(1000, 9999))
                     data["booking_code"] = booking_code
                     logger.info(f"✅ Booking saved: {data.get('bookingId')} (code: {booking_code})")
                     return data
@@ -342,7 +339,6 @@ async def save_booking_to_api(
     
     logger.error(f"❌ Booking API failed after 3 attempts")
     return {}
-
 
 async def send_booking_sms(
     tenant: dict, customer_phone: str, service_name: str, 
@@ -676,3 +672,50 @@ def staff_can_do_service(staff: dict, service: dict) -> bool:
         return True
     
     return service.get("id") in staff_service_ids
+
+# ==========================================
+# AUDIO SNIPPETS - Pre-recorded MP3
+# ==========================================
+
+import base64
+
+# Pre-generated MP3 (base64) - wklej zawartość plików .b64 tutaj
+AUDIO_SNIPPETS = {
+    "checking": "//uQxAAAAAANIAAAAAE...",  # <- wklej z snippets/checking.b64
+    "saving": "//uQxAAAAAANIAAAAAE...",     # <- wklej z snippets/saving.b64
+    "moment": "//uQxAAAAAANIAAAAAE...",     # <- wklej z snippets/moment.b64
+}
+
+async def play_audio_snippet(flow_manager, snippet_name: str):
+    """
+    Puszcza pre-recorded MP3 snippet.
+    Nie blokuje - audio gra w tle podczas przetwarzania.
+    """
+    try:
+        if snippet_name not in AUDIO_SNIPPETS:
+            logger.warning(f"🔊 Unknown snippet: {snippet_name}")
+            return
+        
+        audio_b64 = AUDIO_SNIPPETS[snippet_name]
+        audio_bytes = base64.b64decode(audio_b64)
+        
+        from pipecat.frames.frames import AudioRawFrame
+        
+        # Twilio wymaga 8kHz mulaw, ale nasze MP3 to PCM
+        # Użyjmy TTSSpeakFrame jako fallback (prostsze)
+        from pipecat.frames.frames import TTSSpeakFrame
+        
+        # Mapowanie snippet → tekst (fallback jeśli MP3 nie działa)
+        texts = {
+            "checking": "Sprawdzam...",
+            "saving": "Zapisuję...",
+            "moment": "Chwileczkę...",
+        }
+        
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text=texts.get(snippet_name, "Chwileczkę..."))
+        )
+        logger.info(f"🔊 Playing snippet: {snippet_name}")
+        
+    except Exception as e:
+        logger.warning(f"🔊 Snippet error: {e}")

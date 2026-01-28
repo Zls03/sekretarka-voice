@@ -339,6 +339,23 @@ async def handle_smart_booking(args: dict, flow_manager: FlowManager):
     
     logger.info(f"🧠 Smart booking received: {args}")
     
+    # ✅ Sprawdź ile danych klient podał
+    params_count = sum([
+        bool(args.get("mentioned_service")),
+        bool(args.get("mentioned_staff")),
+        bool(args.get("mentioned_date")),
+        bool(args.get("mentioned_time")),
+    ])
+    
+    # ✅ Jeśli 2+ parametry - będzie sprawdzanie kalendarza, daj feedback
+    if params_count >= 2:
+        try:
+            from pipecat.frames.frames import TTSSpeakFrame
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text="Sprawdzam..."))
+            logger.info("💬 Sent 'checking' snippet")
+        except Exception as e:
+            logger.warning(f"Snippet error: {e}")
+    
     # RESET STATE - czysta karta
     flow_manager.state["selected_service"] = None
     flow_manager.state["selected_staff"] = None
@@ -1059,6 +1076,14 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     """Klient potwierdził - TERAZ zapisz rezerwację"""
     logger.info("✅ [6/6] Booking CONFIRMED by customer")
     
+    # ✅ Daj feedback że zapisujemy (będzie API call)
+    try:
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Już zapisuję..."))
+        logger.info("💬 Sent 'saving' snippet")
+    except Exception as e:
+        logger.warning(f"Snippet error: {e}")
+    
     # Pobierz wszystkie dane
     service = flow_manager.state.get("selected_service", {})
     staff = flow_manager.state.get("selected_staff", {})
@@ -1203,8 +1228,12 @@ def need_more_help_function(tenant: dict) -> FlowsFunctionSchema:
         description="Klient chce jeszcze pomoc",
         properties={},
         required=[],
-        handler=lambda args, fm: (None, create_continue_conversation_node(tenant)),
+        handler=lambda args, fm: handle_need_more_help(args, fm, tenant),
     )
+
+
+async def handle_need_more_help(args: dict, flow_manager: FlowManager, tenant: dict):
+    return (None, create_continue_conversation_node(tenant))
 
 
 def no_more_help_function() -> FlowsFunctionSchema:
@@ -1213,9 +1242,12 @@ def no_more_help_function() -> FlowsFunctionSchema:
         description="Klient kończy",
         properties={},
         required=[],
-        handler=lambda args, fm: (None, create_end_node()),  # None = pożegnanie w node
+        handler=handle_no_more_help,
     )
 
+
+async def handle_no_more_help(args: dict, flow_manager: FlowManager):
+    return (None, create_end_node())
 # ==========================================
 # NODE: Kontynuacja rozmowy
 # ==========================================
