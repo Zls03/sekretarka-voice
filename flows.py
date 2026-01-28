@@ -12,15 +12,10 @@ import random
 import string
 import asyncio
 import random
-import base64
-import io
-
-# Import wygenerowanych snippetów
-from audio_snippets import AUDIO_SNIPPETS
 
 async def play_snippet(flow_manager, category: str):
     """
-    Puszcza snippet przez TTS (tymczasowo zamiast MP3).
+    Puszcza snippet przez TTS.
     """
     try:
         from pipecat.frames.frames import TTSSpeakFrame
@@ -36,16 +31,6 @@ async def play_snippet(flow_manager, category: str):
         
     except Exception as e:
         logger.warning(f"🔊 Snippet error: {e}")
-        
-    except Exception as e:
-        logger.warning(f"🔊 Snippet error: {e}, falling back to TTS")
-        # Fallback do TTS
-        try:
-            from pipecat.frames.frames import TTSSpeakFrame
-            fallback = "Sprawdzam..." if category == "checking" else "Zapisuję..."
-            await flow_manager.task.queue_frame(TTSSpeakFrame(text=fallback))
-        except:
-            pass
 
 # Import helperów
 from helpers import db
