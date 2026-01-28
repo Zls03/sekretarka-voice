@@ -1465,8 +1465,8 @@ wyciągnij te dane i przekaż w reason, np: "Klient Paweł prosi o kontakt".""",
 
 
 async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Obsługa eskalacji - UPROSZCZONA"""
-    reason = args.get("reason", "")
+    """Obsługa eskalacji - PROSTA LOGIKA"""
+    reason = args.get("reason", "").lower()
     
     state_tenant = flow_manager.state.get("tenant", tenant)
     transfer_enabled = state_tenant.get("transfer_enabled", 0) == 1
@@ -1475,12 +1475,26 @@ async def handle_escalation(args: dict, flow_manager: FlowManager, tenant: dict)
     logger.info(f"🚨 Escalation: {reason}")
     logger.info(f"🔍 Transfer: enabled={transfer_enabled}, number='{transfer_number}'")
     
-    # Jeśli transfer włączony - daj wybór
-    if transfer_enabled and transfer_number:
-        return (None, create_escalation_choice_node(state_tenant))
+    # Jeśli transfer wyłączony - tylko wiadomość
+    if not transfer_enabled or not transfer_number:
+        return (None, create_collect_message_node_with_prompt(state_tenant))
     
-    # Brak transferu - tylko wiadomość
-    return (None, create_collect_message_node_with_prompt(state_tenant))
+    # Sprawdź czy klient SAM powiedział "połącz/przekieruj" w reason
+    transfer_words = ["połącz", "połączenie", "przekieruj", "bezpośrednio", "teraz"]
+    if any(word in reason for word in transfer_words):
+        logger.info("📞 Direct transfer - keyword in reason")
+        return await handle_transfer_call({}, flow_manager, state_tenant)
+    
+    # Sprawdź czy to DRUGI raz escalate_to_human (klient odpowiedział na pytanie)
+    if flow_manager.state.get("escalation_asked"):
+        # Klient już dostał pytanie, teraz odpowiada
+        # Sprawdź ostatnią wypowiedź klienta
+        logger.info("📞 Second escalation - assuming transfer request")
+        return await handle_transfer_call({}, flow_manager, state_tenant)
+    
+    # Pierwszy raz - daj wybór
+    flow_manager.state["escalation_asked"] = True
+    return (None, create_escalation_choice_node(state_tenant))
 
 def create_message_only_node(tenant: dict) -> dict:
     """Node: bot proponuje tylko wiadomość (gdy BOT wykrył problem)"""
