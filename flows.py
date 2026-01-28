@@ -8,10 +8,37 @@ GŁÓWNA LOGIKA:
 from pipecat_flows import FlowManager, FlowsFunctionSchema
 from datetime import datetime, timedelta
 from loguru import logger
-import random
-import string
+from typing import Optional
 import asyncio
 import random
+import string
+# ============================================================================
+# WALIDACJA W KODZIE - nie w prompcie!
+# ============================================================================
+
+def validate_customer_name(name: str) -> Optional[str]:
+    """Waliduj imię - zwraca None jeśli to śmieć."""
+    if not name:
+        return None
+    name = name.strip()
+    
+    # Lista śmieciowych "imion" które GPT może wymyślić
+    invalid = [
+        "pan", "pani", "tak", "nie", "halo", "cześć", "dziękuję", 
+        "proszę", "dobrze", "ok", "okej", "słucham", "przepraszam",
+        "yes", "no", "moment", "chwila", "sekunda", "jasne"
+    ]
+    
+    if name.lower() in invalid or len(name) < 2:
+        logger.warning(f"⚠️ Invalid name rejected: '{name}'")
+        return None
+    
+    # Usuń "pan/pani" z początku
+    for prefix in ["pan ", "pani "]:
+        if name.lower().startswith(prefix):
+            name = name[len(prefix):]
+    
+    return name.strip().title()
 
 async def play_snippet(flow_manager, category: str):
     """
@@ -356,8 +383,10 @@ async def handle_smart_booking(args: dict, flow_manager: FlowManager):
     Przeskakuje kroki dla których już mamy dane.
     """
     tenant = flow_manager.state.get("tenant", {})
+    caller_phone = flow_manager.state.get("caller_phone", "unknown")
     
-    logger.info(f"🧠 Smart booking received: {args}")
+    logger.info(f"🧠 Smart booking START | phone: {caller_phone}")
+    logger.info(f"🧠 Args: {args}")
     
     # ✅ Sprawdź ile danych klient podał
     params_count = sum([
@@ -494,13 +523,13 @@ async def handle_smart_booking(args: dict, flow_manager: FlowManager):
             else:
                 logger.warning(f"⚠️ Smart: Time {time_val}:00 not available, slots: {slots[:5]}")
     
-    # 5. IMIĘ
+    # 5. IMIĘ - walidacja W KODZIE
     if args.get("mentioned_name"):
-        name = args["mentioned_name"].strip()
-        if len(name) >= 2:
-            extracted["name"] = name
-            flow_manager.state["customer_name"] = name
-            logger.info(f"✅ Smart: Name captured: {name}")
+        validated_name = validate_customer_name(args["mentioned_name"])
+        if validated_name:
+            extracted["name"] = validated_name
+            flow_manager.state["customer_name"] = validated_name
+            logger.info(f"✅ Smart: Name validated: {validated_name}")
     
     # ========================================
     # ETAP 2: DECYZJA - GDZIE SKOCZYĆ?
@@ -609,9 +638,12 @@ INSTRUKCJA:
 3. Jeśli klient pyta o coś innego → powiedz: "Jasne, odpowiem na to — ale najpierw wybierzmy usługę, żeby dobrze umówić. Którą?"
 4. Jeśli cisza/niezrozumienie → powiedz: "Nic nie szkodzi, proszę tylko powiedzieć którą usługę: {services_list}"
 
-MUSISZ użyć funkcji select_service. Nie możesz odpowiedzieć bez niej."""
+Gdy klient powie usługę → wywołaj select_service."""
         }],
-        "functions": [select_service_function(tenant, service_names)]
+        "functions": [
+            select_service_function(tenant, service_names),
+            end_conversation_function()
+        ]
     }
 
 
@@ -641,26 +673,12 @@ def select_service_function(tenant: dict, available_services: list = None) -> Fl
 
 
 async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler wyboru usługi - STRICT: zawsze idź do wyboru pracownika"""
+    """Handler wyboru usługi - walidacja W KODZIE z fuzzy matching"""
     service_name = args.get("service_name", "")
     services = tenant.get("services", [])
     
-    # Znajdź usługę
-    found = None
-    for s in services:
-        if service_name.lower() == s["name"].lower() or service_name.lower() in s["name"].lower() or s["name"].lower() in service_name.lower():
-            found = s
-            break
-    
-    if not found:
-        available = ", ".join([s["name"] for s in services])
-        return (f"Nie mamy takiej usługi. Dostępne: {available}. Którą Pan wybiera?", None)
-    
-    # Zapisz i przejdź ZAWSZE do wyboru pracownika
-    flow_manager.state["selected_service"] = found
-    logger.info(f"✅ [1/6] Service selected: {found['name']}")
-    
-    return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant, found))
+    # Użyj fuzzy matching z helpers
+    found = fuzzy_match_service(service_name, services)
 # ==========================================
 # NODE: Wybór pracownika
 # ==========================================
@@ -715,7 +733,10 @@ INSTRUKCJA:
 
 MUSISZ użyć funkcji select_staff. Nie możesz odpowiedzieć bez niej."""
         }],
-        "functions": [select_staff_function(tenant, staff_names)]
+        "functions": [
+            select_staff_function(tenant, staff_names),
+            end_conversation_function()
+        ]
     }
 
 def select_staff_function(tenant: dict, available_names: list = None) -> FlowsFunctionSchema:
@@ -743,17 +764,13 @@ def select_staff_function(tenant: dict, available_names: list = None) -> FlowsFu
     )
 
 async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler wyboru pracownika - STRICT: zawsze idź do wyboru daty"""
+    """Handler wyboru pracownika - walidacja W KODZIE z fuzzy matching"""
     staff_name = args.get("staff_name", "")
     staff_list = tenant.get("staff", [])
     selected_service = flow_manager.state.get("selected_service", {})
     
-    # Znajdź pracownika
-    found = None
-    for s in staff_list:
-        if staff_name.lower() == s["name"].lower() or staff_name.lower() in s["name"].lower() or s["name"].lower() in staff_name.lower():
-            found = s
-            break
+    # Użyj fuzzy matching z helpers
+    found = fuzzy_match_staff(staff_name, staff_list)
     
     if not found:
         available = ", ".join([s["name"] for s in staff_list])
@@ -820,7 +837,10 @@ INSTRUKCJA:
 
 MUSISZ użyć funkcji check_availability. Nie możesz odpowiedzieć bez niej."""
         }],
-        "functions": [check_availability_function(tenant)]
+        "functions": [
+            check_availability_function(tenant),
+            end_conversation_function()
+        ]
     }
 def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
@@ -836,8 +856,11 @@ def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_check_availability(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler sprawdzania dostępności - STRICT: zawsze idź do wyboru godziny"""
+    """Handler sprawdzania dostępności - walidacja W KODZIE"""
     date_str = args.get("date", "")
+    
+    # Daj feedback użytkownikowi że sprawdzamy
+    await play_snippet(flow_manager, "checking")
     
     staff = flow_manager.state.get("selected_staff", {})
     service = flow_manager.state.get("selected_service", {})
@@ -921,7 +944,10 @@ INSTRUKCJA:
 
 MUSISZ użyć funkcji select_time. Nie możesz odpowiedzieć bez niej."""
         }],
-        "functions": [select_time_function(tenant, available_slots)]
+        "functions": [
+            select_time_function(tenant, available_slots),
+            end_conversation_function()
+        ]
     }
 
 def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSchema:
@@ -950,18 +976,22 @@ def create_select_time_node(tenant: dict) -> dict:
     return create_get_time_node(tenant, [9, 10, 11, 12, 13, 14, 15, 16])
 
 async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler wyboru godziny - STRICT: zawsze idź do imienia"""
+    """Handler wyboru godziny - walidacja W KODZIE"""
     hour_str = args.get("hour", "")
     slots = flow_manager.state.get("available_slots", [])
     
+    # Próbuj sparsować godzinę
+    hour = None
     try:
         hour = int(hour_str)
-    except:
+    except (ValueError, TypeError):
         hour = parse_time(hour_str)
     
+    # Walidacja - czy godzina jest na liście dostępnych?
     if hour is None or hour not in slots:
         slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
-        return (f"Ta godzina niedostępna. Mam: {slots_text}. Która?", None)
+        logger.warning(f"⚠️ Invalid time '{hour_str}' (parsed: {hour}), available: {slots[:5]}")
+        return (f"Ta godzina jest niedostępna. Wolne mam: {slots_text}. Która pasuje?", None)
     
     # Zapisz i przejdź ZAWSZE do imienia
     flow_manager.state["selected_time"] = hour
@@ -996,7 +1026,10 @@ INSTRUKCJA:
 
 MUSISZ użyć funkcji set_customer_name. Nie możesz odpowiedzieć bez niej."""
         }],
-        "functions": [set_customer_name_function(tenant)]
+        "functions": [
+            set_customer_name_function(tenant),
+            end_conversation_function()
+        ]
     }
 
 
@@ -1014,30 +1047,17 @@ def set_customer_name_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler imienia - STRICT z WALIDACJĄ: odrzuca śmieci"""
-    name = args.get("customer_name", "").strip()
+    """Handler imienia - walidacja W KODZIE"""
+    validated = validate_customer_name(args.get("customer_name", ""))
     
-    # ✅ WALIDACJA - odrzuć śmieci które GPT może wymyślić
-    invalid_names = [
-        "pan", "pani", "tak", "nie", "halo", "cześć", "dziękuję", 
-        "proszę", "dobrze", "ok", "okej", "słucham", "yes", "no",
-        "przepraszam", "moment", "chwila", "sekunda", "jasne"
-    ]
-    
-    if not name or len(name) < 2 or name.lower() in invalid_names:
-        logger.warning(f"⚠️ Invalid customer name rejected: '{name}'")
+    if not validated:
         return ("Przepraszam, nie dosłyszałam imienia. Jak mogę zapisać?", None)
     
-    # Usuń "pan/pani" z początku jeśli jest (np. "Pan Kowalski" → "Kowalski")
-    for prefix in ["pan ", "pani "]:
-        if name.lower().startswith(prefix):
-            name = name[len(prefix):]
-    
     # Zapisz i przejdź do potwierdzenia
-    flow_manager.state["customer_name"] = name.strip().title()
-    logger.info(f"✅ [5/6] Customer name: {name}")
+    flow_manager.state["customer_name"] = validated
+    logger.info(f"✅ [5/6] Customer name: {validated}")
     
-    return (f"Dziękuję, {name}.", create_confirm_booking_node(tenant))
+    return (f"Dziękuję, {validated}.", create_confirm_booking_node(tenant))
 
 # ==========================================
 # NODE: Potwierdzenie rezerwacji - NOWY!
@@ -1057,17 +1077,11 @@ Masz już wszystkie dane. Teraz MUSISZ je podsumować i zapytać o potwierdzenie
         }],
         "task_messages": [{
             "role": "system",
-            "content": """KROK 6/6: Potwierdzenie rezerwacji
+            "content": """KROK 6/6: Potwierdzenie
 
-INSTRUKCJA:
-1. Powiedz: "Podsumowuję rezerwację:" i wymień WSZYSTKO: usługa, pracownik, data, godzina, imię
-2. Zakończ pytaniem: "Czy wszystko się zgadza?"
-3. Jeśli TAK/potwierdzam/zgadza się → wywołaj confirm_booking_yes
-4. Jeśli NIE/zmień/inaczej → zapytaj "Co chce Pan zmienić?" i wywołaj confirm_booking_no
-
-Przykład: "Podsumowuję: strzyżenie męskie u Wiktora, jutro o dziesiątej, na nazwisko Kowalski. Czy wszystko się zgadza?"
-
-MUSISZ użyć jednej z funkcji: confirm_booking_yes lub confirm_booking_no."""
+Podsumuj rezerwację i zapytaj "Czy się zgadza?".
+- TAK → confirm_booking_yes
+- NIE/zmień → confirm_booking_no"""
         }],
         "functions": [
             confirm_booking_yes_function(tenant),
@@ -1122,7 +1136,14 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     logger.info(f"💾 Saving booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}:00")
     
     # ✅ Double-check: czy slot nadal wolny?
-    current_slots = await get_available_slots(tenant, staff, service, date)
+    try:
+        current_slots = await asyncio.wait_for(
+            get_available_slots(tenant, staff, service, date),
+            timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        logger.error("⚠️ Double-check timeout - proceeding with save")
+        current_slots = [hour]  # Zakładamy że slot wolny jeśli timeout
     if hour not in current_slots:
         logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
         flow_manager.state["available_slots"] = current_slots
@@ -1148,9 +1169,14 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
         if result:
             booking_saved = True
             booking_code = result.get("booking_code")
-            logger.info(f"✅ Booking saved! Code: {booking_code}")
+            logger.info(f"✅ BOOKING SAVED!")
+            logger.info(f"   📋 Code: {booking_code}")
+            logger.info(f"   👤 Customer: {name} ({caller_phone})")
+            logger.info(f"   💇 Service: {service.get('name')} @ {staff.get('name')}")
+            logger.info(f"   📅 When: {date.strftime('%Y-%m-%d')} {hour}:00")
     except Exception as e:
         logger.error(f"❌ Save error: {e}")
+        logger.exception("Full traceback:")
     
     # Wyślij SMS jeśli zapisano
     if booking_saved and booking_code and caller_phone:
@@ -1789,11 +1815,24 @@ async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: di
         return ("Przepraszam, wystąpił problem. Czy mogę przekazać wiadomość?",
                 create_message_only_node(tenant))
     
-    # Formatuj numer
-    # Formatuj numer - usuń spacje i myślniki
-    transfer_number = transfer_number.replace(' ', '').replace('-', '')
+    # Formatuj i waliduj numer
+    transfer_number = transfer_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    # Usuń prefix 0048 jeśli jest
+    if transfer_number.startswith("0048"):
+        transfer_number = transfer_number[4:]
+    elif transfer_number.startswith("48") and len(transfer_number) == 11:
+        transfer_number = transfer_number[2:]
+    
+    # Dodaj prefix +48 jeśli brak
     if not transfer_number.startswith("+"):
         transfer_number = f"+48{transfer_number}"
+    
+    # Walidacja - czy numer wygląda poprawnie?
+    if len(transfer_number) < 12:  # +48 + 9 cyfr
+        logger.error(f"📞 Invalid transfer number: {transfer_number}")
+        return ("Przepraszam, numer do przekierowania jest nieprawidłowy. Czy mogę przekazać wiadomość?",
+                create_message_only_node(tenant))
     
     logger.info(f"📞 Saving transfer request: {call_sid} → {transfer_number}")
     
@@ -1894,3 +1933,22 @@ def create_end_node(message_saved: bool = False) -> dict:
         "task_messages": [],
         "functions": []
     }
+# ==========================================
+# EXPORTED FUNCTIONS (dla innych modułów)
+# ==========================================
+
+__all__ = [
+    # Node creators
+    "create_initial_node",
+    "create_get_service_node",
+    "create_get_staff_node", 
+    "create_get_date_node",
+    "create_get_time_node",
+    "create_get_name_node",
+    "create_confirm_booking_node",
+    "create_end_node",
+    
+    # Helpers
+    "validate_customer_name",
+    "play_snippet",
+]
