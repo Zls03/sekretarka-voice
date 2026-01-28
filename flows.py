@@ -690,7 +690,13 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     flow_manager.state["selected_service"] = found
     logger.info(f"✅ [1/6] Service selected: {found['name']}")
     
-    return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant, found))
+    # Utwórz node z pre_actions który POWIE tekst
+    next_node = create_get_staff_node(tenant, found)
+    next_node["pre_actions"] = [
+        {"type": "tts_say", "text": f"Świetnie, {found['name']}. Do kogo?"}
+    ]
+    
+    return (None, next_node)
 # ==========================================
 # NODE: Wybór pracownika
 # ==========================================
@@ -805,7 +811,13 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     flow_manager.state["selected_staff"] = found
     logger.info(f"✅ [2/6] Staff selected: {found['name']}")
     
-    return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
+    # Utwórz node z pre_actions który POWIE tekst
+    next_node = create_get_date_node(tenant)
+    next_node["pre_actions"] = [
+        {"type": "tts_say", "text": f"Dobrze, do {found['name']}. Na kiedy?"}
+    ]
+    
+    return (None, next_node)
 # ==========================================
 # NODE: Wybór daty
 # ==========================================
@@ -918,7 +930,16 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     
     logger.info(f"✅ [3/6] Date selected: {parsed_date.strftime('%Y-%m-%d')}, available slots: {slots}")
     
-    return (f"Na {format_date_polish(parsed_date)} mam wolne terminy.", create_get_time_node(tenant, slots))
+    # Formatuj sloty słownie
+    slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
+    
+    # Utwórz node z pre_actions który POWIE tekst
+    next_node = create_get_time_node(tenant, slots)
+    next_node["pre_actions"] = [
+        {"type": "tts_say", "text": f"Na {format_date_polish(parsed_date)} mam wolne: {slots_text}. Która pasuje?"}
+    ]
+    
+    return (None, next_node)
 # ==========================================
 # NODE: Wybór godziny
 # ==========================================
@@ -1008,7 +1029,13 @@ async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict
     flow_manager.state["selected_time"] = hour
     logger.info(f"✅ [4/6] Time selected: {hour}:00")
     
-    return (f"Godzina {format_hour_polish(hour)}.", create_get_name_node(tenant))
+    # Utwórz node z pre_actions który POWIE tekst
+    next_node = create_get_name_node(tenant)
+    next_node["pre_actions"] = [
+        {"type": "tts_say", "text": f"Godzina {format_hour_polish(hour)}. Jak mogę zapisać?"}
+    ]
+    
+    return (None, next_node)
 
 # ==========================================
 # NODE: Imię i zakończenie rezerwacji
@@ -1068,7 +1095,24 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
     flow_manager.state["customer_name"] = validated
     logger.info(f"✅ [5/6] Customer name: {validated}")
     
-    return (f"Dziękuję, {validated}.", create_confirm_booking_node(tenant))
+    # Pobierz dane do podsumowania
+    service = flow_manager.state.get("selected_service", {})
+    staff = flow_manager.state.get("selected_staff", {})
+    date = flow_manager.state.get("selected_date")
+    hour = flow_manager.state.get("selected_time")
+    
+    date_text = format_date_polish(date) if date else "wybrany dzień"
+    time_text = format_hour_polish(hour) if hour else "wybraną godzinę"
+    
+    summary = f"{service.get('name', 'wizyta')} u {staff.get('name', 'pracownika')}, {date_text} o {time_text}, na nazwisko {validated}"
+    
+    # Utwórz node z pre_actions który POWIE podsumowanie
+    next_node = create_confirm_booking_node(tenant)
+    next_node["pre_actions"] = [
+        {"type": "tts_say", "text": f"Dziękuję. Podsumowując: {summary}. Czy potwierdzam rezerwację?"}
+    ]
+    
+    return (None, next_node)
 
 # ==========================================
 # NODE: Potwierdzenie rezerwacji - NOWY!
