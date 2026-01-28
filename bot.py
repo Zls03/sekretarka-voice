@@ -312,17 +312,12 @@ async def websocket_endpoint(websocket: WebSocket):
         stability=0.6,
         similarity_boost=0.75,
     )
-    
-    # Groq - ultra szybki LLM (4-10x szybszy niż OpenAI)
-   #llm = OpenAILLMService(
-    #   api_key=os.getenv("OPENAI_API_KEY"),
-     #  model="gpt-4.1-mini",
-    #)
 
-    llm = CerebrasLLMService(
-        api_key=os.getenv("CEREBRAS_API_KEY"),
-        model="llama-3.3-70b",
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model="gpt-4o-mini",  # Szybszy niż 4.1-mini!
     )
+
     
     # Context
     context = OpenAILLMContext()
