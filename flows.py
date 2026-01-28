@@ -12,6 +12,7 @@ import random
 import string
 import asyncio
 
+
 # Import helperów
 from helpers import db
 from flows_helpers import (
@@ -19,7 +20,8 @@ from flows_helpers import (
     format_hour_polish, format_date_polish,
     get_opening_hours, validate_date_constraints,
     get_available_slots, save_booking_to_api,
-    build_business_context, POLISH_DAYS
+    build_business_context, POLISH_DAYS,
+    fuzzy_match_service, fuzzy_match_staff, staff_can_do_service
 )
 
 # ==========================================
@@ -282,30 +284,62 @@ WAŻNE: W tej sytuacji przekierowanie jest OK bo klient potrzebuje realnej pomoc
     }
 
 # ==========================================
-# FUNKCJA: Rozpocznij rezerwację
+# FUNKCJA: Rozpocznij rezerwację (SMART)
 # ==========================================
 
 def start_booking_function() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="start_booking",
         description="""Klient chce umówić wizytę.
-WAŻNE: Jeśli klient już wspomniał usługę lub pracownika, PRZEKAŻ to w parametrach!
-Np. "chcę strzyżenie u Ani" → mentioned_service="strzyżenie", mentioned_staff="Ania".""",
+
+WAŻNE: Wyciągnij WSZYSTKIE informacje z wypowiedzi klienta!
+
+Przykłady:
+- "Chcę strzyżenie" → mentioned_service="strzyżenie"
+- "Do Ani poproszę" → mentioned_staff="Ania"
+- "Na jutro" → mentioned_date="jutro"
+- "O dziesiątej" → mentioned_time="10"
+- "Strzyżenie u Ani na jutro o 10" → WSZYSTKIE parametry!
+- "Nazywam się Kowalski, chcę strzyżenie" → mentioned_name="Kowalski", mentioned_service="strzyżenie"
+
+NIE wymyślaj danych! Przekaż TYLKO to co klient faktycznie powiedział.""",
         properties={
-            "mentioned_service": {"type": "string", "description": "Usługa jeśli klient już wspomniał"},
-            "mentioned_staff": {"type": "string", "description": "Pracownik jeśli klient już wspomniał"},
+            "mentioned_service": {
+                "type": "string", 
+                "description": "Usługa jeśli klient wspomniał (strzyżenie, farbowanie, manicure...)"
+            },
+            "mentioned_staff": {
+                "type": "string", 
+                "description": "Imię pracownika jeśli wspomniał (Ania, Kasia...) lub 'ktokolwiek'/'obojętnie'"
+            },
+            "mentioned_date": {
+                "type": "string", 
+                "description": "Data jeśli wspomniał (jutro, pojutrze, poniedziałek, 15 lutego...)"
+            },
+            "mentioned_time": {
+                "type": "string", 
+                "description": "Godzina jeśli wspomniał (10, dziesiąta, 14:30...)"
+            },
+            "mentioned_name": {
+                "type": "string", 
+                "description": "Imię/nazwisko klienta jeśli się przedstawił"
+            },
         },
         required=[],
-        handler=handle_start_booking,
+        handler=handle_smart_booking,
     )
 
 
-async def handle_start_booking(args: dict, flow_manager: FlowManager):
-    """Rozpocznij rezerwację - STRICT LINEAR FLOW - zawsze od usługi"""
-    logger.info("📅 Starting booking flow (STRICT)")
+async def handle_smart_booking(args: dict, flow_manager: FlowManager):
+    """
+    SMART BOOKING - wyciąga maksimum z pierwszej wypowiedzi.
+    Przeskakuje kroki dla których już mamy dane.
+    """
     tenant = flow_manager.state.get("tenant", {})
     
-    # RESET STATE - czysta karta na nową rezerwację
+    logger.info(f"🧠 Smart booking received: {args}")
+    
+    # RESET STATE - czysta karta
     flow_manager.state["selected_service"] = None
     flow_manager.state["selected_staff"] = None
     flow_manager.state["selected_date"] = None
@@ -316,6 +350,7 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
     staff_list = tenant.get("staff", [])
     services = tenant.get("services", [])
     
+    # Walidacja podstawowa
     if not staff_list:
         return ("Przepraszam, nie mamy skonfigurowanych pracowników. Czy mogę przekazać wiadomość?", 
                 create_take_message_node(tenant))
@@ -324,7 +359,191 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
         return ("Przepraszam, nie mamy skonfigurowanych usług. Czy mogę przekazać wiadomość?",
                 create_take_message_node(tenant))
     
-    # ZAWSZE zacznij od wyboru usługi - brak smart routing!
+    # ========================================
+    # ETAP 1: EKSTRAKCJA I WALIDACJA
+    # ========================================
+    
+    extracted = {
+        "service": None,
+        "staff": None,
+        "date": None,
+        "time": None,
+        "name": None,
+    }
+    
+    # 1. USŁUGA
+    if args.get("mentioned_service"):
+        service = fuzzy_match_service(args["mentioned_service"], services)
+        if service:
+            extracted["service"] = service
+            flow_manager.state["selected_service"] = service
+            logger.info(f"✅ Smart: Service matched '{args['mentioned_service']}' → '{service['name']}'")
+    
+    # 2. PRACOWNIK
+    if args.get("mentioned_staff"):
+        staff_query = args["mentioned_staff"].lower().strip()
+        
+        # Obsługa "ktokolwiek", "obojętnie", "wszystko jedno"
+        if staff_query in ["ktokolwiek", "obojętnie", "bez znaczenia", "wszystko jedno", "nieważne"]:
+            # Wybierz pierwszego który robi tę usługę
+            if extracted["service"]:
+                for s in staff_list:
+                    if staff_can_do_service(s, extracted["service"]):
+                        extracted["staff"] = s
+                        flow_manager.state["selected_staff"] = s
+                        logger.info(f"✅ Smart: Staff auto-selected → '{s['name']}'")
+                        break
+            if not extracted["staff"]:
+                extracted["staff"] = staff_list[0]
+                flow_manager.state["selected_staff"] = staff_list[0]
+                logger.info(f"✅ Smart: Staff auto-selected (first) → '{staff_list[0]['name']}'")
+        else:
+            staff = fuzzy_match_staff(args["mentioned_staff"], staff_list)
+            if staff:
+                # Walidacja: czy pracownik wykonuje wybraną usługę?
+                if extracted["service"]:
+                    if staff_can_do_service(staff, extracted["service"]):
+                        extracted["staff"] = staff
+                        flow_manager.state["selected_staff"] = staff
+                        logger.info(f"✅ Smart: Staff matched '{args['mentioned_staff']}' → '{staff['name']}'")
+                    else:
+                        # Pracownik nie robi tej usługi - NIE przypisuj, system zapyta
+                        logger.warning(f"⚠️ Smart: {staff['name']} doesn't do {extracted['service']['name']}")
+                else:
+                    extracted["staff"] = staff
+                    flow_manager.state["selected_staff"] = staff
+                    logger.info(f"✅ Smart: Staff matched '{args['mentioned_staff']}' → '{staff['name']}'")
+    
+    # 3. DATA
+    if args.get("mentioned_date"):
+        parsed = parse_polish_date(args["mentioned_date"])
+        if parsed:
+            # Popraw rok jeśli data w przeszłości
+            today = datetime.now()
+            if parsed.date() < today.date():
+                try:
+                    parsed = parsed.replace(year=parsed.year + 1)
+                except:
+                    pass
+            
+            # Walidacja: czy nie za daleko?
+            max_days = tenant.get("max_booking_days", 30)
+            max_date = today + timedelta(days=max_days)
+            
+            if parsed.date() >= today.date() and parsed.date() <= max_date.date():
+                # Walidacja: czy otwarci w ten dzień?
+                weekday = parsed.weekday()
+                if get_opening_hours(tenant, weekday) is not None:
+                    extracted["date"] = parsed
+                    flow_manager.state["selected_date"] = parsed
+                    logger.info(f"✅ Smart: Date matched '{args['mentioned_date']}' → {parsed.strftime('%Y-%m-%d')}")
+                else:
+                    logger.warning(f"⚠️ Smart: Closed on {POLISH_DAYS[weekday]}")
+            else:
+                logger.warning(f"⚠️ Smart: Date out of range: {parsed.date()}")
+    
+    # 4. GODZINA (wymaga daty i pracownika do walidacji)
+    if args.get("mentioned_time") and extracted.get("date") and extracted.get("staff"):
+        time_val = parse_time(args["mentioned_time"])
+        if time_val:
+            # Sprawdź dostępność w kalendarzu
+            slots = await get_available_slots(
+                tenant, 
+                extracted["staff"], 
+                extracted.get("service") or {},
+                extracted["date"]
+            )
+            flow_manager.state["available_slots"] = slots
+            
+            if time_val in slots:
+                extracted["time"] = time_val
+                flow_manager.state["selected_time"] = time_val
+                logger.info(f"✅ Smart: Time matched and available: {time_val}:00")
+            else:
+                logger.warning(f"⚠️ Smart: Time {time_val}:00 not available, slots: {slots[:5]}")
+    
+    # 5. IMIĘ
+    if args.get("mentioned_name"):
+        name = args["mentioned_name"].strip()
+        if len(name) >= 2:
+            extracted["name"] = name
+            flow_manager.state["customer_name"] = name
+            logger.info(f"✅ Smart: Name captured: {name}")
+    
+    # ========================================
+    # ETAP 2: DECYZJA - GDZIE SKOCZYĆ?
+    # ========================================
+    
+    # Sprawdź co mamy, co brakuje
+    has_service = extracted.get("service") is not None
+    has_staff = extracted.get("staff") is not None
+    has_date = extracted.get("date") is not None
+    has_time = extracted.get("time") is not None
+    has_name = extracted.get("name") is not None
+    
+    logger.info(f"📋 Smart status: service={has_service}, staff={has_staff}, date={has_date}, time={has_time}, name={has_name}")
+    
+    # ===== WSZYSTKO MAMY → POTWIERDZENIE =====
+    if has_service and has_staff and has_date and has_time and has_name:
+        summary = (
+            f"{extracted['service']['name']} u {extracted['staff']['name']}, "
+            f"{format_date_polish(extracted['date'])} o {format_hour_polish(extracted['time'])}, "
+            f"na nazwisko {extracted['name']}"
+        )
+        logger.info(f"🎯 Smart: ALL DATA → confirm")
+        return (f"Rozumiem: {summary}. Czy potwierdzam rezerwację?", 
+                create_confirm_booking_node(tenant))
+    
+    # ===== BRAK TYLKO IMIENIA =====
+    if has_service and has_staff and has_date and has_time and not has_name:
+        summary = (
+            f"{extracted['service']['name']} u {extracted['staff']['name']}, "
+            f"{format_date_polish(extracted['date'])} o {format_hour_polish(extracted['time'])}"
+        )
+        logger.info(f"🎯 Smart: missing name → get_name")
+        return (f"Świetnie! {summary}. Jak mogę zapisać?", 
+                create_get_name_node(tenant))
+    
+    # ===== BRAK GODZINY (ale mamy datę i pracownika) =====
+    if has_service and has_staff and has_date and not has_time:
+        slots = flow_manager.state.get("available_slots", [])
+        if not slots:
+            slots = await get_available_slots(
+                tenant, 
+                extracted["staff"], 
+                extracted["service"],
+                extracted["date"]
+            )
+            flow_manager.state["available_slots"] = slots
+        
+        if slots:
+            summary = (
+                f"{extracted['service']['name']} u {extracted['staff']['name']} "
+                f"na {format_date_polish(extracted['date'])}"
+            )
+            slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
+            logger.info(f"🎯 Smart: missing time → get_time with {len(slots)} slots")
+            return (f"Dobrze, {summary}. Mam wolne: {slots_text}. Która godzina pasuje?", 
+                    create_get_time_node(tenant, slots))
+        else:
+            logger.info(f"🎯 Smart: no slots on {extracted['date']} → get_date")
+            return (f"Niestety na {format_date_polish(extracted['date'])} brak wolnych terminów. Proszę wybrać inny dzień.", 
+                    create_get_date_node(tenant))
+    
+    # ===== BRAK DATY (ale mamy usługę i pracownika) =====
+    if has_service and has_staff and not has_date:
+        logger.info(f"🎯 Smart: missing date → get_date")
+        return (f"Dobrze, {extracted['service']['name']} u {extracted['staff']['name']}. Na kiedy?", 
+                create_get_date_node(tenant))
+    
+    # ===== BRAK PRACOWNIKA (ale mamy usługę) =====
+    if has_service and not has_staff:
+        logger.info(f"🎯 Smart: missing staff → get_staff")
+        return (f"Dobrze, {extracted['service']['name']}.", 
+                create_get_staff_node(tenant, extracted["service"]))
+    
+    # ===== BRAK USŁUGI → START OD POCZĄTKU =====
+    logger.info(f"🎯 Smart: missing service → get_service")
     return ("Świetnie, umówmy wizytę.", create_get_service_node(tenant))
 # ==========================================
 # NODE: Wybór usługi
@@ -849,6 +1068,25 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     caller_phone = flow_manager.state.get("caller_phone", "")
     
     logger.info(f"💾 Saving booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}:00")
+    
+    # ✅ Double-check: czy slot nadal wolny?
+    current_slots = await get_available_slots(tenant, staff, service, date)
+    if hour not in current_slots:
+        logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
+        flow_manager.state["available_slots"] = current_slots
+        if current_slots:
+            slots_text = ", ".join([format_hour_polish(h) for h in current_slots[:3]])
+            return (
+                f"Przepraszam, godzina {format_hour_polish(hour)} właśnie została zajęta. "
+                f"Mam jeszcze: {slots_text}. Która pasuje?",
+                create_get_time_node(tenant, current_slots)
+            )
+        else:
+            return (
+                f"Przepraszam, na {format_date_polish(date)} nie ma już wolnych terminów. "
+                f"Proszę wybrać inny dzień.",
+                create_get_date_node(tenant)
+            )
     
     booking_code = None
     booking_saved = False

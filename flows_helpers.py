@@ -532,3 +532,147 @@ def build_business_context(tenant: dict) -> str:
                 parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
     
     return "\n\n".join(parts)
+
+
+# ==========================================
+# FUZZY MATCHING - Tolerancja na literówki
+# ==========================================
+
+from difflib import SequenceMatcher
+
+def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> dict | None:
+    """
+    Dopasuj usługę z tolerancją na literówki.
+    Uniwersalne - działa dla każdej branży (fryzjer, kosmetyczka, mechanik...).
+    
+    Przykłady:
+    - "strzyzenie" → "Strzyżenie męskie" ✓
+    - "curzenie" → "Strzyżenie męskie" ✓ (błąd Deepgram)
+    - "manikur" → "Manicure" ✓
+    - "przeglond" → "Przegląd" ✓
+    """
+    if not query or not services:
+        return None
+    
+    query = query.lower().strip()
+    
+    best_match = None
+    best_score = 0
+    
+    for service in services:
+        name = service["name"].lower()
+        
+        # 1. Exact match
+        if query == name:
+            return service
+        
+        # 2. Zawieranie (query w name lub name w query)
+        if query in name or name in query:
+            return service
+        
+        # 3. Początek słowa (np. "strzy" → "strzyżenie")
+        min_len = min(len(query), 4)
+        if len(query) >= 3 and name.startswith(query[:min_len]):
+            return service
+        
+        # 4. Fuzzy match dla literówek
+        score = SequenceMatcher(None, query, name).ratio()
+        
+        # Bonus za podobny początek
+        if len(query) >= 3 and len(name) >= 3:
+            if query[:3] == name[:3]:
+                score += 0.15
+            elif query[:2] == name[:2]:
+                score += 0.1
+        
+        if score > best_score and score >= threshold:
+            best_score = score
+            best_match = service
+    
+    return best_match
+
+
+def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.6) -> dict | None:
+    """
+    Dopasuj pracownika z tolerancją na literówki.
+    Obsługuje polskie zdrobnienia imion.
+    
+    Przykłady:
+    - "ania" → "Anna" ✓
+    - "kasia" → "Katarzyna" ✓
+    - "tomek" → "Tomasz" ✓
+    """
+    if not query or not staff_list:
+        return None
+    
+    query = query.lower().strip()
+    
+    # Polskie zdrobnienia - uniwersalne dla wszystkich branż
+    name_aliases = {
+        "ania": ["anna", "ania", "ani", "aneczka"],
+        "kasia": ["katarzyna", "kasia", "kaśka", "kasieńka"],
+        "asia": ["joanna", "asia", "joasia", "aśka"],
+        "basia": ["barbara", "basia", "baśka"],
+        "gosia": ["małgorzata", "gosia", "gośka"],
+        "ela": ["elżbieta", "ela", "elka"],
+        "ola": ["aleksandra", "ola", "olka"],
+        "ewa": ["ewa", "ewka", "ewunia"],
+        "magda": ["magdalena", "magda", "magdzia"],
+        "tomek": ["tomasz", "tomek"],
+        "bartek": ["bartłomiej", "bartosz", "bartek"],
+        "krzysiek": ["krzysztof", "krzysiek", "krzyś"],
+        "piotrek": ["piotr", "piotrek"],
+        "marcin": ["marcin", "marciniek"],
+        "michał": ["michał", "michałek"],
+        "wiktor": ["wiktor", "wiktoria", "wika"],
+        "janek": ["jan", "janek"],
+        "maciek": ["maciej", "maciek"],
+    }
+    
+    # Rozszerz query o aliasy
+    query_variants = [query]
+    for alias, names in name_aliases.items():
+        if query in names or query == alias:
+            query_variants.extend(names)
+            query_variants.append(alias)
+    
+    # Usuń duplikaty
+    query_variants = list(set(query_variants))
+    
+    # Szukaj exact/contains match
+    for staff in staff_list:
+        name = staff["name"].lower()
+        for variant in query_variants:
+            if variant == name or variant in name or name in variant:
+                return staff
+    
+    # Fuzzy match jako fallback
+    best_match = None
+    best_score = 0
+    
+    for staff in staff_list:
+        name = staff["name"].lower()
+        for variant in query_variants:
+            score = SequenceMatcher(None, variant, name).ratio()
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = staff
+    
+    return best_match
+
+
+def staff_can_do_service(staff: dict, service: dict) -> bool:
+    """
+    Sprawdź czy pracownik wykonuje daną usługę.
+    Pusta lista usług = pracownik robi wszystko.
+    """
+    if not service:
+        return True
+    
+    staff_service_ids = [svc.get("id") for svc in staff.get("services", [])]
+    
+    # Pusta lista = wszystkie usługi
+    if not staff_service_ids:
+        return True
+    
+    return service.get("id") in staff_service_ids
