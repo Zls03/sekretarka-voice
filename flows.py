@@ -301,9 +301,17 @@ Np. "chcę strzyżenie u Ani" → mentioned_service="strzyżenie", mentioned_sta
 
 
 async def handle_start_booking(args: dict, flow_manager: FlowManager):
-    """Rozpocznij rezerwację - smart routing z kontekstem"""
-    logger.info("📅 Starting booking flow")
+    """Rozpocznij rezerwację - STRICT LINEAR FLOW - zawsze od usługi"""
+    logger.info("📅 Starting booking flow (STRICT)")
     tenant = flow_manager.state.get("tenant", {})
+    
+    # RESET STATE - czysta karta na nową rezerwację
+    flow_manager.state["selected_service"] = None
+    flow_manager.state["selected_staff"] = None
+    flow_manager.state["selected_date"] = None
+    flow_manager.state["selected_time"] = None
+    flow_manager.state["customer_name"] = None
+    flow_manager.state["available_slots"] = []
     
     staff_list = tenant.get("staff", [])
     services = tenant.get("services", [])
@@ -316,93 +324,41 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
         return ("Przepraszam, nie mamy skonfigurowanych usług. Czy mogę przekazać wiadomość?",
                 create_take_message_node(tenant))
     
-    # Sprawdź czy klient już wspomniał usługę/pracownika
-    mentioned_service = args.get("mentioned_service", "")
-    mentioned_staff = args.get("mentioned_staff", "")
-    
-    selected_service = None
-    selected_staff = None
-    
-    # Znajdź usługę jeśli wspomniana
-    if mentioned_service:
-        for s in services:
-            if mentioned_service.lower() in s["name"].lower() or s["name"].lower() in mentioned_service.lower():
-                selected_service = s
-                flow_manager.state["selected_service"] = s
-                logger.info(f"✅ Pre-selected service: {s['name']}")
-                break
-    
-    # Znajdź pracownika jeśli wspomniany
-    if mentioned_staff:
-        for st in staff_list:
-            if mentioned_staff.lower() in st["name"].lower() or st["name"].lower() in mentioned_staff.lower():
-                selected_staff = st
-                logger.info(f"✅ Found mentioned staff: {st['name']}")
-                break
-    
-    # WALIDACJA: czy pracownik wykonuje tę usługę?
-    if selected_service and selected_staff:
-        staff_service_ids = [svc.get("id") for svc in selected_staff.get("services", [])]
-        
-        # Jeśli pracownik ma przypisane usługi - sprawdź
-        if staff_service_ids and selected_service.get("id") not in staff_service_ids:
-            # Pracownik NIE wykonuje tej usługi!
-            available_for_service = []
-            for st in staff_list:
-                st_service_ids = [svc.get("id") for svc in st.get("services", [])]
-                if not st_service_ids or selected_service.get("id") in st_service_ids:
-                    available_for_service.append(st["name"])
-            
-            # Wyczyść wybranego pracownika - niech wybierze ponownie
-            selected_staff = None
-            
-            if available_for_service:
-                return (f"Niestety {mentioned_staff} nie wykonuje usługi {selected_service['name']}. "
-                        f"Tę usługę wykonuje: {', '.join(available_for_service)}. Do kogo chce się Pan umówić?",
-                        create_get_staff_node(tenant, selected_service))
-        else:
-            # Pracownik OK - zapisz
-            flow_manager.state["selected_staff"] = selected_staff
-    
-    # ROUTING na podstawie tego co mamy:
-    
-    # Mamy obu - przejdź do daty
-    if selected_service and selected_staff:
-        return (f"Świetnie, {selected_service['name']} u {selected_staff['name']}. Na kiedy chciałby Pan umówić wizytę?", 
-                create_get_date_node(tenant))
-    
-    # Mamy usługę - przejdź do wyboru pracownika (FILTROWANEGO!)
-    if selected_service:
-        return (f"Świetnie, {selected_service['name']}.", 
-                create_get_staff_node(tenant, selected_service))
-    
-    # Mamy pracownika bez usługi - przejdź do wyboru usługi
-    if selected_staff:
-        flow_manager.state["selected_staff"] = selected_staff
-        return (f"Świetnie, do {selected_staff['name']}.", create_get_service_node(tenant))
-    
-    # Brak kontekstu - zacznij od usługi
+    # ZAWSZE zacznij od wyboru usługi - brak smart routing!
     return ("Świetnie, umówmy wizytę.", create_get_service_node(tenant))
 # ==========================================
 # NODE: Wybór usługi
 # ==========================================
 
 def create_get_service_node(tenant: dict) -> dict:
+    """NODE: Wybór usługi - STRICT (krok 1/6)"""
     services = tenant.get("services", [])
     service_names = [s["name"] for s in services]
     services_list = ", ".join(service_names) if service_names else "brak"
     
     return {
         "name": "get_service",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"""Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: WYBÓR USŁUGI.
+
+DOSTĘPNE USŁUGI: {services_list}
+
+TWOJE JEDYNE ZADANIE: Zapytaj o usługę i wywołaj select_service."""
+        }],
         "task_messages": [{
             "role": "system",
-            "content": f"""Zapytaj jaką usługę klient wybiera.
+            "content": f"""KROK 1/6: Wybór usługi
 
-DOSTĘPNE USŁUGI (TYLKO TE!): {services_list}
+INSTRUKCJA:
+1. Zapytaj KRÓTKO: "Na jaką usługę? Mamy: {services_list}"
+2. Gdy klient powie usługę → NATYCHMIAST wywołaj select_service
+3. Jeśli klient pyta o coś innego → powiedz: "Jasne, odpowiem na to — ale najpierw wybierzmy usługę, żeby dobrze umówić. Którą?"
+4. Jeśli cisza/niezrozumienie → powiedz: "Nic nie szkodzi, proszę tylko powiedzieć którą usługę: {services_list}"
 
-WAŻNE: Klient MUSI wybrać jedną z powyższych. Jeśli pyta o coś czego nie ma - powiedz że nie oferujemy i wymień dostępne.
-
-Gdy klient wybierze → select_service"""
+MUSISZ użyć funkcji select_service. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [select_service_function(tenant, service_names)]
     }
@@ -434,9 +390,11 @@ def select_service_function(tenant: dict, available_services: list = None) -> Fl
 
 
 async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler wyboru usługi - STRICT: zawsze idź do wyboru pracownika"""
     service_name = args.get("service_name", "")
     services = tenant.get("services", [])
     
+    # Znajdź usługę
     found = None
     for s in services:
         if service_name.lower() == s["name"].lower() or service_name.lower() in s["name"].lower() or s["name"].lower() in service_name.lower():
@@ -445,19 +403,19 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     
     if not found:
         available = ", ".join([s["name"] for s in services])
-        return (f"Nie mamy takiej usługi. Dostępne: {available}.", None)
+        return (f"Nie mamy takiej usługi. Dostępne: {available}. Którą Pan wybiera?", None)
     
+    # Zapisz i przejdź ZAWSZE do wyboru pracownika
     flow_manager.state["selected_service"] = found
-    logger.info(f"✅ Service: {found['name']}")
+    logger.info(f"✅ [1/6] Service selected: {found['name']}")
     
-    # Przejdź do wyboru pracownika - FILTROWANEGO po usłudze!
     return (f"Świetnie, {found['name']}.", create_get_staff_node(tenant, found))
 # ==========================================
 # NODE: Wybór pracownika
 # ==========================================
 
 def create_get_staff_node(tenant: dict, selected_service: dict = None) -> dict:
-    """Tworzy node wyboru pracownika - TYLKO ci którzy wykonują wybraną usługę"""
+    """NODE: Wybór pracownika - STRICT (krok 2/6), filtrowany po usłudze"""
     all_staff = tenant.get("staff", [])
     
     # Filtruj pracowników którzy wykonują wybraną usługę
@@ -466,56 +424,48 @@ def create_get_staff_node(tenant: dict, selected_service: dict = None) -> dict:
         available_staff = []
         for s in all_staff:
             staff_service_ids = [svc.get("id") for svc in s.get("services", [])]
-            # Jeśli pracownik nie ma przypisanych usług (= robi wszystko) LUB ma tę usługę
             if not staff_service_ids or service_id in staff_service_ids:
                 available_staff.append(s)
         
         if not available_staff:
-            # Fallback - pokaż wszystkich jeśli nikt nie pasuje
             available_staff = all_staff
-            logger.warning(f"⚠️ No staff found for service {selected_service.get('name')}, showing all")
+            logger.warning(f"⚠️ No staff for service {selected_service.get('name')}, showing all")
     else:
         available_staff = all_staff
     
     staff_names = [s["name"] for s in available_staff]
     staff_list = ", ".join(staff_names)
     
-    # Jeśli tylko jeden pracownik - zapytaj czy OK (nie auto-select!)
-    if len(available_staff) == 1:
-        single_staff = available_staff[0]
-        return {
-            "name": "get_staff_single",
-            "task_messages": [{
-                "role": "system", 
-                "content": f"""Tę usługę wykonuje tylko {single_staff['name']}. 
-Zapytaj KRÓTKO czy umówić do {single_staff['name']}.
-Jeśli TAK → auto_continue
-Jeśli NIE → powiedz że niestety tylko ta osoba wykonuje tę usługę, zapytaj czy może inna usługa?"""
-            }],
-            "functions": [
-                auto_select_staff_function(tenant, single_staff),
-            ]
-        }
+    # Zapisz dostępnych pracowników w state (do walidacji)
+    # flow_manager.state nie jest tu dostępny, więc przekażemy przez tenant
     
     return {
         "name": "get_staff",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"""Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: WYBÓR PRACOWNIKA.
+
+DOSTĘPNI PRACOWNICY dla tej usługi: {staff_list}
+
+TWOJE JEDYNE ZADANIE: Zapytaj do kogo i wywołaj select_staff."""
+        }],
         "task_messages": [{
             "role": "system",
-            "content": f"""Zapytaj do kogo klient chce się umówić.
+            "content": f"""KROK 2/6: Wybór pracownika
 
-DOSTĘPNI PRACOWNICY: {staff_list}
+INSTRUKCJA:
+1. Zapytaj KRÓTKO: "Do kogo? Dostępni: {staff_list}"
+2. Gdy klient powie imię → NATYCHMIAST wywołaj select_staff
+3. Jeśli "obojętnie"/"ktokolwiek" → wywołaj select_staff z pierwszym: "{staff_names[0] if staff_names else ''}"
+4. Jeśli klient pyta o coś innego → powiedz: "Jasne, zaraz do tego wrócimy — tylko krok drugi z sześciu. Do kogo?"
+5. Jeśli cisza/niezrozumienie → powiedz: "Proszę tylko powiedzieć imię: {staff_list}"
 
-WAŻNE: Możesz umówić TYLKO do tych pracowników!
-
-Gdy klient wybierze → select_staff
-Jeśli bez preferencji → any_available_staff"""
+MUSISZ użyć funkcji select_staff. Nie możesz odpowiedzieć bez niej."""
         }],
-        "functions": [
-            select_staff_function(tenant, staff_names),
-            any_staff_function(tenant, available_staff),
-        ]
+        "functions": [select_staff_function(tenant, staff_names)]
     }
-
 
 def select_staff_function(tenant: dict, available_names: list = None) -> FlowsFunctionSchema:
     # Pobierz listę pracowników jeśli nie podano
@@ -541,21 +491,13 @@ def select_staff_function(tenant: dict, available_names: list = None) -> FlowsFu
         handler=lambda args, fm: handle_select_staff(args, fm, tenant),
     )
 
-
-def any_staff_function(tenant: dict, available_staff: list = None) -> FlowsFunctionSchema:
-    return FlowsFunctionSchema(
-        name="any_available_staff",
-        description="Klient nie ma preferencji - wybierz pierwszego dostępnego",
-        properties={},
-        required=[],
-        handler=lambda args, fm: handle_any_staff(args, fm, tenant, available_staff),
-    )
-
-
 async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler wyboru pracownika - STRICT: zawsze idź do wyboru daty"""
     staff_name = args.get("staff_name", "")
     staff_list = tenant.get("staff", [])
+    selected_service = flow_manager.state.get("selected_service", {})
     
+    # Znajdź pracownika
     found = None
     for s in staff_list:
         if staff_name.lower() == s["name"].lower() or staff_name.lower() in s["name"].lower() or s["name"].lower() in staff_name.lower():
@@ -563,70 +505,66 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
             break
     
     if not found:
-        # Nie powinno się zdarzyć dzięki enum, ale dla bezpieczeństwa
         available = ", ".join([s["name"] for s in staff_list])
-        return (f"Nie mamy takiego pracownika. Dostępni: {available}.", None)
+        return (f"Nie mamy takiego pracownika. Dostępni: {available}. Do kogo?", None)
     
+    # Walidacja: czy pracownik wykonuje tę usługę?
+    if selected_service:
+        staff_service_ids = [svc.get("id") for svc in found.get("services", [])]
+        if staff_service_ids and selected_service.get("id") not in staff_service_ids:
+            available_for_service = []
+            for st in staff_list:
+                st_service_ids = [svc.get("id") for svc in st.get("services", [])]
+                if not st_service_ids or selected_service.get("id") in st_service_ids:
+                    available_for_service.append(st["name"])
+            
+            return (f"Niestety {found['name']} nie wykonuje {selected_service['name']}. "
+                    f"Tę usługę wykonuje: {', '.join(available_for_service)}. Do kogo?", None)
+    
+    # Zapisz i przejdź ZAWSZE do wyboru daty
     flow_manager.state["selected_staff"] = found
-    logger.info(f"✅ Staff: {found['name']}")
-    return (f"Dobrze, do {found['name']}. Na kiedy chciałby Pan umówić wizytę?", create_get_date_node(tenant))
-
-async def handle_any_staff(args: dict, flow_manager: FlowManager, tenant: dict, available_staff: list = None):
-    # Użyj przefiltrowanej listy lub wszystkich
-    if available_staff is None:
-        available_staff = tenant.get("staff", [])
+    logger.info(f"✅ [2/6] Staff selected: {found['name']}")
     
-    if available_staff:
-        first = available_staff[0]
-        flow_manager.state["selected_staff"] = first
-        return (f"Umówię do {first['name']}.", create_get_date_node(tenant))
-    return ("Brak dostępnych pracowników.", create_end_node())
-
-def auto_select_staff_function(tenant: dict, staff: dict) -> FlowsFunctionSchema:
-    """Automatycznie wybiera pracownika gdy jest tylko jeden dostępny"""
-    return FlowsFunctionSchema(
-        name="auto_continue",
-        description="Kontynuuj - pracownik już wybrany automatycznie",
-        properties={},
-        required=[],
-        handler=lambda args, fm: handle_auto_staff(args, fm, tenant, staff),
-    )
-
-
-async def handle_auto_staff(args: dict, flow_manager: FlowManager, tenant: dict, staff: dict):
-    """Handler dla automatycznego wyboru pracownika"""
-    flow_manager.state["selected_staff"] = staff
-    logger.info(f"✅ Auto-selected staff: {staff['name']}")
-    return (f"Umówię do {staff['name']}. Na kiedy chciałby Pan umówić wizytę?", create_get_date_node(tenant))
+    return (f"Dobrze, do {found['name']}.", create_get_date_node(tenant))
 # ==========================================
 # NODE: Wybór daty
 # ==========================================
 
 def create_get_date_node(tenant: dict) -> dict:
-    # Aktualna data i limity
+    """NODE: Wybór daty - STRICT (krok 3/6)"""
     now = datetime.now()
     polish_days = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
     today_str = f"{now.strftime('%d.%m.%Y')} ({polish_days[now.weekday()]})"
-    
-    # Pobierz max dni z tenant lub domyślnie 30
     max_days = tenant.get("max_booking_days", 30)
     max_date = now + timedelta(days=max_days)
     max_date_str = max_date.strftime('%d.%m.%Y')
     
     return {
         "name": "get_date",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"""Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: WYBÓR DATY.
+
+DZIŚ: {today_str}
+LIMIT: do {max_date_str}
+
+TWOJE JEDYNE ZADANIE: Zapytaj o datę i wywołaj check_availability."""
+        }],
         "task_messages": [{
             "role": "system",
-            "content": f"""Zapytaj kiedy klient chce się umówić.
+            "content": f"""KROK 3/6: Wybór daty
 
-DZIŚ JEST: {today_str}
-MOŻNA REZERWOWAĆ: od dziś do {max_date_str} (max {max_days} dni do przodu)
+INSTRUKCJA:
+1. Zapytaj KRÓTKO: "Na kiedy chciałby Pan umówić wizytę?"
+2. Gdy klient poda datę → NATYCHMIAST wywołaj check_availability
+3. Akceptuj: "jutro", "pojutrze", dzień tygodnia, datę
+4. NIE ZGADUJ godzin - powiedz: "System za chwilę pokaże dokładne wolne godziny"
+5. Jeśli klient pyta o coś innego → powiedz: "Już połowa! Tylko data i zaraz pokażę dostępne terminy."
+6. Jeśli cisza → powiedz: "Proszę powiedzieć dzień, np. jutro, w piątek..."
 
-WAŻNE: 
-- NIE przyjmuj dat z przeszłości!
-- NIE przyjmuj dat dalej niż {max_days} dni
-
-Gdy poda datę (i opcjonalnie godzinę) → check_availability"""
+MUSISZ użyć funkcji check_availability. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [check_availability_function(tenant)]
     }
@@ -645,147 +583,286 @@ def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_check_availability(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler sprawdzania dostępności - STRICT: zawsze idź do wyboru godziny"""
     date_str = args.get("date", "")
-    preferred_time = args.get("preferred_time", "")
     
     staff = flow_manager.state.get("selected_staff", {})
     service = flow_manager.state.get("selected_service", {})
     
+    # Parsuj datę
     parsed_date = parse_polish_date(date_str)
     if not parsed_date:
-        return (f"Nie rozumiem daty '{date_str}'. Proszę powiedzieć np. jutro, w poniedziałek, lub podać datę.", None)
+        return (f"Nie rozumiem daty '{date_str}'. Proszę powiedzieć np. jutro, w poniedziałek.", None)
     
-    # Popraw rok jeśli data w przeszłości (GPT czasem daje zły rok)
+    # Popraw rok jeśli data w przeszłości
     today = datetime.now()
     if parsed_date.date() < today.date():
-        # Spróbuj z następnym rokiem
         try:
             parsed_date = parsed_date.replace(year=parsed_date.year + 1)
             if parsed_date.date() < today.date():
-                return ("Nie mogę umówić na datę która już minęła. Proszę wybrać przyszłą datę.", None)
+                return ("Ta data już minęła. Proszę wybrać przyszłą datę.", None)
         except:
-            return ("Nie mogę umówić na datę która już minęła. Proszę wybrać przyszłą datę.", None)
+            return ("Ta data już minęła. Proszę wybrać przyszłą datę.", None)
     
-    # Limit dni do przodu (domyślnie 30 dni)
+    # Limit dni do przodu
     max_days = tenant.get("max_booking_days", 30)
     max_date = today + timedelta(days=max_days)
     if parsed_date.date() > max_date.date():
-        return (f"Mogę umówić maksymalnie {max_days} dni do przodu. Proszę wybrać wcześniejszą datę.", None)
+        return (f"Mogę umówić maksymalnie {max_days} dni do przodu.", None)
     
+    # Walidacja constraintów
     valid, error = validate_date_constraints(parsed_date, tenant, staff)
     if not valid:
         return (error, None)
     
+    # Sprawdź czy otwarci
     weekday = parsed_date.weekday()
     if get_opening_hours(tenant, weekday) is None:
-        return (f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci.", None)
+        return (f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Proszę wybrać inny dzień.", None)
     
+    # Pobierz sloty z API/kalendarza
     slots = await get_available_slots(tenant, staff, service, parsed_date)
     if not slots:
-        return (f"Na {format_date_polish(parsed_date)} brak wolnych terminów.", None)
+        return (f"Na {format_date_polish(parsed_date)} brak wolnych terminów. Proszę wybrać inny dzień.", None)
     
+    # Zapisz i przejdź ZAWSZE do wyboru godziny (z ENUM!)
     flow_manager.state["selected_date"] = parsed_date
     flow_manager.state["available_slots"] = slots
     
-    # Jeśli podał preferowaną godzinę
-    if preferred_time:
-        hour = parse_time(preferred_time)
-        if hour and hour in slots:
-            flow_manager.state["selected_time"] = hour
-            return (f"{format_hour_polish(hour)} {format_date_polish(parsed_date)} jest wolna. Jak się Pan nazywa?",
-                    create_get_name_node(tenant))
-        elif hour:
-            closest = min(slots, key=lambda x: abs(x - hour))
-            return (f"{format_hour_polish(hour)} zajęta. Najbliższa wolna: {format_hour_polish(closest)}.", 
-                    create_select_time_node(tenant))
+    logger.info(f"✅ [3/6] Date selected: {parsed_date.strftime('%Y-%m-%d')}, available slots: {slots}")
     
-    slots_text = ", ".join([format_hour_polish(h) for h in slots[:3]])
-    return (f"Na {format_date_polish(parsed_date)} mam: {slots_text}. Która pasuje?", 
-            create_select_time_node(tenant))
+    return (f"Na {format_date_polish(parsed_date)} mam wolne terminy.", create_get_time_node(tenant, slots))
 # ==========================================
 # NODE: Wybór godziny
 # ==========================================
-
-def create_select_time_node(tenant: dict) -> dict:
+def create_get_time_node(tenant: dict, available_slots: list) -> dict:
+    """NODE: Wybór godziny - STRICT z ENUM! (krok 4/6)"""
+    # Formatuj godziny słownie dla wyświetlenia
+    slots_text = ", ".join([format_hour_polish(h) for h in available_slots[:6]])
+    
     return {
-        "name": "select_time",
-        "task_messages": [{"role": "system", "content": "Klient wybiera godzinę → confirm_time"}],
-        "functions": [confirm_time_function(tenant)]
+        "name": "get_time",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"""Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: WYBÓR GODZINY.
+
+DOSTĘPNE GODZINY: {slots_text}
+
+TWOJE JEDYNE ZADANIE: Zapytaj o godzinę i wywołaj select_time."""
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": f"""KROK 4/6: Wybór godziny
+
+INSTRUKCJA:
+1. Powiedz: "To są dokładne wolne terminy: {slots_text}. Która pasuje?"
+2. Gdy klient powie godzinę → NATYCHMIAST wywołaj select_time
+3. WAŻNE: Klient MUSI wybrać z tej listy - to jedyne wolne terminy w systemie
+4. Jeśli klient pyta o inną godzinę → powiedz: "Niestety ta jest zajęta. Z wolnych mam: {slots_text}"
+5. Jeśli cisza → powiedz: "Która z tych godzin Panu pasuje?"
+
+MUSISZ użyć funkcji select_time. Nie możesz odpowiedzieć bez niej."""
+        }],
+        "functions": [select_time_function(tenant, available_slots)]
     }
 
 
-def confirm_time_function(tenant: dict) -> FlowsFunctionSchema:
+def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSchema:
+    """Funkcja wyboru godziny z ENUM - GPT nie może wymyślić!"""
+    # Konwertuj godziny na stringi dla enum
+    slot_strings = [str(h) for h in available_slots]
+    
     return FlowsFunctionSchema(
-        name="confirm_time",
-        description="Klient wybrał godzinę",
-        properties={"time": {"type": "string", "description": "Godzina"}},
-        required=["time"],
-        handler=lambda args, fm: handle_confirm_time(args, fm, tenant),
+        name="select_time",
+        description="Klient wybrał godzinę z dostępnych",
+        properties={
+            "hour": {
+                "type": "string",
+                "enum": slot_strings,
+                "description": "Wybrana godzina (liczba)"
+            }
+        },
+        required=["hour"],
+        handler=lambda args, fm: handle_select_time(args, fm, tenant),
     )
+# Backward compatibility - stara nazwa funkcji
+def create_select_time_node(tenant: dict) -> dict:
+    """DEPRECATED: Użyj create_get_time_node z listą slotów"""
+    # Fallback - pobierz sloty ze state (nie zadziała bez flow_manager)
+    logger.warning("⚠️ create_select_time_node called without slots - using empty list")
+    return create_get_time_node(tenant, [9, 10, 11, 12, 13, 14, 15, 16])
 
-
-async def handle_confirm_time(args: dict, flow_manager: FlowManager, tenant: dict):
-    time_str = args.get("time", "")
-    hour = parse_time(time_str)
+async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler wyboru godziny - STRICT: zawsze idź do imienia"""
+    hour_str = args.get("hour", "")
     slots = flow_manager.state.get("available_slots", [])
     
-    if hour is None:
-        return (f"Nie rozumiem godziny '{time_str}'.", None)
+    try:
+        hour = int(hour_str)
+    except:
+        hour = parse_time(hour_str)
     
-    if hour not in slots:
+    if hour is None or hour not in slots:
         slots_text = ", ".join([format_hour_polish(h) for h in slots[:5]])
-        return (f"Godzina {format_hour_polish(hour)} niedostępna. Mam: {slots_text}.", None)
+        return (f"Ta godzina niedostępna. Mam: {slots_text}. Która?", None)
     
+    # Zapisz i przejdź ZAWSZE do imienia
     flow_manager.state["selected_time"] = hour
-    return (f"Godzina {format_hour_polish(hour)}. Jak się Pan nazywa?", create_get_name_node(tenant))
+    logger.info(f"✅ [4/6] Time selected: {hour}:00")
+    
+    return (f"Godzina {format_hour_polish(hour)}.", create_get_name_node(tenant))
 
 # ==========================================
 # NODE: Imię i zakończenie rezerwacji
 # ==========================================
 
 def create_get_name_node(tenant: dict) -> dict:
+    """NODE: Imię klienta - STRICT (krok 5/6)"""
     return {
         "name": "get_name",
-        "task_messages": [{"role": "system", "content": "Zapisz imię → complete_booking"}],
-        "functions": [complete_booking_function(tenant)]
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": """Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: IMIĘ KLIENTA.
+
+TWOJE JEDYNE ZADANIE: Zapytaj o imię i wywołaj set_customer_name."""
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": """KROK 5/6: Imię klienta
+
+INSTRUKCJA:
+1. Zapytaj: "Ostatni krok przed potwierdzeniem - jak mogę zapisać? Imię lub nazwisko."
+2. Gdy klient powie imię → NATYCHMIAST wywołaj set_customer_name
+3. Jeśli cisza/niezrozumienie → powiedz: "Proszę tylko powiedzieć imię lub nazwisko do rezerwacji."
+
+MUSISZ użyć funkcji set_customer_name. Nie możesz odpowiedzieć bez niej."""
+        }],
+        "functions": [set_customer_name_function(tenant)]
     }
 
 
-def complete_booking_function(tenant: dict) -> FlowsFunctionSchema:
+def set_customer_name_function(tenant: dict) -> FlowsFunctionSchema:
+    """Funkcja zapisu imienia - przechodzi do CONFIRM"""
     return FlowsFunctionSchema(
-        name="complete_booking",
-        description="Zapisz rezerwację",
-        properties={"customer_name": {"type": "string", "description": "Imię"}},
+        name="set_customer_name",
+        description="Zapisz imię klienta",
+        properties={
+            "customer_name": {"type": "string", "description": "Imię/nazwisko klienta"}
+        },
         required=["customer_name"],
-        handler=lambda args, fm: handle_complete_booking(args, fm, tenant),
+        handler=lambda args, fm: handle_set_customer_name(args, fm, tenant),
     )
 
 
-async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant: dict):
-    name = args.get("customer_name", "")
-    flow_manager.state["customer_name"] = name
+async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Handler imienia - STRICT: zawsze idź do CONFIRM"""
+    name = args.get("customer_name", "").strip()
     
+    if not name or len(name) < 2:
+        return ("Przepraszam, nie dosłyszałam. Jak się Pan nazywa?", None)
+    
+    # Zapisz i przejdź ZAWSZE do potwierdzenia
+    flow_manager.state["customer_name"] = name
+    logger.info(f"✅ [5/6] Customer name: {name}")
+    
+    return (f"Dziękuję, {name}.", create_confirm_booking_node(tenant))
+
+# ==========================================
+# NODE: Potwierdzenie rezerwacji - NOWY!
+# ==========================================
+
+def create_confirm_booking_node(tenant: dict) -> dict:
+    """NODE: Potwierdzenie przed zapisem - STRICT (krok 6/6)"""
+    return {
+        "name": "confirm_booking",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": """Jesteś w trybie ZBIERANIA DANYCH do rezerwacji.
+Aktualny krok: POTWIERDZENIE.
+
+Masz już wszystkie dane. Teraz MUSISZ je podsumować i zapytać o potwierdzenie."""
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": """KROK 6/6: Potwierdzenie rezerwacji
+
+INSTRUKCJA:
+1. Powiedz: "Podsumowuję rezerwację:" i wymień WSZYSTKO: usługa, pracownik, data, godzina, imię
+2. Zakończ pytaniem: "Czy wszystko się zgadza?"
+3. Jeśli TAK/potwierdzam/zgadza się → wywołaj confirm_booking_yes
+4. Jeśli NIE/zmień/inaczej → zapytaj "Co chce Pan zmienić?" i wywołaj confirm_booking_no
+
+Przykład: "Podsumowuję: strzyżenie męskie u Wiktora, jutro o dziesiątej, na nazwisko Kowalski. Czy wszystko się zgadza?"
+
+MUSISZ użyć jednej z funkcji: confirm_booking_yes lub confirm_booking_no."""
+        }],
+        "functions": [
+            confirm_booking_yes_function(tenant),
+            confirm_booking_no_function(tenant),
+        ]
+    }
+
+
+def confirm_booking_yes_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient potwierdza - zapisz rezerwację"""
+    return FlowsFunctionSchema(
+        name="confirm_booking_yes",
+        description="Klient POTWIERDZA rezerwację (tak, potwierdzam, zgadza się)",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_confirm_booking_yes(args, fm, tenant),
+    )
+
+
+def confirm_booking_no_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient nie potwierdza - wróć do początku"""
+    return FlowsFunctionSchema(
+        name="confirm_booking_no",
+        description="Klient NIE potwierdza lub chce ZMIENIĆ coś (nie, zmień, inaczej)",
+        properties={
+            "what_to_change": {
+                "type": "string",
+                "enum": ["usługa", "pracownik", "data", "godzina", "imię", "wszystko"],
+                "description": "Co klient chce zmienić"
+            }
+        },
+        required=[],
+        handler=lambda args, fm: handle_confirm_booking_no(args, fm, tenant),
+    )
+
+
+async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Klient potwierdził - TERAZ zapisz rezerwację"""
+    logger.info("✅ [6/6] Booking CONFIRMED by customer")
+    
+    # Pobierz wszystkie dane
     service = flow_manager.state.get("selected_service", {})
     staff = flow_manager.state.get("selected_staff", {})
     date = flow_manager.state.get("selected_date")
     hour = flow_manager.state.get("selected_time")
+    name = flow_manager.state.get("customer_name", "")
     caller_phone = flow_manager.state.get("caller_phone", "")
     
-    logger.info(f"💾 Booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}")
+    logger.info(f"💾 Saving booking: {name}, {service.get('name')}, {staff.get('name')}, {date}, {hour}:00")
     
     booking_code = None
     booking_saved = False
     
     try:
-        # Zapisz rezerwację z numerem telefonu
         result = await save_booking_to_api(tenant, staff, service, date, hour, name, caller_phone)
         if result:
             booking_saved = True
             booking_code = result.get("booking_code")
+            logger.info(f"✅ Booking saved! Code: {booking_code}")
     except Exception as e:
         logger.error(f"❌ Save error: {e}")
     
-    # Wyślij SMS tylko jeśli rezerwacja zapisana pomyślnie
+    # Wyślij SMS jeśli zapisano
     if booking_saved and booking_code and caller_phone:
         try:
             from flows_helpers import send_booking_sms, increment_sms_count
@@ -808,19 +885,65 @@ async def handle_complete_booking(args: dict, flow_manager: FlowManager, tenant:
         except Exception as e:
             logger.error(f"📱 SMS error: {e}")
     
+    # Komunikat końcowy
     date_text = format_date_polish(date) if date else "wybrany dzień"
     time_text = format_hour_polish(hour) if hour else "wybraną godzinę"
     
-    # Komunikat z kodem jeśli SMS wysłany
     if booking_saved and booking_code:
-        return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. Wysłałam potwierdzenie SMS z kodem wizyty. Do zobaczenia!",
+        return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. "
+                f"Wysłałam SMS z potwierdzeniem. Do zobaczenia!",
                 create_anything_else_node(tenant))
     elif booking_saved:
         return (f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}. Do zobaczenia!",
                 create_anything_else_node(tenant))
     else:
-        return (f"Przepraszam, wystąpił problem z zapisem rezerwacji. Czy mogę przekazać wiadomość do właściciela?",
+        return ("Przepraszam, wystąpił problem z zapisem. Czy mogę przekazać wiadomość do właściciela?",
                 create_take_message_node(tenant))
+
+
+async def handle_confirm_booking_no(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Klient chce zmienić - wróć do odpowiedniego kroku"""
+    what_to_change = args.get("what_to_change", "wszystko")
+    
+    logger.info(f"🔄 Customer wants to change: {what_to_change}")
+    
+    if what_to_change == "usługa":
+        flow_manager.state["selected_service"] = None
+        flow_manager.state["selected_staff"] = None  # Reset też pracownika
+        return ("Dobrze, zmieńmy usługę.", create_get_service_node(tenant))
+    
+    elif what_to_change == "pracownik":
+        flow_manager.state["selected_staff"] = None
+        selected_service = flow_manager.state.get("selected_service")
+        return ("Dobrze, zmieńmy pracownika.", create_get_staff_node(tenant, selected_service))
+    
+    elif what_to_change == "data":
+        flow_manager.state["selected_date"] = None
+        flow_manager.state["selected_time"] = None  # Reset też godziny
+        return ("Dobrze, zmieńmy datę.", create_get_date_node(tenant))
+    
+    elif what_to_change == "godzina":
+        flow_manager.state["selected_time"] = None
+        slots = flow_manager.state.get("available_slots", [])
+        if slots:
+            return ("Dobrze, zmieńmy godzinę.", create_get_time_node(tenant, slots))
+        else:
+            return ("Muszę najpierw sprawdzić dostępność.", create_get_date_node(tenant))
+    
+    elif what_to_change == "imię":
+        flow_manager.state["customer_name"] = None
+        return ("Dobrze, zmieńmy imię.", create_get_name_node(tenant))
+    
+    else:  # "wszystko" lub nieznane
+        # Reset wszystkiego i zacznij od nowa
+        flow_manager.state["selected_service"] = None
+        flow_manager.state["selected_staff"] = None
+        flow_manager.state["selected_date"] = None
+        flow_manager.state["selected_time"] = None
+        flow_manager.state["customer_name"] = None
+        return ("Dobrze, zacznijmy od nowa.", create_get_service_node(tenant))
+
+
 # ==========================================
 # NODE: Czy coś jeszcze?
 # ==========================================
