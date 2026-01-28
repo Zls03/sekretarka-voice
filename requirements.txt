@@ -1,5 +1,5 @@
 # Pipecat framework
-pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq]
+pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq,cartesia]
 pipecat-ai-flows
 # Server
 fastapi
