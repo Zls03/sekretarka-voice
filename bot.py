@@ -349,10 +349,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # TTS - wybór na podstawie ustawień tenant
     tts = create_tts_service(tenant)
 
-    # LLM - GPT-4o-mini (szybki i stabilny)
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
     )
 
     
