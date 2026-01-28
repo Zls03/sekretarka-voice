@@ -245,8 +245,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         tenant = await get_tenant_by_phone(rows[0]["phone_number"])
                         
                         if tenant:
-                            # Dodaj tts_provider (może nie być w get_tenant_by_phone)
-                            tenant['tts_provider'] = rows[0].get('tts_provider', 'elevenlabs')
+                            # Dodaj tts_provider - debug
+                            raw_tts = dict(rows[0]).get('tts_provider')
+                            logger.info(f"🔍 Raw tts_provider from DB: '{raw_tts}'")
+                            tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
                             
                             # Dodaj staff z ich usługami
                             staff = await db.execute(
