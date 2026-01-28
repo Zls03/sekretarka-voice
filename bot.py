@@ -500,7 +500,6 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator.assistant(),
     ])
 
-    from pipecat.audio.interruptions import MinWordsInterruptionStrategy
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
