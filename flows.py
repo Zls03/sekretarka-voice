@@ -15,6 +15,52 @@ import random
 # WALIDACJA W KODZIE - nie w prompcie!
 # ============================================================================
 
+def format_slots_natural(slots: list, format_func) -> str:
+    """Formatuj sloty naturalnie - max 3 przykłady z różnych przedziałów"""
+    if not slots:
+        return ""
+    
+    if len(slots) == 1:
+        return f"tylko {format_func(slots[0])}"
+    
+    if len(slots) == 2:
+        return f"{format_func(slots[0])} albo {format_func(slots[1])}"
+    
+    if len(slots) <= 3:
+        parts = [format_func(h) for h in slots]
+        return f"{', '.join(parts[:-1])} albo {parts[-1]}"
+    
+    # 4+ slotów - wybierz 3 reprezentatywne
+    example_slots = [slots[0], slots[len(slots)//2], slots[-1]]
+    parts = [format_func(h) for h in example_slots]
+    return f"na przykład {parts[0]}, {parts[1]} albo {parts[2]}"
+
+
+def odmien_imie_dopelniacz(imie: str) -> str:
+    """Odmienia imię do dopełniacza (do kogo? - Ani, Kasi, Wiktora)"""
+    if not imie:
+        return imie
+    
+    imie = imie.strip()
+    
+    # Żeńskie -a
+    if imie.endswith("ia"):  # Ania, Kasia, Zosia
+        return imie[:-1] + "i"
+    elif imie.endswith("ja"):  # Maja, Alicja
+        return imie[:-1] + "i"
+    elif imie.endswith("a"):  # Ewa, Anna, Marta
+        return imie[:-1] + "y"
+    
+    # Męskie
+    elif imie.endswith("ek"):  # Tomek, Jacek
+        return imie[:-2] + "ka"
+    elif imie.endswith("eł"):  # Paweł
+        return imie[:-2] + "ła"
+    elif imie.endswith(("r", "n", "sz", "ł", "j")):  # Wiktor, Jan, Tomasz
+        return imie + "a"
+    
+    return imie + "a"  # domyślnie
+
 def validate_customer_name(name: str) -> Optional[str]:
     """Waliduj imię - zwraca None jeśli to śmieć."""
     if not name:
@@ -303,7 +349,6 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
         return (f"Rozumiem, chce Pan {action_text} wizyty. Przekażę wiadomość do właściciela, który oddzwoni i pomoże ze zmianą. Czy mogę prosić o imię?",
                 create_take_message_node(tenant))
 
-
 def create_manage_booking_choice_node(tenant: dict, action: str) -> dict:
     """Node: klient chce przełożyć/odwołać - daj wybór z ENUM"""
     action_text = "przełożeniem" if action == "przełożyć" else "odwołaniem"
@@ -311,7 +356,7 @@ def create_manage_booking_choice_node(tenant: dict, action: str) -> dict:
     return {
         "name": "manage_booking_choice",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Rozumiem, chce Pan pomoc z {action_text} wizyty. Mogę przekazać wiadomość do właściciela lub spróbować połączyć bezpośrednio. Co Pan woli?"}
+            {"type": "tts_say", "text": f"Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Co Pan woli?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -386,7 +431,7 @@ def create_get_service_node(tenant: dict) -> dict:
     return {
         "name": "get_service",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Świetnie, umówmy wizytę. Na jaką usługę? Mamy: {services_list}."}
+            {"type": "tts_say", "text": f"Jasne, umówimy wizytę. Na jaką usługę? Mamy {services_list}."}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -491,7 +536,7 @@ def create_get_staff_node(tenant: dict, selected_service: dict = None) -> dict:
     return {
         "name": "get_staff",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Świetnie, {service_name}. Do kogo? Dostępni: {staff_list}."}
+            {"type": "tts_say", "text": f"{service_name}, świetnie. Do kogo? Tę usługę wykonuje {staff_list}."}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -594,7 +639,7 @@ def create_get_date_node(tenant: dict, selected_staff: dict = None) -> dict:
     return {
         "name": "get_date",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Dobrze, do {staff_name}. Na kiedy?"}
+            {"type": "tts_say", "text": f"Do {odmien_imie_dopelniacz(staff_name)}, dobrze. Na kiedy?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -705,15 +750,15 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
 # NODE: Wybór godziny
 # ==========================================
 def create_get_time_node(tenant: dict, available_slots: list, date_text: str = "", slots_text: str = "") -> dict:
-    """NODE: Wybór godziny - STRICT z ENUM! (krok 4/6)"""
-    # Formatuj godziny słownie jeśli nie przekazano
+    """NODE: Wybór godziny (krok 4/6)"""
+    # Formatuj godziny naturalnie - max 3 przykłady
     if not slots_text:
-        slots_text = ", ".join([format_hour_polish(h) for h in available_slots[:6]])
+        slots_text = format_slots_natural(available_slots, format_hour_polish)
     
     return {
         "name": "get_time",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Na {date_text} mam wolne: {slots_text}. Która pasuje?"}
+            {"type": "tts_say", "text": f"Na {date_text} mam wolne {slots_text}. Która pasuje?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -748,18 +793,14 @@ MUSISZ użyć funkcji select_time. Nie możesz odpowiedzieć bez niej."""
     }
 
 def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSchema:
-    """Funkcja wyboru godziny z ENUM - GPT nie może wymyślić!"""
-    # Konwertuj godziny na stringi dla enum
-    slot_strings = [str(h) for h in available_slots]
-    
+    """Funkcja wyboru godziny - BEZ ENUM, walidacja w kodzie"""
     return FlowsFunctionSchema(
         name="select_time",
-        description="Klient wybrał godzinę z dostępnych",
+        description="Klient WYRAŹNIE wybrał konkretną godzinę. NIE wywołuj jeśli klient nie podał godziny!",
         properties={
             "hour": {
                 "type": "string",
-                "enum": slot_strings,
-                "description": "Wybrana godzina (liczba)"
+                "description": "Godzina którą klient WYRAŹNIE powiedział (np. '10', 'dziesiąta')"
             }
         },
         required=["hour"],
@@ -803,11 +844,11 @@ async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict
 # ==========================================
 
 def create_get_name_node(tenant: dict, hour_text: str = "") -> dict:
-    """NODE: Imię klienta - STRICT (krok 5/6)"""
+    """NODE: Imię klienta (krok 5/6)"""
     return {
         "name": "get_name",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Godzina {hour_text}. Na jakie nazwisko mogę zapisać?"}
+            {"type": "tts_say", "text": f"O {hour_text}, dobrze. Na jakie nazwisko?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -830,7 +871,6 @@ MUSISZ użyć funkcji set_customer_name. Nie możesz odpowiedzieć bez niej."""
         }],
         "functions": [
             set_customer_name_function(tenant),
-            end_conversation_function()
         ]
     }
 
@@ -846,6 +886,7 @@ def set_customer_name_function(tenant: dict) -> FlowsFunctionSchema:
         required=["customer_name"],
         handler=lambda args, fm: handle_set_customer_name(args, fm, tenant),
     )
+
 
 
 async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant: dict):
@@ -868,7 +909,8 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
     date_text = format_date_polish(date) if date else "wybrany dzień"
     time_text = format_hour_polish(hour) if hour else "wybraną godzinę"
     
-    summary = f"{service.get('name', 'wizyta')} u {staff.get('name', 'pracownika')}, {date_text} o {time_text}, na nazwisko {validated}"
+    staff_name = staff.get('name', 'pracownika')
+    summary = f"{service.get('name', 'wizyta')} u {odmien_imie_dopelniacz(staff_name)}, {date_text} o {time_text}, na {validated}"
     
     # Dane dla kontekstu + node z pre_actions
     next_node = create_confirm_booking_node(tenant, summary)
@@ -879,11 +921,11 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
 # ==========================================
 
 def create_confirm_booking_node(tenant: dict, summary: str = "") -> dict:
-    """NODE: Potwierdzenie przed zapisem - STRICT (krok 6/6)"""
+    """NODE: Potwierdzenie (krok 6/6)"""
     return {
         "name": "confirm_booking",
         "pre_actions": [
-            {"type": "tts_say", "text": f"Podsumowując: {summary}. Czy potwierdzam rezerwację?"}
+            {"type": "tts_say", "text": f"Czyli {summary}. Potwierdzam?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
