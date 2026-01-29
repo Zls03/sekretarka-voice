@@ -544,11 +544,12 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(check_max_duration())
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
         
-        # 🔥 Uruchom idle timer gdy greeting był pre-played
+        # 🔥 Wymuś start idle timera przez krótki TTS
         if greeting_played:
-            from pipecat.frames.frames import BotStoppedSpeakingFrame
-            await task.queue_frame(BotStoppedSpeakingFrame())
-            logger.info("⏰ Idle timer triggered (greeting was pre-played)")
+            from pipecat.frames.frames import TTSSpeakFrame
+            # Pusty tekst lub bardzo krótki - tylko żeby uruchomić timer
+            await task.queue_frame(TTSSpeakFrame(text=" "))  # Spacja
+            logger.info("⏰ Idle timer started via silent TTS")
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
