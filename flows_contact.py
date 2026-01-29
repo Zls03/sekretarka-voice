@@ -53,7 +53,7 @@ def contact_owner_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: dict):
-    """KOD decyduje na podstawie reason - auto-transfer gdy wyraźna prośba"""
+    """KOD decyduje na podstawie reason - sprawdź WIADOMOŚĆ przed TRANSFER"""
     reason = args.get("reason", "").lower()
     customer_name = args.get("customer_name", "")
     message = args.get("message", "")
@@ -78,17 +78,29 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     logger.info(f"📞 Transfer available: {has_transfer} (enabled={transfer_enabled}, number='{transfer_number}')")
     
-    # 🔥 KOD analizuje REASON i decyduje AUTOMATYCZNIE
-    transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "właściciel", "rozmawiać z", "porozmawiać"]
+    # 🔥 NAJPIERW sprawdź czy klient chce WIADOMOŚĆ (wyższy priorytet!)
+    message_keywords = ["wiadomość", "zostawić", "przekazać", "niech oddzwoni", "napisać"]
+    wants_message = any(kw in reason for kw in message_keywords)
+    
+    if wants_message:
+        # Klient WYRAŹNIE chce wiadomość → idź do zbierania danych
+        logger.info(f"📞 MESSAGE requested based on reason keywords")
+        if customer_name:
+            return (None, create_collect_message_content_node(tenant))
+        else:
+            return (None, create_collect_contact_name_node(tenant))
+    
+    # POTEM sprawdź czy chce TRANSFER
+    transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "rozmawiać z"]
     wants_transfer = any(kw in reason for kw in transfer_keywords)
     
     if has_transfer and wants_transfer:
-        # Klient WYRAŹNIE chce połączenie → TRANSFER OD RAZU (bez pytania!)
+        # Klient WYRAŹNIE chce połączenie → TRANSFER OD RAZU
         logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
         return await execute_transfer(flow_manager, tenant)
     
     elif has_transfer:
-        # Transfer dostępny ale klient nie prosił wyraźnie → zapytaj
+        # Transfer dostępny ale klient nie sprecyzował → zapytaj
         return (None, create_contact_choice_node(tenant))
     
     else:

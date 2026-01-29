@@ -730,7 +730,7 @@ async def twilio_after_stream(request: Request):
             # Zwróć TwiML z Dial - przekieruj do właściciela
             twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="30" timeLimit="240" callerId="{caller_id}">
+    <Dial timeout="20" timeLimit="240" callerId="{caller_id}">
         <Number>{transfer_number}</Number>
     </Dial>
     <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Przepraszamy, nie udało się połączyć. Do widzenia.</Say>
