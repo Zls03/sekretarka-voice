@@ -130,15 +130,18 @@ WYWOŁAJ contact_choice:
     }
 
 def contact_choice_function(tenant: dict) -> FlowsFunctionSchema:
-    """ENUM - GPT nie może się pomylić"""
+    """ENUM + fallback - GPT nie może się pomylić"""
     return FlowsFunctionSchema(
         name="contact_choice",
-        description="Klient wybrał sposób kontaktu",
+        description="""Klient wybrał sposób kontaktu. MUSISZ wywołać tę funkcję!
+- Jeśli klient chce POŁĄCZENIE/BEZPOŚREDNIO/TAK/PROSZĘ → choice="połączenie"
+- Jeśli klient chce WIADOMOŚĆ/ZOSTAWIĆ/ODDZWONIĆ → choice="wiadomość"
+- W KAŻDYM INNYM przypadku → choice="wiadomość" (domyślnie)""",
         properties={
             "choice": {
                 "type": "string",
                 "enum": ["wiadomość", "połączenie"],
-                "description": "Wybór klienta"
+                "description": "Wybór klienta: 'połączenie' jeśli chce rozmawiać teraz, 'wiadomość' w każdym innym przypadku"
             }
         },
         required=["choice"],
