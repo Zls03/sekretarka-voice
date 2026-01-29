@@ -214,7 +214,30 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
             if msg.get("role") == "user":
                 content = msg.get("content", "").lower()
                 for name_lower, staff_obj in staff_names_lower.items():
-                    if name_lower in content:
+                    # Sprawdź różne formy imienia (mianownik, dopełniacz, biernik)
+                    name_variants = [name_lower]
+                    
+                    # Dodaj formy odmienione
+                    if name_lower.endswith("ia"):
+                        # Ania → Ani, Anię, Anią
+                        name_variants.append(name_lower[:-1] + "i")
+                        name_variants.append(name_lower[:-1] + "ę")
+                        name_variants.append(name_lower[:-1] + "ą")
+                    elif name_lower.endswith("a"):
+                        # Kasia → Kasi, Kasię, Kasią
+                        name_variants.append(name_lower[:-1] + "i")
+                        name_variants.append(name_lower[:-1] + "ę")
+                        name_variants.append(name_lower[:-1] + "ą")
+                    elif name_lower.endswith("ek"):
+                        # Witek → Witka, Witkiem
+                        name_variants.append(name_lower[:-2] + "ka")
+                        name_variants.append(name_lower[:-2] + "kiem")
+                    else:
+                        # Wiktor → Wiktora, Wiktorem
+                        name_variants.append(name_lower + "a")
+                        name_variants.append(name_lower + "em")
+                    
+                    if any(variant in content for variant in name_variants):
                         flow_manager.state["pre_selected_staff"] = staff_obj
                         logger.info(f"📝 Pre-selected staff from context: {staff_obj['name']}")
                         break
