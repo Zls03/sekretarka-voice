@@ -93,16 +93,22 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     # POTEM sprawdź czy chce TRANSFER
     transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "rozmawiać z"]
     wants_transfer = any(kw in reason for kw in transfer_keywords)
-    
-    if has_transfer and wants_transfer:
-        # Klient WYRAŹNIE chce połączenie → TRANSFER OD RAZU
-        logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
-        return await execute_transfer(flow_manager, tenant)
-    
+
+    if wants_transfer:
+        if has_transfer:
+            # Transfer dostępny → wykonaj
+            logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
+            return await execute_transfer(flow_manager, tenant)
+        else:
+            # Transfer NIEDOSTĘPNY → wyjaśnij i zbierz wiadomość
+            logger.info(f"📞 Transfer requested but DISABLED - offering message")
+            return ("Niestety nie mogę teraz połączyć bezpośrednio, ale chętnie przekażę wiadomość do właściciela.", 
+                    create_collect_contact_name_node(tenant))
+
     elif has_transfer:
         # Transfer dostępny ale klient nie sprecyzował → zapytaj
         return (None, create_contact_choice_node(tenant))
-    
+
     else:
         # Brak transferu → tylko wiadomość
         if customer_name:
