@@ -611,7 +611,10 @@ def build_business_context(tenant: dict) -> str:
                     except:
                         pass
             if staff_hours:
-                parts.append("⚠️ Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji. NIE WYMYŚLAJ.")
+                parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))  # 🔥 POPRAWIONE!
+    
+    # Ostrzeżenie na końcu
+    parts.append("⚠️ Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji. NIE WYMYŚLAJ.")
     
     return "\n\n".join(parts)
 
