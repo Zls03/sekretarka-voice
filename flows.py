@@ -492,22 +492,23 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     logger.info("👋 Ending conversation")
     flow_manager.state["conversation_ended"] = True
     
-    # Powiedz "do widzenia" przez TTS
     from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+    
+    # Powiedz "do widzenia" przez TTS
     await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
     
-    # Zaplanuj rozłączenie po 2.5s (czas na TTS)
-    async def delayed_hangup():
-        await asyncio.sleep(2.5)
+    # Rozłącz SZYBCIEJ - 1.8s wystarczy na krótkie pożegnanie
+    async def quick_hangup():
+        await asyncio.sleep(1.8)
         try:
             await flow_manager.task.queue_frame(EndFrame())
             logger.info("🔚 EndFrame sent - disconnecting")
         except Exception as e:
             logger.error(f"Error sending EndFrame: {e}")
     
-    asyncio.create_task(delayed_hangup())
+    asyncio.create_task(quick_hangup())
     
-    return (None, create_end_node())  # Cichy node
+    return (None, create_end_node())
 
 def create_end_node(message_saved: bool = False) -> dict:
     """
