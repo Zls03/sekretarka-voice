@@ -140,7 +140,7 @@ def format_hour_polish(hour: int) -> str:
 
 
 def format_date_polish(date: datetime) -> str:
-    """Formatuj datę po polsku"""
+    """Formatuj datę po polsku - naturalnie słownie"""
     today = datetime.now().date()
     target = date.date()
     
@@ -152,7 +152,17 @@ def format_date_polish(date: datetime) -> str:
         return "pojutrze"
     else:
         day_name = POLISH_DAYS[target.weekday()]
-        return f"w {day_name}, {target.day}.{target.month}"
+        
+        # Miesiące po polsku w dopełniaczu
+        POLISH_MONTHS = {
+            1: "stycznia", 2: "lutego", 3: "marca", 4: "kwietnia",
+            5: "maja", 6: "czerwca", 7: "lipca", 8: "sierpnia",
+            9: "września", 10: "października", 11: "listopada", 12: "grudnia"
+        }
+        
+        month_name = POLISH_MONTHS.get(target.month, str(target.month))
+        
+        return f"w {day_name}, {target.day} {month_name}"
 
 
 # ==========================================

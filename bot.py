@@ -320,7 +320,7 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.8,      # Wyższy próg (domyślnie 0.7)
+                    confidence=0.7,      # Wyższy próg (domyślnie 0.7)
                     start_secs=0.3,      # Dłużej czekaj przed uznaniem za mowę
                     stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.5,      # Minimalny poziom głośności
