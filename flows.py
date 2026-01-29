@@ -412,7 +412,7 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
         {summary_html}
         
         <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-        <p style="color: #999; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego Voice AI • {business_name}</p>
+        <p style="color: #999; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego BizVoice.pl • {business_name}</p>
     </div>
     """
     
