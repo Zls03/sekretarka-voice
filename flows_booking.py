@@ -240,14 +240,15 @@ Jeśli pyta o cenę/czas → odpowiedz KRÓTKO i wróć do pytania o usługę"""
 
 
 def select_service_function(tenant: dict, available_services: list) -> FlowsFunctionSchema:
+    services_hint = ", ".join(available_services) if available_services else ""
+    
     return FlowsFunctionSchema(
         name="select_service",
         description="Klient wybrał usługę",
         properties={
             "service_name": {
                 "type": "string", 
-                "description": "Nazwa usługi którą klient wybrał",
-                "enum": available_services if available_services else None
+                "description": f"Nazwa usługi którą klient powiedział. Dostępne: {services_hint}"
             }
         },
         required=["service_name"],
@@ -331,14 +332,15 @@ Jeśli "obojętnie"/"ktokolwiek" → wybierz pierwszego: {staff_names[0] if staf
 
 
 def select_staff_function(tenant: dict, available_names: list) -> FlowsFunctionSchema:
+    staff_hint = ", ".join(available_names) if available_names else ""
+    
     return FlowsFunctionSchema(
         name="select_staff",
         description="Klient wybrał pracownika",
         properties={
             "staff_name": {
                 "type": "string", 
-                "description": "Imię pracownika",
-                "enum": available_names if available_names else None
+                "description": f"Imię pracownika które klient powiedział. Dostępni: {staff_hint}"
             }
         },
         required=["staff_name"],

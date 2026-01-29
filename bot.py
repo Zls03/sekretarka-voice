@@ -519,10 +519,8 @@ async def websocket_endpoint(websocket: WebSocket):
         task=task,
         llm=llm,
         context_aggregator=context_aggregator,
-        global_functions=[
-            end_conversation_function(),
-            contact_owner_function(tenant),  # Kontakt z właścicielem
-        ],
+        transport=transport,
+        global_functions=[end_conversation_function()], 
     )
     
     # Zapisz dane tenant w state

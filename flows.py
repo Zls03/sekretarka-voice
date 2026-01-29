@@ -285,15 +285,17 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
 # ==========================================
 
 def create_anything_else_node(tenant: dict) -> dict:
+    from flows_contact import contact_owner_function  
+    
     return {
         "name": "anything_else",
         "task_messages": [{"role": "system", "content": "Zapytaj czy możesz jeszcze pomóc."}],
         "functions": [
             need_more_help_function(tenant),
+            contact_owner_function(tenant),  
             no_more_help_function(),
         ]
     }
-
 
 def need_more_help_function(tenant: dict) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
