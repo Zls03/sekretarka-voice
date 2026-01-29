@@ -97,7 +97,7 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
 # ============================================================================
 
 def create_contact_choice_node(tenant: dict) -> dict:
-    """KOD pyta - wiadomość czy połączenie? ENUM wymusza poprawny wybór"""
+    """Pytanie o wybór - 3 funkcje: transfer, wiadomość, clarify (VAPI-style)"""
     return {
         "name": "contact_choice",
         "pre_actions": [
@@ -107,62 +107,90 @@ def create_contact_choice_node(tenant: dict) -> dict:
         "role_messages": [{
             "role": "system",
             "content": """Klient wybiera: wiadomość lub połączenie z właścicielem.
-You must ALWAYS use contact_choice function to progress - NIGDY nie odpowiadaj tekstem!"""
+MUSISZ wywołać jedną z funkcji - NIGDY nie odpowiadaj tekstem!"""
         }],
         "task_messages": [{
             "role": "system",
-            "content": """You must ALWAYS use contact_choice to progress the conversation.
+            "content": """Słuchaj odpowiedzi klienta i wywołaj JEDNĄ z funkcji:
 
-Klient odpowiada: wiadomość czy połączenie.
+transfer_call → gdy klient WYRAŹNIE chce połączenie:
+  "połączyć", "bezpośrednio", "tak połącz", "teraz", "proszę połączyć"
 
-WYWOŁAJ contact_choice:
-- "wiadomość", "zostawić", "niech oddzwoni", "nie trzeba łączyć" → choice="wiadomość"
-- "połączenie", "połączyć", "połącz", "bezpośrednio", "teraz", "tak połącz", "tak", "proszę" → choice="połączenie"
+leave_message → gdy klient WYRAŹNIE chce wiadomość:
+  "wiadomość", "zostawić", "niech oddzwoni", "przekaż", "nie trzeba łączyć"
 
-⚠️ KRYTYCZNE:
-- Jeśli klient mówi "tak" lub "bezpośrednio" lub "połączyć" → choice="połączenie"
-- NIGDY nie mów "nie mogę połączyć" - ZAWSZE wywołaj contact_choice!
-- ZAKAZ odpowiadania tekstem bez wywołania funkcji!"""
+clarify_contact_choice → gdy NIEPEWNE lub NIEJASNE:
+  "tak", "nie", "hmm", "no nie wiem", cokolwiek niejasnego
+
+⚠️ W RAZIE WĄTPLIWOŚCI → clarify_contact_choice (lepiej dopytać niż źle połączyć)
+⛔ NIGDY nie odpowiadaj tekstem - ZAWSZE wywołaj funkcję!"""
         }],
         "functions": [
-            contact_choice_function(tenant),
+            transfer_call_function(tenant),
+            leave_message_function(tenant),
+            clarify_contact_choice_function(tenant),
         ]
     }
 
-def contact_choice_function(tenant: dict) -> FlowsFunctionSchema:
-    """ENUM + fallback - GPT nie może się pomylić"""
+def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient WYRAŹNIE chce połączenie"""
     return FlowsFunctionSchema(
-        name="contact_choice",
-        description="""Klient wybrał sposób kontaktu. MUSISZ wywołać tę funkcję!
-- Jeśli klient chce POŁĄCZENIE/BEZPOŚREDNIO/TAK/PROSZĘ → choice="połączenie"
-- Jeśli klient chce WIADOMOŚĆ/ZOSTAWIĆ/ODDZWONIĆ → choice="wiadomość"
-- W KAŻDYM INNYM przypadku → choice="wiadomość" (domyślnie)""",
-        properties={
-            "choice": {
-                "type": "string",
-                "enum": ["wiadomość", "połączenie"],
-                "description": "Wybór klienta: 'połączenie' jeśli chce rozmawiać teraz, 'wiadomość' w każdym innym przypadku"
-            }
-        },
-        required=["choice"],
-        handler=lambda args, fm: handle_contact_choice(args, fm, tenant),
+        name="transfer_call",
+        description="""Klient WYRAŹNIE chce POŁĄCZENIE z właścicielem.
+Użyj TYLKO gdy mówi jasno: "połączyć", "bezpośrednio", "tak połącz", "proszę połączyć", "teraz".
+NIE używaj przy samym "tak" lub "nie wiem".""",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_transfer_call(args, fm, tenant),
     )
 
 
-async def handle_contact_choice(args: dict, flow_manager: FlowManager, tenant: dict):
-    """KOD wykonuje wybór"""
-    choice = args.get("choice", "")
-    
-    logger.info(f"📞 Contact choice: {choice}")
-    
-    if choice == "połączenie":
-        return await execute_transfer(flow_manager, tenant)
+def leave_message_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient WYRAŹNIE chce wiadomość"""
+    return FlowsFunctionSchema(
+        name="leave_message",
+        description="""Klient WYRAŹNIE chce zostawić WIADOMOŚĆ.
+Użyj gdy mówi: "wiadomość", "zostawić", "niech oddzwoni", "przekaż", "nie trzeba łączyć".""",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_leave_message(args, fm, tenant),
+    )
+
+
+def clarify_contact_choice_function(tenant: dict) -> FlowsFunctionSchema:
+    """Odpowiedź niejasna - dopytaj"""
+    return FlowsFunctionSchema(
+        name="clarify_contact_choice",
+        description="""Odpowiedź klienta jest NIEJASNA lub NIEPEWNA.
+Użyj gdy: "tak", "nie", "hmm", "no nie wiem", lub cokolwiek niejasnego.
+LEPIEJ dopytać niż źle połączyć!""",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_clarify_contact_choice(args, fm, tenant),
+    )
+
+async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Transfer - wykonaj natychmiast"""
+    logger.info("📞 TRANSFER requested - executing")
+    return await execute_transfer(flow_manager, tenant)
+
+
+async def handle_leave_message(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Wiadomość - zbierz dane"""
+    logger.info("📝 MESSAGE requested - collecting data")
+    if flow_manager.state.get("contact_name"):
+        return (None, create_collect_message_content_node(tenant))
     else:
-        # Wiadomość
-        if flow_manager.state.get("contact_name"):
-            return (None, create_collect_message_content_node(tenant))
-        else:
-            return (None, create_collect_contact_name_node(tenant))
+        return (None, create_collect_contact_name_node(tenant))
+
+
+async def handle_clarify_contact_choice(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Niejasne - zapytaj ponownie"""
+    logger.info("❓ CLARIFY requested - asking again")
+    return (
+        {"clarify": "Przepraszam, czy chce Pan połączenie telefoniczne teraz, czy wolałby Pan zostawić wiadomość?"},
+        create_contact_choice_node(tenant)
+    )
 
 
 # ============================================================================
