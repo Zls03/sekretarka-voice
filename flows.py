@@ -310,9 +310,17 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
 def create_anything_else_node(tenant: dict) -> dict:
     from flows_contact import contact_owner_function  
     
+    business_name = tenant.get("name", "salon")
+    assistant_name = tenant.get("assistant_name", "Ania")
+    
     return {
         "name": "anything_else",
-        "task_messages": [{"role": "system", "content": "Zapytaj czy możesz jeszcze pomóc."}],
+        "role_messages": [{
+            "role": "system",
+            "content": f"""Jesteś {assistant_name}, wirtualną asystentką {business_name}.
+Mów KRÓTKO, naturalnie, w rodzaju żeńskim. Używaj formy "Pan/Pani"."""
+        }],
+        "task_messages": [{"role": "system", "content": "Zapytaj KRÓTKO czy możesz jeszcze w czymś pomóc."}],
         "functions": [
             need_more_help_function(tenant),
             contact_owner_function(tenant),

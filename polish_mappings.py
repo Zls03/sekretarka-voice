@@ -252,23 +252,23 @@ def normalize_polish_text(text: str) -> str:
 
 
 def apply_stt_corrections(text: str) -> str:
-    """Stosuje znane korekty błędów STT."""
+    """Stosuje znane korekty błędów STT z granicami słów."""
+    import re
+    
     if not text:
         return text
     
     text_lower = text.lower().strip()
     
-    # Sprawdź dokładne dopasowania
+    # Sprawdź dokładne dopasowania najpierw
     if text_lower in STT_CORRECTIONS:
         return STT_CORRECTIONS[text_lower]
     
-    # Sprawdź czy zawiera znany błąd
+    # Stosuj korekty tylko na granicach słów (żeby "anka" nie zmieniło "bankomat")
     for error, correction in STT_CORRECTIONS.items():
-        if error in text_lower:
-            text_lower = text_lower.replace(error, correction)
+        text_lower = re.sub(rf'\b{re.escape(error)}\b', correction, text_lower)
     
     return text_lower
-
 
 def parse_hour_from_text(text: str) -> int | None:
     """
@@ -280,6 +280,8 @@ def parse_hour_from_text(text: str) -> int | None:
     - "o ósmej" → 8
     - "siedemnastą" → 17
     """
+    import re
+    
     if not text:
         return None
     
@@ -290,24 +292,25 @@ def parse_hour_from_text(text: str) -> int | None:
     if text in HOUR_TO_NUMBER:
         return HOUR_TO_NUMBER[text]
     
-    # 2. Sprawdź czy któryś klucz zawiera się w tekście
-    for word, hour in HOUR_TO_NUMBER.items():
-        if word in text:
+    # 2. Sprawdź frazy z kontekstem NAJPIERW (dłuższe frazy mają priorytet)
+    #    Sortuj po długości malejąco żeby "szósta po południu" było przed "szósta"
+    for word, hour in sorted(HOUR_TO_NUMBER.items(), key=lambda x: -len(x[0])):
+        # Użyj granic słów żeby "sześć" nie złapało się w "szesnasta"
+        if re.search(rf'\b{re.escape(word)}\b', text):
             return hour
     
     # 3. Wyciągnij liczbę
-    import re
     numbers = re.findall(r'\d+', text)
     if numbers:
         hour = int(numbers[0])
         if 0 <= hour <= 23:
             return hour
     
-    # 4. Fuzzy - porównaj bez polskich znaków
+    # 4. Fallback - porównaj bez polskich znaków (ostatnia deska ratunku)
     text_normalized = normalize_polish_text(text)
-    for word, hour in HOUR_TO_NUMBER.items():
+    for word, hour in sorted(HOUR_TO_NUMBER.items(), key=lambda x: -len(x[0])):
         word_normalized = normalize_polish_text(word)
-        if word_normalized in text_normalized or text_normalized in word_normalized:
+        if re.search(rf'\b{re.escape(word_normalized)}\b', text_normalized):
             return hour
     
     return None
@@ -320,34 +323,47 @@ def match_staff_name(query: str, staff_list: list) -> dict | None:
     Przykłady:
     - "Ania" → staff z name="Anna" ✓
     - "wiktorach" → staff z name="Wiktor" ✓
+    - "Lukasz" → staff z name="Łukasz" ✓
     """
     if not query or not staff_list:
         return None
     
     query = query.lower().strip()
     query = apply_stt_corrections(query)
+    query_normalized = normalize_polish_text(query)
     
     # Normalizuj query przez aliasy
-    normalized_query = NAME_ALIASES.get(query, query)
+    alias_query = NAME_ALIASES.get(query, query)
+    alias_query_normalized = normalize_polish_text(alias_query)
     
     for staff in staff_list:
         staff_name = staff["name"].lower().strip()
+        staff_name_normalized = normalize_polish_text(staff_name)
         staff_first_name = staff_name.split()[0] if " " in staff_name else staff_name
+        staff_first_normalized = normalize_polish_text(staff_first_name)
         
-        # Normalizuj imię pracownika
-        staff_normalized = NAME_ALIASES.get(staff_first_name, staff_first_name)
+        # Normalizuj imię pracownika przez aliasy
+        staff_alias = NAME_ALIASES.get(staff_first_name, staff_first_name)
+        staff_alias_normalized = normalize_polish_text(staff_alias)
         
-        # Porównania
-        if query == staff_name or query == staff_first_name:
-            return staff
-        if normalized_query == staff_name or normalized_query == staff_first_name:
-            return staff
-        if normalized_query == staff_normalized:
+        # Porównania - z i bez polskich znaków
+        checks = [
+            query == staff_name,
+            query == staff_first_name,
+            query_normalized == staff_name_normalized,
+            query_normalized == staff_first_normalized,
+            alias_query == staff_name,
+            alias_query == staff_first_name,
+            alias_query_normalized == staff_alias_normalized,
+        ]
+        
+        if any(checks):
             return staff
         
         # Sprawdź czy query to alias imienia pracownika
         if staff_first_name in FULL_NAME_TO_ALIASES:
-            if query in FULL_NAME_TO_ALIASES[staff_first_name]:
+            aliases = FULL_NAME_TO_ALIASES[staff_first_name]
+            if query in aliases or query_normalized in [normalize_polish_text(a) for a in aliases]:
                 return staff
     
     return None

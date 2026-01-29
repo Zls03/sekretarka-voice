@@ -314,7 +314,8 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
             return (None, create_booking_failed_node(tenant, "nie udało się wybrać usługi"))
         
         available = ", ".join([s["name"] for s in services])
-        return ({"error": f"Nie mamy takiej usługi. Dostępne: {available}"}, None)
+        return ({"error": f"Nie mamy takiej usługi. Dostępne: {available}"}, 
+                create_get_service_node(tenant))  # ← RETRY ten sam node!
     
     reset_retry_count(flow_manager, "service")
     flow_manager.state["selected_service"] = found
@@ -422,7 +423,9 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
             return (None, create_booking_failed_node(tenant, "nie udało się wybrać pracownika"))
         
         available = ", ".join([s["name"] for s in staff_list])
-        return ({"error": f"Nie mamy takiego pracownika. Dostępni: {available}"}, None)
+        selected_service = flow_manager.state.get("selected_service")
+        return ({"error": f"Nie mamy takiego pracownika. Dostępni: {available}"}, 
+                create_get_staff_node(tenant, selected_service))  # ← RETRY!
     
     # Walidacja: czy pracownik wykonuje tę usługę?
     if selected_service:
@@ -435,7 +438,8 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
             ]
             if not check_retry_limit(flow_manager, "staff"):
                 return (None, create_booking_failed_node(tenant, "pracownik nie wykonuje tej usługi"))
-            return ({"error": f"{found['name']} nie wykonuje {selected_service['name']}. Dostępni: {', '.join(available_for_service)}"}, None)
+            return ({"error": f"{found['name']} nie wykonuje {selected_service['name']}. Dostępni: {', '.join(available_for_service)}"}, 
+                    create_get_staff_node(tenant, selected_service))  # ← RETRY!
     
     reset_retry_count(flow_manager, "staff")
     flow_manager.state["selected_staff"] = found
@@ -471,9 +475,13 @@ Potwierdź wybór pracownika i zapytaj na kiedy."""
             "role": "system",
             "content": """Zapytaj na jaki dzień umówić wizytę.
 
-Gdy klient poda datę (jutro, poniedziałek, konkretna data) → wywołaj check_availability
+You must ALWAYS use check_availability to progress. Gdy klient poda datę → NATYCHMIAST wywołaj check_availability z DOKŁADNIE tym co powiedział.
 
-⚠️ NIE zgaduj godzin - system sprawdzi dostępność i poda wolne terminy."""
+⚠️ ZASADY:
+- NIE przeliczaj dat - przekaż dosłownie (np. "sobota", "jutro", "w piątek")
+- NIE zgaduj godzin - system sprawdzi i poda wolne terminy
+- NIE mów że coś jest zajęte/wolne bez wywołania funkcji
+- Jeśli funkcja zwróci error → poproś o INNY dzień, NIE kontynuuj"""
         }],
         "functions": [
             check_availability_function(tenant),
@@ -484,11 +492,11 @@ Gdy klient poda datę (jutro, poniedziałek, konkretna data) → wywołaj check_
 def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="check_availability",
-        description="Klient podał datę - sprawdź dostępność",
+        description="Klient podał datę - sprawdź dostępność. ZAWSZE przekaż DOKŁADNIE co klient powiedział.",
         properties={
             "date": {
                 "type": "string", 
-                "description": "Data podana przez klienta (np. jutro, poniedziałek, 15.02)"
+                "description": "DOKŁADNIE co klient powiedział o dacie - np. 'sobota', 'jutro', 'w piątek', 'piętnastego'. NIE przeliczaj na format daty!"
             }
         },
         required=["date"],
@@ -513,7 +521,9 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     if not parsed_date:
         if not check_retry_limit(flow_manager, "date"):
             return (None, create_booking_failed_node(tenant, "nie udało się wybrać daty"))
-        return ({"error": "Nie rozumiem daty. Powiedz np. jutro, w piątek, 15 lutego."}, None)
+        staff = flow_manager.state.get("selected_staff")
+        return ({"error": "Nie rozumiem daty. Powiedz np. jutro, w piątek, 15 lutego."}, 
+                create_get_date_node(tenant, staff))  # ← RETRY!
     
     # Walidacja daty
     today = datetime.now()
@@ -521,30 +531,40 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
         try:
             parsed_date = parsed_date.replace(year=parsed_date.year + 1)
             if parsed_date.date() < today.date():
-                return ({"error": "Ta data już minęła. Wybierz przyszłą datę."}, None)
+                staff = flow_manager.state.get("selected_staff")
+                return ({"error": "Ta data już minęła. Wybierz przyszłą datę."}, 
+                        create_get_date_node(tenant, staff))
         except:
-            return ({"error": "Ta data już minęła."}, None)
+            staff = flow_manager.state.get("selected_staff")
+            return ({"error": "Ta data już minęła."}, 
+                    create_get_date_node(tenant, staff))
     
     max_days = tenant.get("max_booking_days", 30)
     max_date = today + timedelta(days=max_days)
     if parsed_date.date() > max_date.date():
-        return ({"error": f"Mogę umówić maksymalnie {max_days} dni do przodu."}, None)
+        staff = flow_manager.state.get("selected_staff")
+        return ({"error": f"Mogę umówić maksymalnie {max_days} dni do przodu."}, 
+                create_get_date_node(tenant, staff))
     
     valid, error = validate_date_constraints(parsed_date, tenant, staff)
     if not valid:
-        return ({"error": error}, None)
+        staff = flow_manager.state.get("selected_staff")
+        return ({"error": error}, create_get_date_node(tenant, staff))
     
     weekday = parsed_date.weekday()
     if get_opening_hours(tenant, weekday) is None:
-        return ({"error": f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Wybierz inny dzień."}, None)
+        staff = flow_manager.state.get("selected_staff")
+        return ({"error": f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Wybierz inny dzień."}, 
+                create_get_date_node(tenant, staff))
     
-    # Sprawdź dostępność w API
     slots = await get_available_slots(tenant, staff, service, parsed_date)
     if not slots:
         if not check_retry_limit(flow_manager, "date"):
             return (None, create_booking_failed_node(tenant, "brak wolnych terminów"))
         date_text = format_date_polish(parsed_date)
-        return ({"error": f"Na {date_text} brak wolnych terminów. Wybierz inny dzień."}, None)
+        staff = flow_manager.state.get("selected_staff")
+        return ({"error": f"Na {date_text} brak wolnych terminów. Wybierz inny dzień."}, 
+                create_get_date_node(tenant, staff))
     
     reset_retry_count(flow_manager, "date")
     flow_manager.state["selected_date"] = parsed_date
@@ -587,7 +607,11 @@ Podaj dostępne godziny i zapytaj która pasuje."""
             "content": f"""Powiedz jakie godziny są wolne i zapytaj którą wybrać.
 Wolne: {slots_text}
 
-Gdy klient powie godzinę → wywołaj select_time"""
+You must ALWAYS use select_time to progress. Gdy klient powie godzinę → NATYCHMIAST wywołaj select_time.
+
+⚠️ ZASADY:
+- MUSISZ wywołać select_time - NIE mów że "zapisałam" bez tego!
+- Jeśli select_time zwróci error → podaj inne wolne godziny"""
         }],
         "functions": [
             select_time_function(tenant, available_slots),
@@ -627,8 +651,10 @@ async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict
             return (None, create_booking_failed_node(tenant, "nie udało się wybrać godziny"))
         
         slots_text = format_slots_natural(slots, format_hour_polish)
+        date_text = format_date_polish(flow_manager.state.get("selected_date"))
         logger.warning(f"⚠️ Invalid time '{hour_str}' (parsed: {hour}), available: {slots}")
-        return ({"error": f"Ta godzina jest zajęta. Wolne: {slots_text}"}, None)
+        return ({"error": f"Ta godzina jest zajęta. Wolne: {slots_text}"}, 
+                create_get_time_node(tenant, slots, date_text, slots_text))  # ← RETRY!
     
     reset_retry_count(flow_manager, "time")
     flow_manager.state["selected_time"] = hour
@@ -688,7 +714,8 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
     if not validated:
         if not check_retry_limit(flow_manager, "name"):
             return (None, create_booking_failed_node(tenant, "nie udało się zapisać imienia"))
-        return ({"error": "Nie dosłyszałam. Jak mogę zapisać?"}, None)
+        return ({"error": "Nie dosłyszałam. Jak mogę zapisać?"}, 
+                create_get_name_node(tenant))  # ← RETRY!
     
     reset_retry_count(flow_manager, "name")
     flow_manager.state["customer_name"] = validated
@@ -730,11 +757,14 @@ Powtórz podsumowanie i poproś o potwierdzenie."""
             "role": "system",
             "content": """Powiedz podsumowanie i zapytaj czy potwierdzić.
 
-TAK/potwierdzam → wywołaj confirm_booking_yes
-NIE/zmień/inne imię → wywołaj confirm_booking_no
+You must ALWAYS use one of the available functions to progress:
+- TAK/potwierdzam/dobrze/zgadza się → wywołaj confirm_booking_yes
+- NIE/zmień/inne imię/popraw → wywołaj confirm_booking_no
 
-⚠️ Jeśli klient podaje INNE imię - to znaczy że chce ZMIENIĆ imię w rezerwacji!
-⚠️ Używaj TYLKO confirm_booking_yes lub confirm_booking_no - żadnych innych funkcji!"""
+⚠️ ZASADY:
+- MUSISZ wywołać funkcję - NIE mów że "zarezerwowałam" bez confirm_booking_yes!
+- Dopiero gdy confirm_booking_yes ZWRÓCI SUKCES - rezerwacja jest zapisana
+- Jeśli klient podaje INNE imię - wywołaj confirm_booking_no z what_to_change="imię" """
         }],
         "functions": [
             confirm_booking_yes_function(tenant),

@@ -208,7 +208,8 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
     # Walidacja
     invalid_names = ["pan", "pani", "tak", "nie", "halo", "słucham", "proszę"]
     if not name or len(name) < 2 or name.lower() in invalid_names:
-        return ({"status": "error", "message": "Nie dosłyszałam. Jak mogę zapisać?"}, None)
+        return ({"status": "error", "message": "Nie dosłyszałam. Jak mogę zapisać?"}, 
+                create_collect_contact_name_node(tenant))  # ← RETRY!
     
     # Usuń "pan/pani" z początku
     for prefix in ["pan ", "pani "]:
@@ -276,7 +277,8 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     message = args.get("message", "").strip()
     
     if not message or len(message) < 3:
-        return ({"status": "error", "message": "Nie dosłyszałam. Co mam przekazać?"}, None)
+        return ({"status": "error", "message": "Nie dosłyszałam. Co mam przekazać?"}, 
+                create_collect_message_content_node(tenant))  # ← RETRY!
     
     name = flow_manager.state.get("contact_name", "Nieznany")
     

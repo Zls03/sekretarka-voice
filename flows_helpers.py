@@ -29,32 +29,99 @@ PANEL_SLUG = os.getenv("PANEL_SLUG", "")
 
 
 def parse_polish_date(date_str: str) -> Optional[datetime]:
-    """Parsuj polską datę (dziś, jutro, pojutrze, dzień tygodnia)"""
+    """Parsuj polską datę (dziś, jutro, pojutrze, dzień tygodnia, data)
+    
+    Obsługuje:
+    - "dziś", "dzisiaj", "teraz"
+    - "jutro", "pojutrze"
+    - "sobota", "w sobotę", "sobotę" (wszystkie formy gramatyczne)
+    - "15.02", "15 lutego", "2024-02-15"
+    """
+    import re
+    
+    if not date_str:
+        return None
+    
     date_str = date_str.lower().strip()
+    date_str = apply_stt_corrections(date_str)
     today = datetime.now()
     
-    if date_str in ["dziś", "dzis", "dzisiaj", "teraz"]:
+    # 1. Dziś/jutro/pojutrze
+    if date_str in ["dziś", "dzis", "dzisiaj", "teraz", "na dziś", "na dzis", "na dzisiaj"]:
         return today
-    elif date_str in ["jutro"]:
+    elif date_str in ["jutro", "na jutro"]:
         return today + timedelta(days=1)
-    elif date_str in ["pojutrze"]:
+    elif date_str in ["pojutrze", "na pojutrze"]:
         return today + timedelta(days=2)
-    elif date_str in POLISH_DAYS_REVERSE:
-        target_weekday = POLISH_DAYS_REVERSE[date_str]
+    
+    # 2. Dzień tygodnia - użyj DAY_TO_NUMBER (ma wszystkie formy!)
+    if date_str in DAY_TO_NUMBER:
+        target_weekday = DAY_TO_NUMBER[date_str]
         days_ahead = target_weekday - today.weekday()
         if days_ahead <= 0:
             days_ahead += 7
         return today + timedelta(days=days_ahead)
     
-    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d.%m", "%d-%m-%Y", "%d/%m/%Y"]:
+    # 2b. Sprawdź czy dzień tygodnia jest CZĘŚCIĄ tekstu (np. "na sobotę rano")
+    for day_text, weekday_num in sorted(DAY_TO_NUMBER.items(), key=lambda x: -len(x[0])):
+        if day_text in date_str:
+            days_ahead = weekday_num - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return today + timedelta(days=days_ahead)
+    
+    # 3. Data z numerem dnia i miesiącem słownie (np. "15 lutego", "piętnastego marca")
+    from polish_mappings import MONTH_TO_NUMBER
+    
+    for month_name, month_num in MONTH_TO_NUMBER.items():
+        if month_name in date_str:
+            # Wyciągnij dzień (liczbę)
+            numbers = re.findall(r'\d+', date_str)
+            if numbers:
+                day = int(numbers[0])
+                if 1 <= day <= 31:
+                    year = today.year
+                    try:
+                        result = datetime(year, month_num, day)
+                        # Jeśli data w przeszłości - następny rok
+                        if result.date() < today.date():
+                            result = datetime(year + 1, month_num, day)
+                        return result
+                    except ValueError:
+                        pass  # Nieprawidłowy dzień dla miesiąca
+    
+    # 4. Standardowe formaty daty
+    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d.%m", "%d-%m-%Y", "%d/%m/%Y", "%d/%m"]:
         try:
             parsed = datetime.strptime(date_str, fmt)
             if parsed.year == 1900:
                 parsed = parsed.replace(year=today.year)
+            # Jeśli data w przeszłości - następny rok
+            if parsed.date() < today.date():
+                parsed = parsed.replace(year=today.year + 1)
             return parsed
         except:
             pass
     
+    # 5. Tylko numer dnia (np. "15", "piętnastego") - zakładamy bieżący/następny miesiąc
+    numbers = re.findall(r'\d+', date_str)
+    if numbers:
+        day = int(numbers[0])
+        if 1 <= day <= 31:
+            try:
+                # Spróbuj bieżący miesiąc
+                result = datetime(today.year, today.month, day)
+                if result.date() < today.date():
+                    # Następny miesiąc
+                    if today.month == 12:
+                        result = datetime(today.year + 1, 1, day)
+                    else:
+                        result = datetime(today.year, today.month + 1, day)
+                return result
+            except ValueError:
+                pass
+    
+    logger.warning(f"⚠️ Could not parse date: '{date_str}'")
     return None
 
 
