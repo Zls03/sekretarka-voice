@@ -313,7 +313,7 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
 # ============================================================================
 
 async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str):
-    """Zapisz wiadomość, wyślij email, potwierdź klientowi"""
+    """Zapisz wiadomość, wyślij email, potwierdź klientowi I ROZŁĄCZ"""
     from flows import send_message_email, create_end_node
     
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
@@ -333,8 +333,21 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     flow_manager.state["contact_name"] = None
     flow_manager.state["contact_message"] = None
+    flow_manager.state["conversation_ended"] = True  # 🔥 Dodaj flagę
     
-    return (f"Dziękuję {name}. Przekazałam wiadomość do właściciela, który oddzwoni.",
+    # 🔥 Zaplanuj rozłączenie po TTS
+    async def auto_hangup_after_message():
+        await asyncio.sleep(4.0)  # Czas na "Dziękuję Marcin. Przekazałam..."
+        try:
+            from pipecat.frames.frames import EndFrame
+            await flow_manager.task.queue_frame(EndFrame())
+            logger.info("🔚 EndFrame sent after message saved")
+        except Exception as e:
+            logger.error(f"Error sending EndFrame: {e}")
+    
+    asyncio.create_task(auto_hangup_after_message())
+    
+    return (f"Dziękuję {name}. Przekazałam wiadomość do właściciela, który oddzwoni. Do widzenia!",
             create_end_node(message_saved=True))
 
 
