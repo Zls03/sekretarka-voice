@@ -492,11 +492,14 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     logger.info("👋 Ending conversation")
     flow_manager.state["conversation_ended"] = True
     
-    # Zaplanuj rozłączenie po 2.5s (czas na TTS "Do widzenia")
+    # Powiedz "do widzenia" przez TTS
+    from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+    await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
+    
+    # Zaplanuj rozłączenie po 2.5s (czas na TTS)
     async def delayed_hangup():
         await asyncio.sleep(2.5)
         try:
-            from pipecat.frames.frames import EndFrame
             await flow_manager.task.queue_frame(EndFrame())
             logger.info("🔚 EndFrame sent - disconnecting")
         except Exception as e:
@@ -504,27 +507,40 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     
     asyncio.create_task(delayed_hangup())
     
-    return (None, create_end_node())
+    return (None, create_end_node())  # Cichy node
 
 def create_end_node(message_saved: bool = False) -> dict:
+    """
+    Node końcowy.
+    - Jeśli message_saved=True → mów potwierdzenie i kończyć
+    - Jeśli message_saved=False → cichy (pożegnanie już było w handle_end_conversation)
+    """
     if message_saved:
-        goodbye_text = "Wiadomość została przekazana do właściciela. Dziękuję za kontakt, miłego dnia!"
+        # Wiadomość zapisana - powiedz potwierdzenie
+        return {
+            "name": "end",
+            "respond_immediately": False,
+            "pre_actions": [
+                {"type": "tts_say", "text": "Wiadomość została przekazana do właściciela. Dziękuję za kontakt, miłego dnia!"}
+            ],
+            "post_actions": [
+                {"type": "end_conversation"}
+            ],
+            "role_messages": [],
+            "task_messages": [],
+            "functions": []
+        }
     else:
-        goodbye_text = "Dziękuję za kontakt, miłego dnia!"
-    
-    return {
-        "name": "end",
-        "respond_immediately": False,  # Zapobiega dodatkowej odpowiedzi po zakończeniu
-        "pre_actions": [
-            {"type": "tts_say", "text": goodbye_text}
-        ],
-        "post_actions": [
-            {"type": "end_conversation"}
-        ],
-        "role_messages": [],
-        "task_messages": [],
-        "functions": []
-    }
+        # Normalne zakończenie - CICHY (delayed_hangup już się tym zajmie)
+        return {
+            "name": "end",
+            "respond_immediately": False,
+            "pre_actions": [],
+            "post_actions": [],
+            "role_messages": [],
+            "task_messages": [],
+            "functions": []
+        }
 # ==========================================
 # EXPORTED FUNCTIONS (dla innych modułów)
 # ==========================================

@@ -107,23 +107,27 @@ def create_contact_choice_node(tenant: dict) -> dict:
         "role_messages": [{
             "role": "system",
             "content": """Klient wybiera: wiadomość lub połączenie z właścicielem.
-MUSISZ użyć funkcji contact_choice - NIE odpowiadaj tekstem!"""
+You must ALWAYS use contact_choice function to progress - NIGDY nie odpowiadaj tekstem!"""
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient odpowiada: wiadomość czy połączenie.
+            "content": """You must ALWAYS use contact_choice to progress the conversation.
+
+Klient odpowiada: wiadomość czy połączenie.
 
 WYWOŁAJ contact_choice:
 - "wiadomość", "zostawić", "niech oddzwoni", "nie trzeba łączyć" → choice="wiadomość"
-- "połączenie", "połączyć", "połącz", "bezpośrednio", "teraz", "tak połącz" → choice="połączenie"
+- "połączenie", "połączyć", "połącz", "bezpośrednio", "teraz", "tak połącz", "tak", "proszę" → choice="połączenie"
 
-⛔ ZAKAZ odpowiadania tekstem! MUSISZ wywołać contact_choice!"""
+⚠️ KRYTYCZNE:
+- Jeśli klient mówi "tak" lub "bezpośrednio" lub "połączyć" → choice="połączenie"
+- NIGDY nie mów "nie mogę połączyć" - ZAWSZE wywołaj contact_choice!
+- ZAKAZ odpowiadania tekstem bez wywołania funkcji!"""
         }],
         "functions": [
             contact_choice_function(tenant),
         ]
     }
-
 
 def contact_choice_function(tenant: dict) -> FlowsFunctionSchema:
     """ENUM - GPT nie może się pomylić"""
