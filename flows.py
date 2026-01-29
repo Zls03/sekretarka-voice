@@ -57,11 +57,27 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     # Aktualna data dla GPT
     now = datetime.now()
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
-    
-    # Usługi z kalendarza lub info_services
+
+    # Usługi z kalendarza lub info_services - Z CENAMI!
     if booking_enabled:
         services = tenant.get("services", [])
-        services_list = ", ".join([s["name"] for s in services]) if services else "brak usług"
+        if services:
+            svc_parts = []
+            for s in services:
+                info = s["name"]
+                price = s.get("price")
+                duration = s.get("duration_minutes")
+                if price:
+                    info += f" ({price} zł"
+                    if duration:
+                        info += f", {duration} min"
+                    info += ")"
+                elif duration:
+                    info += f" ({duration} min)"
+                svc_parts.append(info)
+            services_list = ", ".join(svc_parts)
+        else:
+            services_list = "brak usług"
     else:
         info_services = tenant.get("info_services", [])
         services_list = ", ".join([s["name"] + (f" - {s['price']}" if s.get('price') else "") for s in info_services]) if info_services else "brak usług"
@@ -160,7 +176,14 @@ ZASADY:
 - ZAWSZE używaj formy grzecznościowej "Pan/Pani" - NIGDY formy "ty" (np. "Czy mogę Panu pomóc?" nie "Czy mogę ci pomóc?")
 {role_extra}
 
-{today_info}"""
+{today_info}
+
+⚠️ ZAKAZ ZMYŚLANIA:
+- Podawaj TYLKO informacje które masz powyżej
+- Jeśli NIE ZNASZ ceny → "Nie mam podanej ceny tej usługi"
+- Jeśli NIE ZNASZ odpowiedzi → "Nie mam tej informacji"
+- NIGDY nie wymyślaj cen, godzin, adresów ani innych faktów
+- Lepiej przyznać że nie wiesz niż zmyślić"""
         }],
         "task_messages": [{
             "role": "system",

@@ -345,6 +345,7 @@ async def websocket_endpoint(websocket: WebSocket):
             language="pl",
             smart_format=True,
             punctuate=True,
+            numerals=True,
         )
     )
     

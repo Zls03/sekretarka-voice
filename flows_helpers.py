@@ -14,54 +14,19 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from loguru import logger
 
+from polish_mappings import (
+    HOUR_TO_NUMBER, NUMBER_TO_HOUR_WORD,
+    NAME_ALIASES, FULL_NAME_TO_ALIASES,
+    DAY_TO_NUMBER, NUMBER_TO_DAY,
+    POLISH_DAYS, POLISH_DAYS_REVERSE,
+    parse_hour_from_text, match_staff_name,
+    apply_stt_corrections, normalize_polish_text
+)
 # URL do panelu Next.js
 PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
 PANEL_SLUG = os.getenv("PANEL_SLUG", "")
 
-# ==========================================
-# STAŁE - POLSKIE DNI
-# ==========================================
 
-POLISH_DAYS = {
-    0: "poniedziałek",
-    1: "wtorek", 
-    2: "środa",
-    3: "czwartek",
-    4: "piątek",
-    5: "sobota",
-    6: "niedziela"
-}
-
-POLISH_DAYS_REVERSE = {v: k for k, v in POLISH_DAYS.items()}
-
-HOUR_WORDS = {
-    8: "ósmej", 9: "dziewiątej", 10: "dziesiątej",
-    11: "jedenastej", 12: "dwunastej", 13: "trzynastej",
-    14: "czternastej", 15: "piętnastej", 16: "szesnastej",
-    17: "siedemnastej", 18: "osiemnastej", 19: "dziewiętnastej",
-    20: "dwudziestej"
-}
-
-WORD_TO_HOUR = {
-    "ósma": 8, "osma": 8,
-    "dziewiąta": 9, "dziewiata": 9,
-    "dziesiąta": 10, "dziesiata": 10,
-    "jedenasta": 11,
-    "dwunasta": 12,
-    "trzynasta": 13,
-    "czternasta": 14,
-    "piętnasta": 15, "pietnasta": 15,
-    "szesnasta": 16,
-    "siedemnasta": 17,
-    "osiemnasta": 18,
-    "dziewiętnasta": 19, "dziewietnasta": 19,
-    "dwudziesta": 20,
-}
-
-
-# ==========================================
-# PARSOWANIE
-# ==========================================
 
 def parse_polish_date(date_str: str) -> Optional[datetime]:
     """Parsuj polską datę (dziś, jutro, pojutrze, dzień tygodnia)"""
@@ -94,20 +59,8 @@ def parse_polish_date(date_str: str) -> Optional[datetime]:
 
 
 def parse_time(time_str: str) -> Optional[int]:
-    """Parsuj godzinę (słownie lub numerycznie) → zwraca godzinę jako int"""
-    time_str = time_str.lower().strip()
-    
-    if time_str in WORD_TO_HOUR:
-        return WORD_TO_HOUR[time_str]
-    
-    import re
-    numbers = re.findall(r'\d+', time_str)
-    if numbers:
-        hour = int(numbers[0])
-        if 0 <= hour <= 23:
-            return hour
-    
-    return None
+    """Parsuj godzinę - wrapper na polish_mappings.parse_hour_from_text()"""
+    return parse_hour_from_text(time_str)
 
 
 # ==========================================
@@ -116,7 +69,7 @@ def parse_time(time_str: str) -> Optional[int]:
 
 def format_hour_polish(hour: int) -> str:
     """Formatuj godzinę po polsku słownie"""
-    return HOUR_WORDS.get(hour, f"{hour}")
+    return NUMBER_TO_HOUR_WORD.get(hour, f"{hour}")
 
 
 def format_date_polish(date: datetime) -> str:
@@ -395,6 +348,7 @@ async def save_booking_to_api(
     logger.error(f"❌ Booking API failed after 3 attempts")
     return {}
 
+
 async def send_booking_sms(
     tenant: dict, customer_phone: str, service_name: str, 
     staff_name: str, date_str: str, time_str: str, booking_code: str
@@ -580,7 +534,7 @@ def build_business_context(tenant: dict) -> str:
                     except:
                         pass
             if staff_hours:
-                parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
+                parts.append("⚠️ Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji. NIE WYMYŚLAJ.")
     
     return "\n\n".join(parts)
 
@@ -606,6 +560,7 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
         return None
     
     query = query.lower().strip()
+    query = apply_stt_corrections(query)
     
     best_match = None
     best_score = 0
@@ -645,81 +600,29 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
 
 def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.85) -> dict | None:
     """
-    Dopasuj pracownika - STRICT MODE.
+    Dopasuj pracownika - używa polish_mappings dla zdrobnień i błędów STT.
     Zwraca None jeśli nie ma pewności (bot dopyta).
-    
-    Zasada: Lepiej dopytać niż źle dopasować!
     """
+    # Użyj funkcji z polish_mappings
+    result = match_staff_name(query, staff_list)
+    
+    if result:
+        return result
+    
+    # Fallback - stara logika dla edge cases
     if not query or not staff_list:
         return None
     
     query = query.lower().strip()
+    query = apply_stt_corrections(query)
     
-    # Polskie zdrobnienia - mapowanie na pełne imiona
-    name_aliases = {
-        # Kobiece
-        "ania": "anna", "ani": "anna", "aneczka": "anna",
-        "kasia": "katarzyna", "kaśka": "katarzyna", "kasieńka": "katarzyna",
-        "asia": "joanna", "joasia": "joanna", "aśka": "joanna",
-        "basia": "barbara", "baśka": "barbara",
-        "gosia": "małgorzata", "gośka": "małgorzata",
-        "ela": "elżbieta", "elka": "elżbieta",
-        "ola": "aleksandra", "olka": "aleksandra",
-        "ewka": "ewa", "ewunia": "ewa",
-        "magda": "magdalena", "magdzia": "magdalena",
-        "wika": "wiktoria",
-        # Męskie
-        "tomek": "tomasz",
-        "bartek": "bartłomiej", "bartuś": "bartłomiej",
-        "krzysiek": "krzysztof", "krzyś": "krzysztof",
-        "piotrek": "piotr",
-        "marciniek": "marcin",
-        "michałek": "michał",
-        "janek": "jan", "jasiek": "jan",
-        "maciek": "maciej",
-        "witek": "wiktor",
-    }
-    
-    # Zamień zdrobnienie na pełne imię (jeśli jest w słowniku)
-    normalized_query = name_aliases.get(query, query)
-    
-    # KROK 1: Exact match (case insensitive)
+    # Exact match
     for staff in staff_list:
         name = staff["name"].lower().strip()
-        if normalized_query == name:
-            return staff
-        # Sprawdź też oryginalne query
-        if query == name:
+        if query == name or query == name.split()[0]:
             return staff
     
-    # KROK 2: Imię zawiera się w pełnej nazwie (np. "anna" w "Anna Kowalska")
-    for staff in staff_list:
-        name = staff["name"].lower().strip()
-        first_name = name.split()[0] if " " in name else name
-        
-        if normalized_query == first_name:
-            return staff
-        if query == first_name:
-            return staff
-    
-    # KROK 3: Sprawdź czy zdrobnienie pasuje do imienia pracownika
-    for staff in staff_list:
-        staff_name = staff["name"].lower().strip()
-        staff_first_name = staff_name.split()[0] if " " in staff_name else staff_name
-        
-        # Czy query to zdrobnienie od imienia pracownika?
-        for alias, full_name in name_aliases.items():
-            if alias == query and full_name == staff_first_name:
-                return staff
-            if alias == query and staff_first_name.startswith(full_name[:3]):
-                return staff
-    
-    # KROK 4: NIE ZGADUJ - zwróć None, bot dopyta
-    # (usunięty fuzzy matching - zbyt ryzykowny)
-    
-    from loguru import logger
-    logger.warning(f"⚠️ Staff not found: '{query}' (normalized: '{normalized_query}'). Bot will ask.")
-    
+    logger.warning(f"⚠️ Staff not found: '{query}'. Bot will ask.")
     return None
 
 def staff_can_do_service(staff: dict, service: dict) -> bool:
