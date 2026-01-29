@@ -161,6 +161,9 @@ async def get_greeting_audio(tenant_id: str):
 # ==========================================
 # TTS PROVIDER FACTORY
 # ==========================================
+# Domyślny głos ElevenLabs (używany gdy firma nie ma własnego)
+DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+
 def create_tts_service(tenant: dict):
     """
     Tworzy odpowiedni TTS service na podstawie ustawień tenant.
@@ -168,6 +171,10 @@ def create_tts_service(tenant: dict):
     tenant['tts_provider']:
       - 'elevenlabs' (domyślnie) - najlepsza jakość polskiego
       - 'cartesia' - najszybszy, ale polski może brzmieć inaczej
+    
+    tenant['elevenlabs_voice_id']:
+      - jeśli ustawione - używa tego głosu
+      - jeśli puste/NULL - używa DEFAULT_ELEVENLABS_VOICE_ID
     """
     tts_provider = tenant.get('tts_provider', 'elevenlabs')
     
@@ -181,11 +188,12 @@ def create_tts_service(tenant: dict):
             sample_rate=24000,
         )
     else:
-        # Domyślnie ElevenLabs
-        logger.info(f"🎙️ Using ElevenLabs TTS (quality mode)")
+        # ElevenLabs - użyj głosu z bazy lub domyślnego
+        voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
+        logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id}")
         return ElevenLabsTTSService(
             api_key=os.getenv("ELEVENLABS_API_KEY"),
-            voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+            voice_id=voice_id,
             model="eleven_turbo_v2_5",
             output_format="pcm_24000",
             stability=0.6,
