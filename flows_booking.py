@@ -171,7 +171,11 @@ def start_booking_function() -> FlowsFunctionSchema:
 
 
 async def handle_start_booking(args: dict, flow_manager: FlowManager):
-    """Start rezerwacji - KOD resetuje state i przechodzi do wyboru usługi"""
+    """Start rezerwacji - KOD resetuje state i przechodzi do wyboru usługi
+    
+    Zgodnie z Pipecat Flows best practices - wykrywamy pre-wybory z kontekstu
+    i zapisujemy do flow_manager.state dla późniejszego użycia.
+    """
     from flows_contact import create_collect_contact_name_node
     
     tenant = flow_manager.state.get("tenant", {})
@@ -186,6 +190,7 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
     flow_manager.state["selected_time"] = None
     flow_manager.state["customer_name"] = None
     flow_manager.state["available_slots"] = []
+    flow_manager.state["pre_selected_staff"] = None  # Pre-wybór z kontekstu
     
     # Walidacja
     services = tenant.get("services", [])
@@ -199,6 +204,30 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
         logger.error("❌ No staff configured")
         return ({"error": "Brak skonfigurowanych pracowników"}, create_collect_contact_name_node(tenant))
     
+    # Wykryj pre-wybranego pracownika z kontekstu rozmowy
+    try:
+        context = flow_manager.get_current_context()
+        staff_names_lower = {s["name"].lower(): s for s in staff_list}
+        
+        # Sprawdź ostatnie wiadomości użytkownika
+        for msg in reversed(context[-10:] if len(context) > 10 else context):
+            if msg.get("role") == "user":
+                content = msg.get("content", "").lower()
+                for name_lower, staff_obj in staff_names_lower.items():
+                    if name_lower in content:
+                        flow_manager.state["pre_selected_staff"] = staff_obj
+                        logger.info(f"📝 Pre-selected staff from context: {staff_obj['name']}")
+                        break
+            if flow_manager.state.get("pre_selected_staff"):
+                break
+    except Exception as e:
+        logger.debug(f"Could not parse context for pre-selection: {e}")
+    
+    # Jeśli mamy pre-wybranego pracownika, filtruj usługi
+    pre_staff = flow_manager.state.get("pre_selected_staff")
+    if pre_staff:
+        return ({"status": "started"}, create_get_service_node(tenant, filter_by_staff=pre_staff))
+    
     # Przejdź do wyboru usługi
     return ({"status": "started"}, create_get_service_node(tenant))
 
@@ -207,23 +236,39 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
 # KROK 1/6: WYBÓR USŁUGI
 # ============================================================================
 
-def create_get_service_node(tenant: dict) -> dict:
-    """NODE: Wybór usługi - GPT generuje naturalny tekst"""
+def create_get_service_node(tenant: dict, filter_by_staff: dict = None) -> dict:
+    """NODE: Wybór usługi - GPT generuje naturalny tekst
+    
+    Args:
+        filter_by_staff: Jeśli podany, pokazuj tylko usługi tego pracownika
+    """
     services = tenant.get("services", [])
+    
+    # Filtruj usługi jeśli pracownik pre-wybrany
+    staff_info = ""
+    if filter_by_staff:
+        staff_service_ids = set(s.get("id") for s in filter_by_staff.get("services", []))
+        if staff_service_ids:
+            services = [s for s in services if s.get("id") in staff_service_ids]
+        staff_info = f" u {filter_by_staff.get('name', '')}"
+        logger.info(f"📝 Filtering services for {filter_by_staff.get('name')}: {[s['name'] for s in services]}")
+    
     service_names = [s["name"] for s in services]
     services_list = ", ".join(service_names)
     
+    role_content = f"""Jesteś w trakcie umawiania wizyty.
+KROK 1 z 6: Wybór usługi.
+
+Dostępne usługi{staff_info}: {services_list}
+
+Powiedz naturalnie że chętnie umówisz wizytę{staff_info} i zapytaj na jaką usługę."""
+
     return {
         "name": "get_service",
         "respond_immediately": True,  # GPT od razu generuje odpowiedź
         "role_messages": [{
             "role": "system",
-            "content": f"""Jesteś w trakcie umawiania wizyty.
-KROK 1 z 6: Wybór usługi.
-
-Dostępne usługi: {services_list}
-
-Powiedz naturalnie że chętnie umówisz wizytę i zapytaj na jaką usługę."""
+            "content": role_content
         }],
         "task_messages": [{
             "role": "system",
@@ -275,9 +320,24 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     flow_manager.state["selected_service"] = found
     logger.info(f"✅ [1/6] Service: {found['name']}")
     
+    # Sprawdź czy pracownik był pre-wybrany
+    pre_staff = flow_manager.state.get("pre_selected_staff")
+    if pre_staff:
+        # Walidacja: czy ten pracownik wykonuje wybraną usługę?
+        staff_service_ids = [svc.get("id") for svc in pre_staff.get("services", [])]
+        if staff_service_ids and found.get("id") not in staff_service_ids:
+            # Pracownik nie wykonuje tej usługi - wyczyść pre-wybór
+            logger.info(f"⚠️ Pre-selected {pre_staff['name']} doesn't do {found['name']}, clearing")
+            flow_manager.state["pre_selected_staff"] = None
+        else:
+            # OK - użyj pre-wybranego pracownika i pomiń krok wyboru
+            flow_manager.state["selected_staff"] = pre_staff
+            logger.info(f"✅ [2/6] Staff (pre-selected): {pre_staff['name']}")
+            return ({"success": True, "service": found["name"], "staff": pre_staff["name"]}, 
+                    create_get_date_node(tenant, pre_staff))
+    
     # KOD decyduje o przejściu do pracownika
     return ({"success": True, "service": found["name"]}, create_get_staff_node(tenant, found))
-
 
 # ============================================================================
 # KROK 2/6: WYBÓR PRACOWNIKA
@@ -336,7 +396,8 @@ def select_staff_function(tenant: dict, available_names: list) -> FlowsFunctionS
     
     return FlowsFunctionSchema(
         name="select_staff",
-        description="Klient wybrał pracownika",
+        description=f"""Klient wybrał pracownika. Dostępni: {staff_hint}
+UWAGA: "Nie, do X" lub "Nie, chcę X" znaczy że klient WYBIERA X (nie zgadza się z Twoją propozycją).""",
         properties={
             "staff_name": {
                 "type": "string", 
@@ -670,7 +731,10 @@ Powtórz podsumowanie i poproś o potwierdzenie."""
             "content": """Powiedz podsumowanie i zapytaj czy potwierdzić.
 
 TAK/potwierdzam → wywołaj confirm_booking_yes
-NIE/zmień → wywołaj confirm_booking_no"""
+NIE/zmień/inne imię → wywołaj confirm_booking_no
+
+⚠️ Jeśli klient podaje INNE imię - to znaczy że chce ZMIENIĆ imię w rezerwacji!
+⚠️ Używaj TYLKO confirm_booking_yes lub confirm_booking_no - żadnych innych funkcji!"""
         }],
         "functions": [
             confirm_booking_yes_function(tenant),

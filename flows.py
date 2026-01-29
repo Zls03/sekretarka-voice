@@ -292,7 +292,7 @@ def create_anything_else_node(tenant: dict) -> dict:
         "task_messages": [{"role": "system", "content": "Zapytaj czy możesz jeszcze pomóc."}],
         "functions": [
             need_more_help_function(tenant),
-            contact_owner_function(tenant),  
+            contact_owner_function(tenant),
             no_more_help_function(),
         ]
     }
