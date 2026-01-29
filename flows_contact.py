@@ -337,7 +337,7 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     # 🔥 Zaplanuj rozłączenie po TTS
     async def auto_hangup_after_message():
-        await asyncio.sleep(4.0)  # Czas na "Dziękuję Marcin. Przekazałam..."
+        await asyncio.sleep(3.0)  # Czas na "Dziękuję Marcin. Przekazałam..."
         try:
             from pipecat.frames.frames import EndFrame
             await flow_manager.task.queue_frame(EndFrame())

@@ -547,13 +547,13 @@ async def websocket_endpoint(websocket: WebSocket):
         # 🔥 Prosty timer: jeśli cisza po greeting → rozłącz
         if greeting_played:
             async def greeting_silence_watchdog():
-                """Jeśli 15s ciszy po greeting → Halo, kolejne 5s → rozłącz"""
+                """Jeśli 10s ciszy po greeting → Halo, kolejne 5s → rozłącz"""
                 nonlocal conversation_ended
                 
                 await asyncio.sleep(10.0)
                 
-                # Sprawdź czy ktoś się odezwał
-                if conversation_ended:
+                # Sprawdź WSZYSTKIE sygnały że rozmowa trwa
+                if conversation_ended or flow_manager.state.get("conversation_ended"):
                     return
                 
                 try:
@@ -562,32 +562,41 @@ async def websocket_endpoint(websocket: WebSocket):
                 except:
                     has_user = False
                 
-                if not has_user:
-                    logger.info("⏰ No response after greeting - saying Halo")
-                    from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-                    await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
-                    
-                    await asyncio.sleep(5.0)
-                    
-                    if conversation_ended:
-                        return
-                    
-                    try:
-                        ctx2 = flow_manager.get_current_context()
-                        has_user2 = any(m.get("role") == "user" for m in ctx2)
-                    except:
-                        has_user2 = False
-                    
-                    if not has_user2:
-                        logger.info("⏰ Still no response - ending call")
-                        conversation_ended = True
-                        await task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
-                        await asyncio.sleep(2.0)
-                        await task.queue_frame(EndFrame())
-                        logger.info("🔚 EndFrame sent from greeting watchdog")
+                if has_user:
+                    logger.info("⏰ Watchdog: user already responded, stopping")
+                    return
+                
+                logger.info("⏰ No response after greeting - saying Halo")
+                from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+                await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
+                
+                await asyncio.sleep(6.0)  # Daj więcej czasu na odpowiedź
+                
+                # Sprawdź PONOWNIE wszystkie sygnały
+                if conversation_ended or flow_manager.state.get("conversation_ended"):
+                    logger.info("⏰ Watchdog: conversation ended, stopping")
+                    return
+                
+                try:
+                    ctx2 = flow_manager.get_current_context()
+                    has_user2 = any(m.get("role") == "user" for m in ctx2)
+                except:
+                    has_user2 = False
+                
+                if has_user2:
+                    logger.info("⏰ Watchdog: user responded after Halo, stopping")
+                    return
+                
+                # Dopiero teraz kończymy
+                logger.info("⏰ Still no response - ending call")
+                conversation_ended = True
+                await task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
+                await asyncio.sleep(2.0)
+                await task.queue_frame(EndFrame())
+                logger.info("🔚 EndFrame sent from greeting watchdog")
             
             asyncio.create_task(greeting_silence_watchdog())
-            logger.info("⏰ Greeting silence watchdog started (15s)")
+            logger.info("⏰ Greeting silence watchdog started (10s)")
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
