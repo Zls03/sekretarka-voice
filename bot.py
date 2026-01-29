@@ -376,18 +376,14 @@ async def websocket_endpoint(websocket: WebSocket):
     
     async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
         """
-        NAPRAWIONE: Używa TTSSpeakFrame - omija GPT całkowicie!
-        GPT NIE MOŻE halucynować dat bo w ogóle nie jest wywoływany.
-        
-        retry_count=1 → "Halo?" (direct TTS)
-        retry_count>=2 → rozłącz (direct TTS)
+        NAPRAWIONE: Używa task.queue_frame dla EndFrame
         """
-        # Jeśli rozmowa już zakończona - nie rób nic
+        nonlocal conversation_ended
+        
         if conversation_ended:
             logger.info("⏰ Idle triggered but conversation already ended")
             return False
         
-        # Jeśli transfer w toku - nie przeszkadzaj!
         if flow_manager.state.get("transfer_requested"):
             logger.info("⏰ Idle triggered but transfer in progress - ignoring")
             return False
@@ -403,27 +399,33 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"⏰ User idle - retry #{retry_count}")
         
         if retry_count == 1:
-            # ✅ NAPRAWIONE: TTSSpeakFrame omija GPT całkowicie!
-            # GPT nie jest wywoływany = nie może wymyślać dat
             from pipecat.frames.frames import TTSSpeakFrame
-            await processor.push_frame(
+            await task.queue_frame(
                 TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?")
             )
-            # Skróć timeout na kolejne sprawdzenie
-            processor._timeout = 10.0
+            processor._timeout = 5.0
             return True
             
         else:
-            # ✅ NAPRAWIONE: Direct TTS - żadnego GPT!
-            logger.info("⏰ User idle too long - ending call")
+            logger.info("⏰ User idle too long - ending call NOW")
+            conversation_ended = True
+            
             from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-            await processor.push_frame(
+            await task.queue_frame(
                 TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!")
             )
-            await asyncio.sleep(2.5)
-            await processor.push_frame(EndFrame())
+            
+            async def force_hangup():
+                await asyncio.sleep(2.0)
+                try:
+                    await task.queue_frame(EndFrame())
+                    logger.info("🔚 EndFrame sent from idle handler")
+                except Exception as e:
+                    logger.error(f"Error sending EndFrame from idle: {e}")
+            
+            asyncio.create_task(force_hangup())
             return False
-    
+        
     # User Idle Processor - wykrywa ciszę od użytkownika
     # Początkowy timeout 10s, po pierwszym pytaniu zmienia się na 5s
     user_idle = UserIdleProcessor(
@@ -539,11 +541,15 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
-        # Uruchom monitor max czasu rozmowy
         asyncio.create_task(check_max_duration())
-        # Przekaż info czy powitanie już odtworzone przez Twilio <Play>
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-    
+        
+        # 🔥 Uruchom idle timer gdy greeting był pre-played
+        if greeting_played:
+            from pipecat.frames.frames import BotStoppedSpeakingFrame
+            await task.queue_frame(BotStoppedSpeakingFrame())
+            logger.info("⏰ Idle timer triggered (greeting was pre-played)")
+
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("📴 Client disconnected")
