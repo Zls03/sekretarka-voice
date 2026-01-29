@@ -14,9 +14,6 @@ from pipecat_flows import FlowManager, FlowsFunctionSchema
 from loguru import logger
 import asyncio
 
-# Lazy imports - unikamy circular import
-# from flows import end_conversation_function, create_end_node, send_message_email
-
 
 # ============================================================================
 # GŁÓWNA FUNKCJA - GPT wywołuje gdy klient chce kontakt
@@ -56,8 +53,8 @@ def contact_owner_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: dict):
-    """KOD decyduje: dać wybór (wiadomość/połączenie) czy tylko wiadomość"""
-    reason = args.get("reason", "")
+    """KOD decyduje na podstawie reason - auto-transfer gdy wyraźna prośba"""
+    reason = args.get("reason", "").lower()
     customer_name = args.get("customer_name", "")
     message = args.get("message", "")
     
@@ -69,6 +66,11 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     if message:
         flow_manager.state["contact_message"] = message
     
+    # Jeśli mamy już imię i wiadomość - zapisz od razu
+    if customer_name and message:
+        logger.info("📞 Have name and message - saving directly")
+        return await save_and_confirm_message(flow_manager, tenant, customer_name, message)
+    
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
@@ -76,16 +78,21 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     logger.info(f"📞 Transfer available: {has_transfer} (enabled={transfer_enabled}, number='{transfer_number}')")
     
-    # Jeśli mamy już imię i wiadomość - zapisz od razu
-    if customer_name and message:
-        logger.info("📞 Have name and message - saving directly")
-        return await save_and_confirm_message(flow_manager, tenant, customer_name, message)
+    # 🔥 KOD analizuje REASON i decyduje AUTOMATYCZNIE
+    transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "właściciel", "rozmawiać z", "porozmawiać"]
+    wants_transfer = any(kw in reason for kw in transfer_keywords)
     
-    # Jeśli transfer dostępny - daj wybór
-    if has_transfer:
+    if has_transfer and wants_transfer:
+        # Klient WYRAŹNIE chce połączenie → TRANSFER OD RAZU (bez pytania!)
+        logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
+        return await execute_transfer(flow_manager, tenant)
+    
+    elif has_transfer:
+        # Transfer dostępny ale klient nie prosił wyraźnie → zapytaj
         return (None, create_contact_choice_node(tenant))
+    
     else:
-        # Tylko wiadomość
+        # Brak transferu → tylko wiadomość
         if customer_name:
             return (None, create_collect_message_content_node(tenant))
         else:
@@ -97,7 +104,7 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
 # ============================================================================
 
 def create_contact_choice_node(tenant: dict) -> dict:
-    """Pytanie o wybór - 3 funkcje: transfer, wiadomość, clarify (VAPI-style)"""
+    """Pytanie o wybór - DWIE osobne funkcje (prostsze dla GPT)"""
     return {
         "name": "contact_choice",
         "pre_actions": [
@@ -106,91 +113,60 @@ def create_contact_choice_node(tenant: dict) -> dict:
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": """Klient wybiera: wiadomość lub połączenie z właścicielem.
-MUSISZ wywołać jedną z funkcji - NIGDY nie odpowiadaj tekstem!"""
+            "content": "Klient wybiera sposób kontaktu z właścicielem."
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Słuchaj odpowiedzi klienta i wywołaj JEDNĄ z funkcji:
+            "content": """Klient odpowiada na pytanie: wiadomość czy połączenie.
 
-transfer_call → gdy klient WYRAŹNIE chce połączenie:
-  "połączyć", "bezpośrednio", "tak połącz", "teraz", "proszę połączyć"
+Wywołaj JEDNĄ z funkcji:
+- do_transfer → gdy klient chce POŁĄCZENIE ("połączyć", "bezpośrednio", "tak", "proszę")
+- do_message → gdy klient chce WIADOMOŚĆ ("wiadomość", "zostawić", "niech oddzwoni", "nie")
 
-leave_message → gdy klient WYRAŹNIE chce wiadomość:
-  "wiadomość", "zostawić", "niech oddzwoni", "przekaż", "nie trzeba łączyć"
-
-clarify_contact_choice → gdy NIEPEWNE lub NIEJASNE:
-  "tak", "nie", "hmm", "no nie wiem", cokolwiek niejasnego
-
-⚠️ W RAZIE WĄTPLIWOŚCI → clarify_contact_choice (lepiej dopytać niż źle połączyć)
 ⛔ NIGDY nie odpowiadaj tekstem - ZAWSZE wywołaj funkcję!"""
         }],
         "functions": [
-            transfer_call_function(tenant),
-            leave_message_function(tenant),
-            clarify_contact_choice_function(tenant),
+            do_transfer_function(tenant),
+            do_message_function(tenant),
         ]
     }
 
-def transfer_call_function(tenant: dict) -> FlowsFunctionSchema:
-    """Klient WYRAŹNIE chce połączenie"""
+
+def do_transfer_function(tenant: dict) -> FlowsFunctionSchema:
+    """Prosta funkcja bez parametrów - łatwiejsza dla GPT"""
     return FlowsFunctionSchema(
-        name="transfer_call",
-        description="""Klient WYRAŹNIE chce POŁĄCZENIE z właścicielem.
-Użyj TYLKO gdy mówi jasno: "połączyć", "bezpośrednio", "tak połącz", "proszę połączyć", "teraz".
-NIE używaj przy samym "tak" lub "nie wiem".""",
+        name="do_transfer",
+        description="Klient chce POŁĄCZENIE telefoniczne z właścicielem. Użyj gdy mówi: połączyć, bezpośrednio, tak, proszę, teraz.",
         properties={},
         required=[],
-        handler=lambda args, fm: handle_transfer_call(args, fm, tenant),
+        handler=lambda args, fm: handle_do_transfer(args, fm, tenant),
     )
 
 
-def leave_message_function(tenant: dict) -> FlowsFunctionSchema:
-    """Klient WYRAŹNIE chce wiadomość"""
+def do_message_function(tenant: dict) -> FlowsFunctionSchema:
+    """Prosta funkcja bez parametrów - łatwiejsza dla GPT"""
     return FlowsFunctionSchema(
-        name="leave_message",
-        description="""Klient WYRAŹNIE chce zostawić WIADOMOŚĆ.
-Użyj gdy mówi: "wiadomość", "zostawić", "niech oddzwoni", "przekaż", "nie trzeba łączyć".""",
+        name="do_message",
+        description="Klient chce zostawić WIADOMOŚĆ. Użyj gdy mówi: wiadomość, zostawić, niech oddzwoni, przekaż, nie trzeba łączyć.",
         properties={},
         required=[],
-        handler=lambda args, fm: handle_leave_message(args, fm, tenant),
+        handler=lambda args, fm: handle_do_message(args, fm, tenant),
     )
 
 
-def clarify_contact_choice_function(tenant: dict) -> FlowsFunctionSchema:
-    """Odpowiedź niejasna - dopytaj"""
-    return FlowsFunctionSchema(
-        name="clarify_contact_choice",
-        description="""Odpowiedź klienta jest NIEJASNA lub NIEPEWNA.
-Użyj gdy: "tak", "nie", "hmm", "no nie wiem", lub cokolwiek niejasnego.
-LEPIEJ dopytać niż źle połączyć!""",
-        properties={},
-        required=[],
-        handler=lambda args, fm: handle_clarify_contact_choice(args, fm, tenant),
-    )
-
-async def handle_transfer_call(args: dict, flow_manager: FlowManager, tenant: dict):
+async def handle_do_transfer(args: dict, flow_manager: FlowManager, tenant: dict):
     """Transfer - wykonaj natychmiast"""
-    logger.info("📞 TRANSFER requested - executing")
+    logger.info("📞 DO_TRANSFER called - executing transfer")
     return await execute_transfer(flow_manager, tenant)
 
 
-async def handle_leave_message(args: dict, flow_manager: FlowManager, tenant: dict):
+async def handle_do_message(args: dict, flow_manager: FlowManager, tenant: dict):
     """Wiadomość - zbierz dane"""
-    logger.info("📝 MESSAGE requested - collecting data")
+    logger.info("📝 DO_MESSAGE called - collecting data")
     if flow_manager.state.get("contact_name"):
         return (None, create_collect_message_content_node(tenant))
     else:
         return (None, create_collect_contact_name_node(tenant))
-
-
-async def handle_clarify_contact_choice(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Niejasne - zapytaj ponownie"""
-    logger.info("❓ CLARIFY requested - asking again")
-    return (
-        {"clarify": "Przepraszam, czy chce Pan połączenie telefoniczne teraz, czy wolałby Pan zostawić wiadomość?"},
-        create_contact_choice_node(tenant)
-    )
 
 
 # ============================================================================
@@ -244,7 +220,7 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
     invalid_names = ["pan", "pani", "tak", "nie", "halo", "słucham", "proszę"]
     if not name or len(name) < 2 or name.lower() in invalid_names:
         return ({"status": "error", "message": "Nie dosłyszałam. Jak mogę zapisać?"}, 
-                create_collect_contact_name_node(tenant))  # ← RETRY!
+                create_collect_contact_name_node(tenant))
     
     # Usuń "pan/pani" z początku
     for prefix in ["pan ", "pani "]:
@@ -313,7 +289,7 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     
     if not message or len(message) < 3:
         return ({"status": "error", "message": "Nie dosłyszałam. Co mam przekazać?"}, 
-                create_collect_message_content_node(tenant))  # ← RETRY!
+                create_collect_message_content_node(tenant))
     
     name = flow_manager.state.get("contact_name", "Nieznany")
     
@@ -326,14 +302,12 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
 
 async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str):
     """Zapisz wiadomość, wyślij email, potwierdź klientowi"""
-    # Lazy import
     from flows import send_message_email, create_end_node
     
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     
     logger.info(f"📧 Saving message: {name} - {message[:50]}...")
     
-    # Wyślij email
     owner_email = tenant.get("notification_email") or tenant.get("email")
     
     if owner_email:
@@ -345,7 +319,6 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     else:
         logger.warning("📧 No owner email configured!")
     
-    # Wyczyść state
     flow_manager.state["contact_name"] = None
     flow_manager.state["contact_message"] = None
     
@@ -355,7 +328,6 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
 
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     """Wykonaj transfer rozmowy do właściciela"""
-    # Lazy import
     from flows import create_end_node
     from helpers import db
     
@@ -414,7 +386,6 @@ async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     flow_manager.state["transfer_requested"] = True
     flow_manager.state["conversation_ended"] = True
     
-    # Zamknij WebSocket po 3s (czas na TTS)
     async def close_for_transfer():
         await asyncio.sleep(3.0)
         try:
@@ -446,23 +417,16 @@ def _create_transfer_end_node() -> dict:
     }
 
 
-# ============================================================================
-# HELPER: Pobierz end_conversation z flows.py (lazy)
-# ============================================================================
-
 def _get_end_conversation_function():
     """Lazy import end_conversation_function"""
     from flows import end_conversation_function
     return end_conversation_function()
 
 
-# ============================================================================
-# EXPORTS
-# ============================================================================
-
 __all__ = [
     "contact_owner_function",
-    "contact_choice_function",
+    "do_transfer_function",
+    "do_message_function",
     "set_contact_name_function", 
     "set_contact_message_function",
     "create_contact_choice_node",
