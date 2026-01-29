@@ -544,12 +544,50 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(check_max_duration())
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
         
-        # 🔥 Wymuś start idle timera przez krótki TTS
+        # 🔥 Prosty timer: jeśli cisza po greeting → rozłącz
         if greeting_played:
-            from pipecat.frames.frames import TTSSpeakFrame
-            # Pusty tekst lub bardzo krótki - tylko żeby uruchomić timer
-            await task.queue_frame(TTSSpeakFrame(text=" "))  # Spacja
-            logger.info("⏰ Idle timer started via silent TTS")
+            async def greeting_silence_watchdog():
+                """Jeśli 15s ciszy po greeting → Halo, kolejne 5s → rozłącz"""
+                nonlocal conversation_ended
+                
+                await asyncio.sleep(10.0)
+                
+                # Sprawdź czy ktoś się odezwał
+                if conversation_ended:
+                    return
+                
+                try:
+                    ctx = flow_manager.get_current_context()
+                    has_user = any(m.get("role") == "user" for m in ctx)
+                except:
+                    has_user = False
+                
+                if not has_user:
+                    logger.info("⏰ No response after greeting - saying Halo")
+                    from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+                    await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
+                    
+                    await asyncio.sleep(5.0)
+                    
+                    if conversation_ended:
+                        return
+                    
+                    try:
+                        ctx2 = flow_manager.get_current_context()
+                        has_user2 = any(m.get("role") == "user" for m in ctx2)
+                    except:
+                        has_user2 = False
+                    
+                    if not has_user2:
+                        logger.info("⏰ Still no response - ending call")
+                        conversation_ended = True
+                        await task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
+                        await asyncio.sleep(2.0)
+                        await task.queue_frame(EndFrame())
+                        logger.info("🔚 EndFrame sent from greeting watchdog")
+            
+            asyncio.create_task(greeting_silence_watchdog())
+            logger.info("⏰ Greeting silence watchdog started (15s)")
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
