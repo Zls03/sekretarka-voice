@@ -216,13 +216,15 @@ def create_tts_service(tenant: dict):
     tts_provider = tenant.get('tts_provider', 'elevenlabs')
     
     if tts_provider == 'cartesia':
-        logger.info(f"🎙️ Using Cartesia TTS (fast mode)")
+        logger.info(f"🎙️ Using Cartesia TTS (best PL quality mode)")
         return CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="dcf62f33-7cff-4f20-85b2-2efaa68cbc32",  # Polish
-            model_id="sonic-2",
+            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",  # Polish
+            model_id="sonic-hd",  # zamiast sonic-2, lepsza naturalność
             language="pl",
             sample_rate=24000,
+            speed=1.0,   # normalna prędkość
+            pitch=0.0,   # neutralny ton
         )
     else:
         # ElevenLabs - użyj głosu z bazy lub domyślnego
