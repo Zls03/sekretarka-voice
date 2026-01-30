@@ -510,6 +510,11 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
         
         # Wróć do anything_else zamiast kończyć
         tenant = flow_manager.state.get("tenant", {})
+        
+        # Powiedz że rezerwacja anulowana
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Rozumiem, rezerwacja anulowana."))
+        
         return (
             {"cancelled": True, "reason": "end_conversation_during_booking"},
             create_anything_else_node(tenant)
