@@ -365,10 +365,10 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.5,      # 🔽 Niższy próg = łatwiej wykrywa mowę
-                    start_secs=0.2,      # 🔽 Szybciej reaguje na mowę
-                    stop_secs=1.2,       # 🔽 Trochę krócej czeka na koniec
-                    min_volume=0.3,      # 🔽 Niższy próg głośności
+                    confidence=0.6,      # Wyższy próg (domyślnie 0.7)
+                    start_secs=0.3,      # Dłużej czekaj przed uznaniem za mowę
+                    stop_secs=1.0,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
             serializer=TwilioFrameSerializer(
@@ -391,9 +391,8 @@ async def websocket_endpoint(websocket: WebSocket):
             smart_format=True,
             punctuate=True,
             numerals=True,
-            interim_results=True,  # 🆕 Pokazuje partial transcripts
-            utterance_end_ms=1500,  # 🆕 Koniec wypowiedzi po 1.5s ciszy
-            vad_events=True,  # 🆕 Loguje VAD events z Deepgram
+            interim_results=True,
+            utterance_end_ms=1200,
         )
     )
     
