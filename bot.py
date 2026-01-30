@@ -396,12 +396,10 @@ async def websocket_endpoint(websocket: WebSocket):
     # TTS - wybór na podstawie ustawień tenant
     tts = create_tts_service(tenant)
 
-    # LLM - Groq dla szybkości (test)
-    llm = GroqLLMService(
-        api_key=os.getenv("GROQ_API_KEY"),
-        model="llama-3.3-70b-versatile",
+    llm = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model="gpt-4.0-mini",
     )
-    logger.info("🧠 Using Groq LLM (fast mode)")
 
     
     # Context
