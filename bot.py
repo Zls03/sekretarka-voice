@@ -536,39 +536,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
 
     # ==========================================
-    # TRANSCRIPT PROCESSOR - zapisuje rozmowę
-    # ==========================================
-    from pipecat.frames.frames import TranscriptionFrame, TextFrame
-    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-    
-    class TranscriptLogger(FrameProcessor):
-        """Przechwytuje transkrypcje i odpowiedzi bota"""
-        
-        def __init__(self, tenant_id: str, call_sid: str):
-            super().__init__()
-            self.tenant_id = tenant_id
-            self.call_sid = call_sid
-        
-        async def process_frame(self, frame, direction):
-            await super().process_frame(frame, direction)
-            
-            # Transkrypcja użytkownika (STT)
-            if isinstance(frame, TranscriptionFrame) and frame.text:
-                text = frame.text.strip()
-                if len(text) > 1:  # Ignoruj pojedyncze znaki
-                    await save_transcript(self.tenant_id, self.call_sid, "user", text)
-                    logger.debug(f"📝 User: {text[:50]}...")
-            
-            await self.push_frame(frame, direction)
-    
-    transcript_logger = TranscriptLogger(tenant.get("id", ""), call_sid)
-    # ==========================================
     # PIPELINE
     # ==========================================
     pipeline = Pipeline([
         transport.input(),
         stt,
-        transcript_logger,
         user_idle, 
         context_aggregator.user(),
         llm,
