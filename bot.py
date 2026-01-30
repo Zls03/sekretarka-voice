@@ -735,9 +735,8 @@ async def save_call_log(flow_manager):
                     role = msg.get("role", "")
                     content = msg.get("content", "")
                     if role in ["user", "assistant"] and content and len(content) > 1:
-                        # Nie zapisuj system messages
                         await save_transcript(tenant.get("id"), call_sid, role, content[:500])
-                logger.info(f"📝 Transcript saved: {len(context)} messages")
+                logger.info(f"📝 Transcript saved: {len([m for m in context if m.get('role') in ['user', 'assistant']])} messages")
             except Exception as e:
                 logger.error(f"Transcript save error: {e}")
             
