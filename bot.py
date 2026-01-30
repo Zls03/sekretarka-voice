@@ -396,9 +396,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # TTS - wybór na podstawie ustawień tenant
     tts = create_tts_service(tenant)
 
-    llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4.0-mini",
+    llm = GroqLLMService(
+        api_key=os.getenv("GROQ_API_KEY"),
+        model="llama-3.1-70b-versatile",  # Starsza wersja, stabilniejsza z functions
     )
 
     
