@@ -30,6 +30,7 @@ from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.services.openai.base_llm import BaseOpenAILLMService
 
 # Pipecat services
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -399,8 +400,10 @@ async def websocket_endpoint(websocket: WebSocket):
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4.1-mini",
-        temperature=0.4,
-        max_tokens=150,
+        params=BaseOpenAILLMService.InputParams(
+            temperature=0.4,
+            max_completion_tokens=150,
+        ),
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
 
