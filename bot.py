@@ -398,7 +398,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4.1-nano",
+        model="gpt-4.1-mini",
     )
 
     
