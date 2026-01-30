@@ -394,7 +394,6 @@ async def websocket_endpoint(websocket: WebSocket):
             interim_results=True,
             utterance_end_ms=1200,   # ✅ OK
             endpointing=400,         # 🆕 Dodaj! Pomaga wykryć koniec zdania
-            filler_words=True,       # 🆕 Rozpoznaje "yyy", "eee" jako pauzy, nie mowę
         )
     )
     
