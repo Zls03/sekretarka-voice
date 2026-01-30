@@ -26,7 +26,13 @@ from polish_mappings import (
 PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
 PANEL_SLUG = os.getenv("PANEL_SLUG", "")
 
-
+def format_time_for_tts(time_str: str) -> str:
+    """Usuwa zero wiodące z godziny: 08:00 → 8:00"""
+    if not time_str:
+        return time_str
+    if time_str.startswith("0") and len(time_str) >= 2 and time_str[1].isdigit():
+        return time_str[1:]
+    return time_str
 
 def parse_polish_date(date_str: str) -> Optional[datetime]:
     """Parsuj polską datę (dziś, jutro, pojutrze, dzień tygodnia, data)
@@ -526,7 +532,9 @@ def build_business_context(tenant: dict) -> str:
             day_num = wh.get("day_of_week", 0)
             if wh.get("open_time"):
                 day_name = POLISH_DAYS.get(day_num, str(day_num))
-                hours_text.append(f"{day_name}: {wh['open_time']}-{wh['close_time']}")
+                open_t = format_time_for_tts(wh['open_time'])
+                close_t = format_time_for_tts(wh['close_time'])
+                hours_text.append(f"{day_name}: {open_t}-{close_t}")
         if hours_text:
             parts.append(f"GODZINY PRACY: {', '.join(hours_text)}")
     
@@ -613,7 +621,9 @@ def build_business_context(tenant: dict) -> str:
                         for day_en, day_pl in days_pl.items():
                             day_data = wh.get(day_en, {})
                             if day_data and not day_data.get("closed", False) and day_data.get("open"):
-                                hours_list.append(f"{day_pl}: {day_data['open']}-{day_data['close']}")
+                                open_t = format_time_for_tts(day_data['open'])
+                                close_t = format_time_for_tts(day_data['close'])
+                                hours_list.append(f"{day_pl}: {open_t}-{close_t}")
                         if hours_list:
                             staff_hours.append(f"{s['name']}: {', '.join(hours_list)}")
                     except:

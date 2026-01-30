@@ -399,6 +399,8 @@ async def websocket_endpoint(websocket: WebSocket):
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4.1-mini",
+        temperature=0.4,
+        max_tokens=150,
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
 
