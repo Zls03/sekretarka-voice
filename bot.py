@@ -726,15 +726,33 @@ async def save_call_log(flow_manager):
                 )
                 logger.info(f"📊 Call log created: {call_sid}")
             
-            # Zapisz transkrypcję z kontekstu
+            # Zapisz transkrypcję z kontekstu - Z DEDUPLIKACJĄ
             try:
                 context = flow_manager.get_current_context()
+                saved_contents = set()  # Deduplikacja
+                saved_count = 0
+                
                 for msg in context:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
-                    if role in ["user", "assistant"] and content and len(content) > 1:
-                        await save_transcript(tenant.get("id"), call_sid, role, content[:500])
-                logger.info(f"📝 Transcript saved: {len([m for m in context if m.get('role') in ['user', 'assistant']])} messages")
+                    
+                    # Filtruj: tylko user/assistant, niepuste, > 1 znak
+                    if role not in ["user", "assistant"]:
+                        continue
+                    if not content or len(content.strip()) < 2:
+                        continue
+                    
+                    # Deduplikacja - nie zapisuj tej samej wiadomości dwa razy
+                    content_key = f"{role}:{content[:100]}"
+                    if content_key in saved_contents:
+                        continue
+                    saved_contents.add(content_key)
+                    
+                    # Zapisz
+                    await save_transcript(tenant.get("id"), call_sid, role, content[:500])
+                    saved_count += 1
+                
+                logger.info(f"📝 Transcript saved: {saved_count} messages (deduplicated)")
             except Exception as e:
                 logger.error(f"Transcript save error: {e}")
             
