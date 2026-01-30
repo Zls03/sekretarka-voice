@@ -220,6 +220,7 @@ async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: 
 def create_answer_node(tenant: dict, question: str, context: str) -> dict:
     return {
         "name": "answer_question_node",
+        "respond_immediately": True,
         "role_messages": [{
             "role": "system",
             "content": f"""Odpowiedz na pytanie klienta.
