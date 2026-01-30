@@ -740,6 +740,15 @@ async def save_call_log(flow_manager):
             except Exception as e:
                 logger.error(f"Transcript save error: {e}")
             
+            # Usuń transkrypcje starsze niż 30 dni
+            try:
+                await db.execute(
+                    "DELETE FROM call_transcripts WHERE tenant_id = ? AND created_at < datetime('now', '-30 days')",
+                    [tenant.get("id")]
+                )
+            except:
+                pass
+            
             flow_manager.state["call_logged"] = True
     except Exception as e:
         logger.error(f"Save call log error: {e}")
