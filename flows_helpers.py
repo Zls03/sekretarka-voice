@@ -318,7 +318,14 @@ async def get_available_slots_from_working_hours(
     slots = []
     current_hour = open_hour
     
-    break_between = staff.get("break_between_minutes", 0) or tenant.get("break_between_minutes", 0)
+    # Przerwa między wizytami - sprawdź różne nazwy pól
+    break_between = (
+        staff.get("buffer_minutes") or 
+        staff.get("break_between_minutes") or 
+        staff.get("break_minutes") or 
+        tenant.get("buffer_minutes") or 
+        0
+    )
 
     while current_hour + (service_duration / 60) <= close_hour:
         slots.append(current_hour)
