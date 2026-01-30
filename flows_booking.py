@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from loguru import logger
 from typing import Optional
 import asyncio
-
+import uuid
+from helpers import db
 # Import z flows_helpers.py
 from flows_helpers import (
     parse_polish_date, parse_time,
@@ -31,6 +32,29 @@ from flows_helpers import (
     fuzzy_match_service, fuzzy_match_staff,
     send_booking_sms, increment_sms_count,
 )
+
+# ==========================================
+# ERROR LOGGING
+# ==========================================
+async def log_error(flow_manager, error_type: str, error_message: str, context: str = None):
+    """Loguje błąd do bazy"""
+    try:
+        tenant = flow_manager.state.get("tenant", {})
+        call_sid = flow_manager.state.get("call_sid", "")
+        
+        if not tenant.get("id"):
+            return
+            
+        error_id = f"err_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO error_logs 
+               (id, tenant_id, call_sid, error_type, error_message, context, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+            [error_id, tenant.get("id"), call_sid, error_type, error_message, context]
+        )
+        logger.info(f"📝 Error logged: {error_type}")
+    except Exception as e:
+        logger.error(f"Failed to log error: {e}")
 
 # ============================================================================
 # LIMIT RETRY'ÓW - max 3 błędne odpowiedzi na krok
@@ -46,6 +70,8 @@ def check_retry_limit(flow_manager, step: str) -> bool:
     
     if count > MAX_RETRIES_PER_STEP:
         logger.warning(f"⚠️ Retry limit exceeded for {step}: {count}")
+        # Nie możemy użyć await tutaj bo funkcja nie jest async
+        # Błąd zostanie zalogowany w create_booking_failed_node
         return False
     
     logger.info(f"🔄 Retry {count}/{MAX_RETRIES_PER_STEP} for {step}")
@@ -851,6 +877,12 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     
     if hour not in current_slots:
         logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
+        await log_error(
+            flow_manager,
+            "slot_taken",
+            f"Slot {hour}:00 was taken before confirmation",
+            f"date={date}, available_now={current_slots}"
+        )
         flow_manager.state["available_slots"] = current_slots
         if current_slots:
             slots_text = format_slots_natural(current_slots, format_hour_polish)
@@ -872,6 +904,12 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
             logger.info(f"✅ BOOKING SAVED! Code: {booking_code}")
     except Exception as e:
         logger.error(f"❌ Save error: {e}")
+        await log_error(
+            flow_manager, 
+            "booking_failed", 
+            str(e),
+            f"service={service.get('name')}, staff={staff.get('name')}, date={date}, hour={hour}"
+        )
     
     # Wyślij SMS
     if booking_saved and booking_code and caller_phone:

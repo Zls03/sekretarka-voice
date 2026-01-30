@@ -48,6 +48,7 @@ from pipecat.processors.user_idle_processor import UserIdleProcessor
 
 # Nasze moduły
 from helpers import get_tenant_by_phone, db
+import uuid
 from flows import create_initial_node
 
 # Konfiguracja logowania
@@ -157,7 +158,28 @@ async def get_greeting_audio(tenant_id: str):
         logger.error(f"Greeting audio error: {e}")
         return Response(status_code=500)
 
-
+# ==========================================
+# ERROR LOGGING - zapisuje błędy do bazy
+# ==========================================
+async def log_error(
+    tenant_id: str,
+    call_sid: str,
+    error_type: str,
+    error_message: str,
+    context: str = None
+):
+    """Loguje błąd do bazy dla późniejszej analizy w panelu admina"""
+    try:
+        error_id = f"err_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO error_logs 
+               (id, tenant_id, call_sid, error_type, error_message, context, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+            [error_id, tenant_id, call_sid, error_type, error_message, context]
+        )
+        logger.info(f"📝 Error logged: {error_type}")
+    except Exception as e:
+        logger.error(f"Failed to log error: {e}")
 # ==========================================
 # TTS PROVIDER FACTORY
 # ==========================================
@@ -621,6 +643,14 @@ async def websocket_endpoint(websocket: WebSocket):
         await runner.run(task)
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
+        # Loguj błąd do bazy
+        if tenant and call_sid:
+            await log_error(
+                tenant_id=tenant.get("id"),
+                call_sid=call_sid,
+                error_type="pipeline_error",
+                error_message=str(e)
+            )
     finally:
         logger.info("🏁 Pipeline finished")
         # ZAWSZE zapisz log - nawet przy błędzie/crash

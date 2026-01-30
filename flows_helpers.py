@@ -257,6 +257,7 @@ async def get_available_slots_from_api(
                 
     except Exception as e:
         logger.error(f"❌ Calendar API error: {e}")
+        # Błąd zostanie obsłużony wyżej - tu tylko logujemy
     
     return []
 
