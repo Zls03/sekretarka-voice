@@ -933,6 +933,9 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     time_text = format_hour_polish(hour) if hour else ""
     
     if booking_saved:
+        # 🛡️ Ustaw flagę że rezerwacja zakończona sukcesem
+        flow_manager.state["booking_confirmed"] = True
+        
         sms_info = " Wysłałam SMS z potwierdzeniem." if booking_code else ""
         return (
             {"success": True, "message": f"Gotowe! {service.get('name')} u {staff.get('name')}, {date_text} o {time_text}.{sms_info} Do zobaczenia!"},

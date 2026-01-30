@@ -489,6 +489,33 @@ def end_conversation_function() -> FlowsFunctionSchema:
 
 
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
+    # 🛡️ OCHRONA: Sprawdź czy rezerwacja jest w trakcie
+    has_service = flow_manager.state.get("selected_service") is not None
+    is_confirmed = flow_manager.state.get("booking_confirmed", False)
+    
+    if has_service and not is_confirmed:
+        # Rezerwacja w trakcie ale nie potwierdzona - traktuj jako anulowanie
+        logger.warning("⚠️ end_conversation called during active booking - treating as cancel")
+        
+        # Reset stanu rezerwacji
+        # Reset state
+        flow_manager.state["selected_service"] = None
+        flow_manager.state["selected_staff"] = None
+        flow_manager.state["selected_date"] = None
+        flow_manager.state["selected_time"] = None
+        flow_manager.state["customer_name"] = None
+        flow_manager.state["available_slots"] = []
+        flow_manager.state["pre_selected_staff"] = None  # Pre-wybór z kontekstu
+        flow_manager.state["booking_confirmed"] = False  # 🛡️ Reset flagi potwierdzenia
+        
+        # Wróć do anything_else zamiast kończyć
+        tenant = flow_manager.state.get("tenant", {})
+        return (
+            {"cancelled": True, "reason": "end_conversation_during_booking"},
+            create_anything_else_node(tenant)
+        )
+    
+    # Normalny flow - zakończ rozmowę
     logger.info("👋 Ending conversation")
     flow_manager.state["conversation_ended"] = True
     
