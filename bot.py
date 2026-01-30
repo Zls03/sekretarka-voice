@@ -365,10 +365,10 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.7,      # Wyższy próg (domyślnie 0.7)
-                    start_secs=0.3,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
-                    min_volume=0.5,      # Minimalny poziom głośności
+                    confidence=0.5,      # 🔽 Niższy próg = łatwiej wykrywa mowę
+                    start_secs=0.2,      # 🔽 Szybciej reaguje na mowę
+                    stop_secs=1.2,       # 🔽 Trochę krócej czeka na koniec
+                    min_volume=0.3,      # 🔽 Niższy próg głośności
                 )
             ),
             serializer=TwilioFrameSerializer(
@@ -391,6 +391,9 @@ async def websocket_endpoint(websocket: WebSocket):
             smart_format=True,
             punctuate=True,
             numerals=True,
+            interim_results=True,  # 🆕 Pokazuje partial transcripts
+            utterance_end_ms=1500,  # 🆕 Koniec wypowiedzi po 1.5s ciszy
+            vad_events=True,  # 🆕 Loguje VAD events z Deepgram
         )
     )
     
@@ -584,7 +587,24 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["started_at"] = datetime.utcnow()
     flow_manager.state["greeting_played"] = greeting_played
     flow_manager.state["caller_phone"] = caller_phone
+    # ==========================================
+    # STT TRANSCRIPT LOGGING
+    # ==========================================
     
+    @stt.event_handler("on_transcript")
+    async def on_transcript(stt_service, transcript):
+        """Loguje każdą transkrypcję z Deepgram"""
+        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
+        is_final = transcript.get("is_final", True) if isinstance(transcript, dict) else True
+        
+        if text.strip():
+            if is_final:
+                logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
+            else:
+                logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
+        else:
+            logger.debug(f"🎤 TRANSCRIPT: (empty)")
+
     # ==========================================
     # EVENT HANDLERS
     # ==========================================
