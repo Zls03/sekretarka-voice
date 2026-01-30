@@ -157,7 +157,21 @@ async def get_greeting_audio(tenant_id: str):
     except Exception as e:
         logger.error(f"Greeting audio error: {e}")
         return Response(status_code=500)
-
+# ==========================================
+# TRANSCRIPT LOGGING - zapisuje rozmowę
+# ==========================================
+async def save_transcript(tenant_id: str, call_sid: str, role: str, content: str):
+    """Zapisuje fragment rozmowy do bazy"""
+    try:
+        transcript_id = f"tr_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO call_transcripts 
+               (id, tenant_id, call_sid, role, content, created_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+            [transcript_id, tenant_id, call_sid, role, content]
+        )
+    except Exception as e:
+        logger.error(f"Failed to save transcript: {e}")
 # ==========================================
 # ERROR LOGGING - zapisuje błędy do bazy
 # ==========================================
@@ -518,14 +532,43 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"End call error: {e}")
                     await task.cancel()
+       
                 break
+
+    # ==========================================
+    # TRANSCRIPT PROCESSOR - zapisuje rozmowę
+    # ==========================================
+    from pipecat.frames.frames import TranscriptionFrame, TextFrame
+    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+    
+    class TranscriptLogger(FrameProcessor):
+        """Przechwytuje transkrypcje i odpowiedzi bota"""
+        
+        def __init__(self, tenant_id: str, call_sid: str):
+            super().__init__()
+            self.tenant_id = tenant_id
+            self.call_sid = call_sid
+        
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            
+            # Transkrypcja użytkownika (STT)
+            if isinstance(frame, TranscriptionFrame) and frame.text:
+                text = frame.text.strip()
+                if len(text) > 1:  # Ignoruj pojedyncze znaki
+                    await save_transcript(self.tenant_id, self.call_sid, "user", text)
+                    logger.debug(f"📝 User: {text[:50]}...")
+            
+            await self.push_frame(frame, direction)
+    
+    transcript_logger = TranscriptLogger(tenant.get("id", ""), call_sid)
     # ==========================================
     # PIPELINE
     # ==========================================
-    
     pipeline = Pipeline([
         transport.input(),
         stt,
+        transcript_logger,
         user_idle, 
         context_aggregator.user(),
         llm,
@@ -657,7 +700,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await save_call_log(flow_manager)
 
 async def save_call_log(flow_manager):
-    """Tworzy wstępny log rozmowy (czas zostanie zaktualizowany przez Twilio callback)"""
+    """Zapisuje log rozmowy i transkrypcję"""
     if flow_manager.state.get("call_logged"):
         return
         
@@ -683,7 +726,20 @@ async def save_call_log(flow_manager):
                         call_sid,
                     ]
                 )
-                logger.info(f"📊 Call log created: {call_sid} (waiting for Twilio callback)")
+                logger.info(f"📊 Call log created: {call_sid}")
+            
+            # Zapisz transkrypcję z kontekstu
+            try:
+                context = flow_manager.get_current_context()
+                for msg in context:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role in ["user", "assistant"] and content and len(content) > 1:
+                        # Nie zapisuj system messages
+                        await save_transcript(tenant.get("id"), call_sid, role, content[:500])
+                logger.info(f"📝 Transcript saved: {len(context)} messages")
+            except Exception as e:
+                logger.error(f"Transcript save error: {e}")
             
             flow_manager.state["call_logged"] = True
     except Exception as e:
