@@ -324,8 +324,8 @@ Powiedz naturalnie że chętnie umówisz wizytę{staff_info} i zapytaj na jaką 
             "content": f"""Zapytaj klienta na jaką usługę chce się umówić.
 Dostępne: {services_list}
 
-Gdy klient powie usługę → wywołaj select_service
-Jeśli pyta o cenę/czas → odpowiedz KRÓTKO i wróć do pytania o usługę"""
+Once they choose a service, use select_service with the service name.
+If they ask about price/duration, answer briefly and ask again about the service."""
         }],
         "functions": [
             select_service_function(tenant, service_names),
@@ -430,8 +430,8 @@ Potwierdź wybór usługi i zapytaj do kogo chce się umówić."""
             "role": "system",
             "content": f"""Zapytaj do którego pracownika. Dostępni: {staff_list}
 
-Gdy klient powie imię → wywołaj select_staff
-Jeśli "obojętnie"/"ktokolwiek" → wybierz pierwszego: {staff_names[0] if staff_names else ''}
+Once they choose a staff member, use select_staff with the name.
+If they say "obojętnie"/"ktokolwiek" → choose: {staff_names[0] if staff_names else ''}
 
 ⚠️ NIE pytaj jeszcze o datę - to następny krok!"""
         }],
@@ -522,15 +522,14 @@ Potwierdź wybór pracownika i zapytaj na kiedy."""
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Zapytaj na jaki dzień umówić wizytę.
+            "content": """Zapytaj klienta na jaki dzień chce się umówić, potem CZEKAJ na odpowiedź.
 
-You must ALWAYS use check_availability to progress. Gdy klient poda datę → NATYCHMIAST wywołaj check_availability z DOKŁADNIE tym co powiedział.
+Once they provide a date (e.g. "jutro", "w piątek", "3 lutego"), use check_availability with EXACTLY what they said.
 
 ⚠️ ZASADY:
-- NIE przeliczaj dat - przekaż dosłownie (np. "sobota", "jutro", "w piątek")
-- NIE zgaduj godzin - system sprawdzi i poda wolne terminy
-- NIE mów że coś jest zajęte/wolne bez wywołania funkcji
-- Jeśli funkcja zwróci error → poproś o INNY dzień, NIE kontynuuj"""
+- NIE wywołuj funkcji dopóki klient nie poda daty
+- NIE przeliczaj dat - przekaż dosłownie to co klient powiedział
+- Jeśli funkcja zwróci error → poproś o INNY dzień"""
         }],
         "functions": [
             check_availability_function(tenant),
@@ -656,10 +655,10 @@ Podaj dostępne godziny i zapytaj która pasuje."""
             "content": f"""Powiedz jakie godziny są wolne i zapytaj którą wybrać.
 Wolne: {slots_text}
 
-You must ALWAYS use select_time to progress. Gdy klient powie godzinę → NATYCHMIAST wywołaj select_time.
+Once they choose a time, use select_time with the hour they selected.
 
 ⚠️ ZASADY:
-- MUSISZ wywołać select_time - NIE mów że "zapisałam" bez tego!
+- NIE mów że "zapisałam" bez wywołania select_time
 - Jeśli select_time zwróci error → podaj inne wolne godziny"""
         }],
         "functions": [
@@ -733,7 +732,7 @@ Potwierdź godzinę i zapytaj na jakie imię/nazwisko zapisać."""
             "role": "system",
             "content": """Zapytaj jak zapisać rezerwację - imię lub nazwisko.
 
-Gdy klient poda imię → wywołaj set_customer_name"""
+Once they provide their name, use set_customer_name."""
         }],
         "functions": [
             set_customer_name_function(tenant),
@@ -806,14 +805,13 @@ Powtórz podsumowanie i poproś o potwierdzenie."""
             "role": "system",
             "content": """Powiedz podsumowanie i zapytaj czy potwierdzić.
 
-You must ALWAYS use one of the available functions to progress:
-- TAK/potwierdzam/dobrze/zgadza się → wywołaj confirm_booking_yes
-- NIE/zmień/inne imię/popraw → wywołaj confirm_booking_no
+Once they respond:
+- If they confirm (tak/potwierdzam/dobrze/zgadza się) → use confirm_booking_yes
+- If they want changes (nie/zmień/popraw) → use confirm_booking_no
 
 ⚠️ ZASADY:
-- MUSISZ wywołać funkcję - NIE mów że "zarezerwowałam" bez confirm_booking_yes!
-- Dopiero gdy confirm_booking_yes ZWRÓCI SUKCES - rezerwacja jest zapisana
-- Jeśli klient podaje INNE imię - wywołaj confirm_booking_no z what_to_change="imię" """
+- NIE mów że "zarezerwowałam" bez wywołania confirm_booking_yes
+- Jeśli klient podaje INNE imię → użyj confirm_booking_no z what_to_change="imię" """
         }],
         "functions": [
             confirm_booking_yes_function(tenant),
