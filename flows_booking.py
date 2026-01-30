@@ -305,10 +305,22 @@ def create_get_service_node(tenant: dict, filter_by_staff: dict = None) -> dict:
     service_names = [s["name"] for s in services]
     services_list = ", ".join(service_names)
     
+    # Cennik dla GPT (żeby mógł odpowiedzieć na pytania)
+    price_info = []
+    for s in services:
+        info = s["name"]
+        if s.get("price"):
+            info += f" - {s['price']} zł"
+        if s.get("duration_minutes"):
+            info += f" ({s['duration_minutes']} min)"
+        price_info.append(info)
+    price_list = ", ".join(price_info)
+    
     role_content = f"""Jesteś w trakcie umawiania wizyty.
 KROK 1 z 6: Wybór usługi.
 
 Dostępne usługi{staff_info}: {services_list}
+CENNIK: {price_list}
 
 Powiedz naturalnie że chętnie umówisz wizytę{staff_info} i zapytaj na jaką usługę."""
 
