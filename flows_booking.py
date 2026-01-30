@@ -87,7 +87,7 @@ def reset_retry_count(flow_manager, step: str):
 # ============================================================================
 
 def format_slots_natural(slots: list, format_func) -> str:
-    """Formatuj sloty naturalnie - max 3 przykłady"""
+    """Formatuj sloty naturalnie dla TTS"""
     if not slots:
         return ""
     
@@ -97,13 +97,13 @@ def format_slots_natural(slots: list, format_func) -> str:
     if len(slots) == 2:
         return f"{format_func(slots[0])} i {format_func(slots[1])}"
     
-    if len(slots) <= 4:
-        parts = [format_func(h) for h in slots]
+    if len(slots) <= 5:
+        parts = [format_func(s) for s in slots]
         return f"{', '.join(parts[:-1])} i {parts[-1]}"
     
-    # 5+ slotów - wybierz reprezentatywne
-    example_slots = [slots[0], slots[len(slots)//2], slots[-1]]
-    parts = [format_func(h) for h in example_slots]
+    # 6+ slotów - pokaż kilka przykładów
+    examples = [slots[0], slots[len(slots)//2], slots[-1]]
+    parts = [format_func(s) for s in examples]
     return f"{parts[0]}, {parts[1]}, {parts[2]} i inne"
 
 
@@ -665,13 +665,15 @@ Podaj dostępne godziny i zapytaj która pasuje."""
         "task_messages": [{
             "role": "system",
             "content": f"""Powiedz jakie godziny są wolne i zapytaj którą wybrać.
-Wolne: {slots_text}
+Przykłady wolnych: {slots_text}
 
-Once they choose a time, use select_time with the hour they selected.
+Once they say ANY time, use select_time. The system will validate availability.
 
 ⚠️ ZASADY:
-- NIE mów że "zapisałam" bez wywołania select_time
-- Jeśli select_time zwróci error → podaj inne wolne godziny"""
+- ZAWSZE wywołaj select_time gdy klient poda godzinę
+- NIGDY nie mów sam że godzina jest niedostępna - system to sprawdzi
+- Akceptuj formaty: "czternasta", "14:30", "wpół do trzeciej"
+- Jeśli select_time zwróci error → WTEDY powiedz że zajęta i podaj inne"""
         }],
         "functions": [
             select_time_function(tenant, available_slots),
@@ -695,34 +697,34 @@ def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSc
 
 
 async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler: walidacja godziny w KODZIE"""
+    """Handler: walidacja godziny w KODZIE (obsługuje H:MM)"""
     hour_str = args.get("hour", "")
-    slots = flow_manager.state.get("available_slots", [])
+    slots = flow_manager.state.get("available_slots", [])  # Teraz List[str]!
     
-    # Parsowanie godziny w kodzie
-    hour = None
-    try:
-        hour = int(hour_str)
-    except (ValueError, TypeError):
-        hour = parse_time(hour_str)
+    # Parsuj godzinę (teraz zwraca "14:30" lub "14:00")
+    parsed_time = parse_time(hour_str)
     
-    if hour is None or hour not in slots:
-        if not check_retry_limit(flow_manager, "time"):
-            return (None, create_booking_failed_node(tenant, "nie udało się wybrać godziny"))
-        
-        slots_text = format_slots_natural(slots, format_hour_polish)
-        date_text = format_date_polish(flow_manager.state.get("selected_date"))
-        logger.warning(f"⚠️ Invalid time '{hour_str}' (parsed: {hour}), available: {slots}")
-        return ({"error": f"Ta godzina jest zajęta. Wolne: {slots_text}"}, 
-                create_get_time_node(tenant, slots, date_text, slots_text))  # ← RETRY!
+    if parsed_time is None:
+        return ({
+            "success": False,
+            "error": "Nie zrozumiałam godziny. Proszę podać jeszcze raz."
+        }, None)
     
-    reset_retry_count(flow_manager, "time")
-    flow_manager.state["selected_time"] = hour
-    logger.info(f"✅ [4/6] Time: {hour}:00")
+    # Sprawdź czy slot dostępny
+    if parsed_time not in slots:
+        available_text = ", ".join([format_hour_polish(s) for s in slots[:5]])
+        return ({
+            "success": False,
+            "error": f"Ta godzina jest niedostępna. Wolne terminy: {available_text}"
+        }, None)
     
-    hour_text = format_hour_polish(hour)
-    return ({"success": True, "time": hour_text}, create_get_name_node(tenant, hour_text))
-
+    # Zapisz w state
+    flow_manager.state["selected_time"] = parsed_time
+    
+    return ({
+        "success": True,
+        "time": format_hour_polish(parsed_time)
+    }, "get_name")
 
 # ============================================================================
 # KROK 5/6: IMIĘ KLIENTA

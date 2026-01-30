@@ -78,6 +78,29 @@ HOUR_TO_NUMBER = {
     # 22
     "dwudziesta druga": 22, "dwudziestej drugiej": 22,
     "dziesiąta wieczorem": 22,
+    
+    # PÓŁGODZINY - słownie
+    "dziewiąta trzydzieści": 9, "dziewiatej trzydzieści": 9,
+    "dziesiąta trzydzieści": 10, "dziesiatej trzydzieści": 10,
+    "jedenasta trzydzieści": 11, "jedenastej trzydzieści": 11,
+    "dwunasta trzydzieści": 12, "dwunastej trzydzieści": 12,
+    "trzynasta trzydzieści": 13, "trzynastej trzydzieści": 13,
+    "czternasta trzydzieści": 14, "czternastej trzydzieści": 14,
+    "piętnasta trzydzieści": 15, "pietnasta trzydzieści": 15,
+    "szesnasta trzydzieści": 16, "szesnastej trzydzieści": 16,
+    "siedemnasta trzydzieści": 17, "siedemnastej trzydzieści": 17,
+    "osiemnasta trzydzieści": 18, "osiemnastej trzydzieści": 18,
+    
+    # WPÓŁ DO - mapuje na godzinę PRZED (wpół do dziesiątej = 9:30)
+    "wpół do dziesiątej": 9, "wpol do dziesiatej": 9,
+    "wpół do jedenastej": 10, "wpol do jedenastej": 10,
+    "wpół do dwunastej": 11, "wpol do dwunastej": 11,
+    "wpół do pierwszej": 12, "wpol do pierwszej": 12,
+    "wpół do drugiej": 13, "wpol do drugiej": 13,
+    "wpół do trzeciej": 14, "wpol do trzeciej": 14,
+    "wpół do czwartej": 15, "wpol do czwartej": 15,
+    "wpół do piątej": 16, "wpol do piatej": 16,
+    "wpół do szóstej": 17, "wpol do szostej": 17,
 }
 
 # Odwrotne mapowanie - liczba na słowo (do TTS)
@@ -361,7 +384,7 @@ def match_staff_name(query: str, staff_list: list) -> dict | None:
             return staff
         
         # Sprawdź czy query to alias imienia pracownika
-        if staff_first_name in FULL_NAME_TO_ALIASES:
+        if staff_first_name in FULL_NAME_TO_ALIASES:    
             aliases = FULL_NAME_TO_ALIASES[staff_first_name]
             if query in aliases or query_normalized in [normalize_polish_text(a) for a in aliases]:
                 return staff

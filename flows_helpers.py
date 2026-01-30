@@ -131,18 +131,70 @@ def parse_polish_date(date_str: str) -> Optional[datetime]:
     return None
 
 
-def parse_time(time_str: str) -> Optional[int]:
-    """Parsuj godzinę - wrapper na polish_mappings.parse_hour_from_text()"""
-    return parse_hour_from_text(time_str)
+def parse_time(time_str: str) -> Optional[str]:
+    """Parsuj godzinę - zwraca format H:MM (obsługuje półgodziny)"""
+    import re
+    
+    if not time_str:
+        return None
+    
+    time_str = time_str.lower().strip()
+    time_str = apply_stt_corrections(time_str)
+    
+    # 1. Już jest w formacie HH:MM lub H:MM
+    match = re.search(r'(\d{1,2}):(\d{2})', time_str)
+    if match:
+        h, m = int(match.group(1)), int(match.group(2))
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return f"{h}:{m:02d}"
+    
+    # 2. Sprawdź czy ma półgodzinę
+    has_half = any(phrase in time_str for phrase in ["trzydzieści", "pół", "wpół", ":30"])
+    
+    # 3. Parsuj godzinę bazową
+    hour = parse_hour_from_text(time_str)
+    
+    if hour is not None:
+        if has_half:
+            return f"{hour}:30"
+        return f"{hour}:00"
+    
+    # 4. Sama liczba (np. "14", "15")
+    match = re.search(r'\b(\d{1,2})\b', time_str)
+    if match:
+        h = int(match.group(1))
+        if 0 <= h <= 23:
+            return f"{h}:00"
+    
+    return None
 
 
 # ==========================================
 # FORMATOWANIE
 # ==========================================
 
-def format_hour_polish(hour: int) -> str:
-    """Formatuj godzinę po polsku słownie"""
-    return NUMBER_TO_HOUR_WORD.get(hour, f"{hour}")
+def format_hour_polish(hour) -> str:
+    """Formatuj godzinę po polsku słownie (obsługuje H:MM i int)"""
+    
+    # Jeśli string "14:30" lub "14:00"
+    if isinstance(hour, str) and ":" in hour:
+        parts = hour.split(":")
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        
+        hour_word = NUMBER_TO_HOUR_WORD.get(h, str(h))
+        if m == 30:
+            return f"{hour_word} trzydzieści"
+        elif m == 0:
+            return hour_word
+        else:
+            return f"{hour_word} {m:02d}"
+    
+    # Jeśli int
+    if isinstance(hour, int):
+        return NUMBER_TO_HOUR_WORD.get(hour, str(hour))
+    
+    return str(hour)
 
 
 def format_date_polish(date: datetime) -> str:
@@ -229,8 +281,8 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
 
 async def get_available_slots_from_api(
     tenant: dict, staff: dict, service: dict, date: datetime
-) -> List[int]:
-    """Pobiera wolne sloty z API panelu (Google Calendar) - SZYBKA WERSJA"""
+) -> List[str]:
+    """Pobiera wolne sloty z API panelu (Google Calendar) - OBSŁUGUJE MINUTY"""
     staff_id = staff.get("id")
     service_id = service.get("id")
     date_str = date.strftime("%Y-%m-%d")
@@ -250,20 +302,26 @@ async def get_available_slots_from_api(
             if response.status_code == 200:
                 data = response.json()
                 slots = data.get("slots", [])
-                hours = []
+                
+                # Zwracaj jako stringi "H:MM" żeby zachować minuty
+                result = []
                 for slot in slots:
                     if isinstance(slot, str) and ":" in slot:
-                        hours.append(int(slot.split(":")[0]))
+                        # Normalizuj: "09:30" → "9:30"
+                        parts = slot.split(":")
+                        h = int(parts[0])
+                        m = parts[1] if len(parts) > 1 else "00"
+                        result.append(f"{h}:{m}")
                     elif isinstance(slot, int):
-                        hours.append(slot)
-                logger.info(f"📅 Got {len(hours)} slots from API for {date_str}")
-                return hours
+                        result.append(f"{slot}:00")
+                
+                logger.info(f"📅 Got {len(result)} slots from API for {date_str}")
+                return result
             else:
                 logger.warning(f"⚠️ Calendar API returned {response.status_code}")
                 
     except Exception as e:
         logger.error(f"❌ Calendar API error: {e}")
-        # Błąd zostanie obsłużony wyżej - tu tylko logujemy
     
     return []
 
@@ -305,8 +363,8 @@ def get_staff_working_hours(staff: dict, weekday: int) -> tuple[int, int] | None
     return None
 async def get_available_slots_from_working_hours(
     tenant: dict, staff: dict, service: dict, date: datetime
-) -> List[int]:
-    """Fallback: generuje sloty z godzin pracy PRACOWNIKA (lub firmy jako fallback)"""
+) -> List[str]:
+    """Fallback: generuje sloty co 30 min z godzin pracy"""
     weekday = date.weekday()
     
     # Najpierw sprawdź godziny pracownika
@@ -320,33 +378,33 @@ async def get_available_slots_from_working_hours(
         if not opening_hours:
             return []
         open_hour, close_hour = opening_hours
+    
     service_duration = service.get("duration_minutes", 60)
     
     slots = []
-    current_hour = open_hour
+    current_minutes = open_hour * 60  # Pracuj w minutach
+    close_minutes = close_hour * 60
     
-    # Przerwa między wizytami - sprawdź różne nazwy pól
-    break_between = (
-        staff.get("buffer_minutes") or 
-        staff.get("break_between_minutes") or 
-        staff.get("break_minutes") or 
-        tenant.get("buffer_minutes") or 
-        0
-    )
-
-    while current_hour + (service_duration / 60) <= close_hour:
-        slots.append(current_hour)
-        # Następny slot = czas usługi + przerwa
-        slot_duration_hours = (service_duration + break_between) / 60
-        current_hour += max(1, int(slot_duration_hours))
+    while current_minutes + service_duration <= close_minutes:
+        h = current_minutes // 60
+        m = current_minutes % 60
+        slots.append(f"{h}:{m:02d}")
+        current_minutes += 30  # Co 30 minut
     
+    # Filtruj przeszłe sloty jeśli dziś
     now = datetime.now()
     if date.date() == now.date():
-        min_hour = now.hour + 1
-        slots = [h for h in slots if h >= min_hour]
+        min_minutes = (now.hour * 60) + now.minute + 60  # +1h zapas
+        slots = [s for s in slots if _slot_to_minutes(s) >= min_minutes]
     
     logger.info(f"📅 Generated {len(slots)} slots from working hours")
     return slots
+
+
+def _slot_to_minutes(slot: str) -> int:
+    """Helper: '14:30' → 870"""
+    parts = slot.split(":")
+    return int(parts[0]) * 60 + int(parts[1])
 
 
 # Cache dla slotów (żeby nie odpytywać API wielokrotnie)
@@ -400,7 +458,13 @@ async def save_booking_to_api(
     # POPRAWKA: Użyj tylko daty (bez czasu) - czysta data YYYY-MM-DD
     date_only = date.date() if date else None
     date_str = date_only.strftime("%Y-%m-%d") if date_only else None
-    time_str = f"{hour:02d}:00" if hour is not None else None
+    if hour is not None:
+        if isinstance(hour, str) and ":" in hour:
+            time_str = hour  # Już jest "14:30"
+        else:
+            time_str = f"{int(hour)}:00"
+    else:
+        time_str = None
     
     logger.info(f"📅 Booking request: {date_str} at {time_str} for {customer_name}")
     
