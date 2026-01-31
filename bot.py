@@ -397,7 +397,7 @@ async def websocket_endpoint(websocket: WebSocket):
             utterance_end_ms=1200,
             endpointing=400,
             # 🔥 Keyterms - boost rozpoznawania godzin i krótkich słów
-            keyterms=[
+            keyterm=[
                 # Godziny
                 "dziewiąta", "dziesiąta", "jedenasta", "dwunasta",
                 "trzynasta", "czternasta", "piętnasta", "szesnasta",
