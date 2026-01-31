@@ -32,7 +32,7 @@ async def play_snippet(flow_manager, category: str):
         logger.warning(f"🔊 Snippet error: {e}")
 
 # Import helperów
-from flows_booking import start_booking_function
+from flows_booking_integration import start_booking_function
 from flows_contact import contact_owner_function
 from helpers import db
 from flows_helpers import (

@@ -368,6 +368,10 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     """Handler: walidacja usługi w KODZIE, przejście do pracownika"""
     service_name = args.get("service_name", "")
     services = tenant.get("services", [])
+    # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "SERVICE":
+        logger.warning(f"⚠️ select_service called out of order (current_step={expected_step})")
     
     # Fuzzy matching w kodzie
     found = fuzzy_match_service(service_name, services)
@@ -479,6 +483,12 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     staff_name = args.get("staff_name", "")
     staff_list = tenant.get("staff", [])
     selected_service = flow_manager.state.get("selected_service", {})
+
+    # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "STAFF":
+        logger.warning(f"⚠️ select_staff called out of order (current_step={expected_step})")
+    
     
     found = fuzzy_match_staff(staff_name, staff_list)
     
@@ -573,6 +583,12 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     from flows import play_snippet
     
     date_str = args.get("date", "")
+
+     # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "DATE":
+        logger.warning(f"⚠️ check_availability called out of order (current_step={expected_step})")
+    
     
     # Feedback dla użytkownika
     await play_snippet(flow_manager, "checking")
@@ -705,6 +721,11 @@ async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict
     """Handler: walidacja godziny w KODZIE (obsługuje H:MM z normalizacją)"""
     hour_str = args.get("hour", "")
     slots = flow_manager.state.get("available_slots", [])
+
+    # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "TIME":
+        logger.warning(f"⚠️ select_time called out of order (current_step={expected_step})")
     
     logger.info(f"🕐 select_time: hour_str='{hour_str}', slots={slots}")
     
@@ -813,6 +834,11 @@ def set_customer_name_function(tenant: dict) -> FlowsFunctionSchema:
 
 async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant: dict):
     """Handler: walidacja imienia w KODZIE"""
+    # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "NAME":
+        logger.warning(f"⚠️ set_customer_name called out of order (current_step={expected_step})")
+    
     validated = validate_customer_name(args.get("customer_name", ""))
     
     if not validated:
@@ -908,6 +934,11 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     from flows import play_snippet, create_anything_else_node
     from flows_contact import create_collect_contact_name_node
     
+    # 🛡️ GUARD: Sprawdź czy jesteśmy w odpowiednim kroku
+    expected_step = flow_manager.state.get("current_step")
+    if expected_step and expected_step != "CONFIRM":
+        logger.warning(f"⚠️ confirm_booking_yes called out of order (current_step={expected_step})")
+    
     logger.info("✅ [6/6] CONFIRMED - saving booking")
     
     await play_snippet(flow_manager, "saving")
@@ -930,6 +961,7 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
         return ({"error": "System nie odpowiada. Spróbuj ponownie lub zostaw wiadomość."}, 
                 create_collect_contact_name_node(tenant))
     
+    # 🔥 Normalizacja przy sprawdzaniu dostępności
     def normalize_slot(s):
         if isinstance(s, str) and ":" in s:
             parts = s.split(":")
@@ -940,11 +972,11 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
             return f"{s}:00"
         return str(s)
     
-    hour_normalized = normalize_slot(hour)
+    hour_normalized = normalize_slot(hour) if hour else ""
     slots_normalized = [normalize_slot(s) for s in current_slots]
     
     if hour_normalized not in slots_normalized:
-        logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
+        logger.warning(f"⚠️ Slot {hour} no longer available! (normalized: {hour_normalized} not in {slots_normalized})")
         await log_error(
             flow_manager,
             "slot_taken",
@@ -1019,7 +1051,7 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
 
 
 async def handle_confirm_booking_no(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler: zmiana danych rezerwacji"""
+    """Handler: zmiana danych rezerwacji - z resetem current_step i retry"""
     what = args.get("what_to_change", "wszystko")
     
     logger.info(f"🔄 Change requested: {what}")
@@ -1027,30 +1059,47 @@ async def handle_confirm_booking_no(args: dict, flow_manager: FlowManager, tenan
     if what == "usługa":
         flow_manager.state["selected_service"] = None
         flow_manager.state["selected_staff"] = None
+        flow_manager.state["current_step"] = "SERVICE"  # 🔥 Reset step
+        # 🔥 Reset retry dla kroków które będą powtórzone
+        for step in ["service", "staff", "date", "time", "name"]:
+            reset_retry_count(flow_manager, step)
         return ({"info": "Zmieńmy usługę."}, create_get_service_node(tenant))
     
     elif what == "pracownik":
         flow_manager.state["selected_staff"] = None
+        flow_manager.state["current_step"] = "STAFF"  # 🔥 Reset step
+        for step in ["staff", "date", "time", "name"]:
+            reset_retry_count(flow_manager, step)
         service = flow_manager.state.get("selected_service")
         return ({"info": "Zmieńmy pracownika."}, create_get_staff_node(tenant, service))
     
     elif what == "data":
         flow_manager.state["selected_date"] = None
         flow_manager.state["selected_time"] = None
+        flow_manager.state["current_step"] = "DATE"  # 🔥 Reset step
+        for step in ["date", "time", "name"]:
+            reset_retry_count(flow_manager, step)
         staff = flow_manager.state.get("selected_staff")
         return ({"info": "Zmieńmy datę."}, create_get_date_node(tenant, staff))
     
     elif what == "godzina":
         flow_manager.state["selected_time"] = None
+        flow_manager.state["current_step"] = "TIME"  # 🔥 Reset step
+        for step in ["time", "name"]:
+            reset_retry_count(flow_manager, step)
         slots = flow_manager.state.get("available_slots", [])
         if slots:
             return ({"info": "Zmieńmy godzinę."}, create_get_time_node(tenant, slots))
         else:
+            flow_manager.state["current_step"] = "DATE"
+            reset_retry_count(flow_manager, "date")
             staff = flow_manager.state.get("selected_staff")
             return ({"info": "Sprawdzę dostępność."}, create_get_date_node(tenant, staff))
     
     elif what == "imię":
         flow_manager.state["customer_name"] = None
+        flow_manager.state["current_step"] = "NAME"  # 🔥 Reset step
+        reset_retry_count(flow_manager, "name")
         return ({"info": "Zmieńmy imię."}, create_get_name_node(tenant))
     
     else:
@@ -1060,6 +1109,10 @@ async def handle_confirm_booking_no(args: dict, flow_manager: FlowManager, tenan
         flow_manager.state["selected_date"] = None
         flow_manager.state["selected_time"] = None
         flow_manager.state["customer_name"] = None
+        flow_manager.state["current_step"] = "SERVICE"  # 🔥 Reset step
+        # 🔥 Reset wszystkich retry
+        for step in ["service", "staff", "date", "time", "name"]:
+            reset_retry_count(flow_manager, step)
         return ({"info": "Zacznijmy od nowa."}, create_get_service_node(tenant))
 
 
