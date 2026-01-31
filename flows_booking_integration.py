@@ -100,19 +100,23 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
             logger.info("✅ BOOKING CONFIRMED on first message!")
             flow_manager.state["booking_active"] = False
             from flows import create_anything_else_node
-            # 🔥 FIX: Zwróć STRING, nie dict - żeby TTS wypowiedział!
-            return (response, create_anything_else_node(tenant))
+            # 🔥 FIX: Użyj TTSSpeakFrame bezpośrednio!
+            from pipecat.frames.frames import TTSSpeakFrame
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=response))
+            return (None, create_anything_else_node(tenant))
         
-        # 🔥 FIX: Zwróć STRING, nie dict!
-        return (response, create_booking_hard_node(tenant, new_state, client_gender))
+        # 🔥 FIX: Zapisz odpowiedź w state i zwróć None!
+        new_state.last_response = response
+        return (None, create_booking_hard_node(tenant, new_state, client_gender))
     
     # Brak initial message - standardowy start (zapytaj o usługę)
     from flows_booking_fsm import generate_response, build_generator_context
     ctx = build_generator_context(BookingStep.SERVICE, state, tenant)
     initial_response = await generate_response(ctx)
     
-    # 🔥 FIX: Zwróć STRING!
-    return (initial_response, create_booking_hard_node(tenant, state, client_gender))
+    # 🔥 FIX: Zapisz odpowiedź w state!
+    state.last_response = initial_response
+    return (None, create_booking_hard_node(tenant, state, client_gender))
 
 
 def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
@@ -235,8 +239,20 @@ def create_booking_hard_node(tenant: Dict, state: BookingState, client_gender: s
     else:
         gender_instruction = "Nieznana płeć - używaj neutralnie lub 'Pan/Pani'."
     
+    # 🔥 Pobierz ostatnią odpowiedź FSM do wypowiedzenia
+    last_response = state.last_response if hasattr(state, 'last_response') and state.last_response else None
+    
+    # 🔥 FIX: Użyj pre_actions żeby bot POWIEDZIAŁ odpowiedź!
+    if last_response:
+        pre_actions = [{"type": "tts_say", "text": last_response}]
+    else:
+        pre_actions = []
+    
     return {
         "name": f"booking_fsm_{state.current_step.value.lower()}",
+        
+        # 🔥 KLUCZOWE: pre_actions mówi odpowiedź!
+        "pre_actions": pre_actions,
         
         # 🔥 KLUCZOWE: respond_immediately = False
         # LLM NIE MOŻE odpowiedzieć tekstem bez wywołania funkcji!
@@ -348,29 +364,37 @@ async def handle_booking_input_v2(
         logger.info("✅ BOOKING CONFIRMED!")
         flow_manager.state["booking_active"] = False
         from flows import create_anything_else_node
-        # 🔥 FIX: Zwróć STRING dla TTS!
-        return (response, create_anything_else_node(tenant))
+        # 🔥 FIX: Użyj TTSSpeakFrame bezpośrednio!
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=response))
+        return (None, create_anything_else_node(tenant))
     
     elif is_done:
         # 👋 Zakończenie (cancel, goodbye)
         logger.info("👋 BOOKING ENDED")
         flow_manager.state["booking_active"] = False
         from flows import create_end_node
-        # 🔥 FIX: Zwróć STRING!
-        return (response, create_end_node())
+        # 🔥 FIX: Użyj TTSSpeakFrame bezpośrednio!
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=response))
+        return (None, create_end_node())
     
     elif new_state.current_step == BookingStep.FAILED:
         # ❌ Błąd - przekieruj do właściciela
         logger.warning("❌ BOOKING FAILED - escalating")
         flow_manager.state["booking_active"] = False
         from flows_contact import create_collect_contact_name_node
-        # 🔥 FIX: Zwróć STRING!
-        return (response, create_collect_contact_name_node(tenant))
+        # 🔥 FIX: Użyj TTSSpeakFrame bezpośrednio!
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=response))
+        return (None, create_collect_contact_name_node(tenant))
     
     else:
         # 🔄 Kontynuuj rezerwację - wróć do HARD NODE
-        # 🔥 FIX: Zwróć STRING!
-        return (response, create_booking_hard_node(tenant, new_state, client_gender))
+        # 🔥 FIX: Zapisz odpowiedź w state żeby node mógł ją wypowiedzieć!
+        new_state.last_response = response
+        # 🔥 FIX: Zwróć None jako pierwszy element - odpowiedź jest w pre_actions node'a!
+        return (None, create_booking_hard_node(tenant, new_state, client_gender))
 
 
 def normalize_stt_input(text: str, current_step: BookingStep) -> str:
