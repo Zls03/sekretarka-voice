@@ -1,17 +1,12 @@
 # flows_booking_simple.py - UPROSZCZONY system rezerwacji
-# WERSJA 1.0 - Wzorzec: Tool Calling + dateparser + natychmiastowa walidacja
+# WERSJA 1.1 - POPRAWKI: walidacja slotów, proponowanie terminów
 """
-ARCHITEKTURA (z wzorca):
-1. GPT zbiera SUROWE dane (nie parsuje!)
-2. KOD parsuje daty (dateparser - nie GPT!)
-3. KOD waliduje NATYCHMIAST (sloty sprawdzane od razu)
-4. KOD generuje odpowiedź (template, nie LLM)
-
-RÓŻNICE OD STAREGO:
-- dateparser zamiast własnego parsera dat
-- Walidacja slotów NATYCHMIAST po dacie
-- JEDNA funkcja zamiast 6 kroków FSM
-- Zero LLM do generowania odpowiedzi
+ZMIANY W 1.1:
+- Lepsze logowanie przy walidacji slotów
+- Fresh fetch przed zapisem (bez cache)
+- Preprocessing dat (usuwanie "na ")
+- Funkcja proponowania najbliższych wolnych terminów
+- Walidacja slotu PRZED i PO potwierdzeniu
 """
 
 import os
@@ -29,6 +24,7 @@ from flows_helpers import (
     staff_can_do_service, send_booking_sms,
     increment_sms_count, get_opening_hours,
     POLISH_DAYS, build_business_context,
+    get_available_slots_from_api,  # Direct API call (no cache)
 )
 
 # Import funkcji odmiany i formatowania
@@ -47,6 +43,166 @@ DATEPARSER_SETTINGS = {
     'PREFER_DAY_OF_MONTH': 'first',
     'RETURN_AS_TIMEZONE_AWARE': False,
 }
+
+
+# ============================================================================
+# POMOCNICZE - PROPONOWANIE TERMINÓW
+# ============================================================================
+
+async def get_next_available_days(
+    tenant: Dict, 
+    staff: Dict, 
+    service: Dict, 
+    max_days: int = 14,
+    limit: int = 3
+) -> List[Dict]:
+    """
+    Znajduje najbliższe dni z wolnymi terminami.
+    
+    Returns:
+        Lista słowników: [{"date": datetime, "slots": ["10:00", "11:00", ...], "slots_count": 5}, ...]
+    """
+    results = []
+    today = datetime.now()
+    
+    for day_offset in range(max_days):
+        check_date = today + timedelta(days=day_offset)
+        
+        # Pomiń jeśli zamknięte
+        weekday = check_date.weekday()
+        if get_opening_hours(tenant, weekday) is None:
+            continue
+        
+        # Pobierz sloty (używamy API, nie cache)
+        try:
+            slots = await get_available_slots_from_api(tenant, staff, service, check_date)
+            
+            if slots and len(slots) > 0:
+                results.append({
+                    "date": check_date,
+                    "slots": slots[:6],  # Max 6 slotów do pokazania
+                    "slots_count": len(slots)
+                })
+                
+                if len(results) >= limit:
+                    break
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Error checking date {check_date}: {e}")
+            continue
+    
+    return results
+
+
+def format_availability_message(available_days: List[Dict]) -> str:
+    """Formatuje wiadomość o dostępnych terminach po polsku"""
+    if not available_days:
+        return "Niestety, w najbliższych dniach nie ma wolnych terminów."
+    
+    parts = []
+    for day_info in available_days:
+        date_str = format_date_polish(day_info["date"])
+        slots_preview = natural_list([format_hour_polish(s) for s in day_info["slots"][:3]])
+        
+        if day_info["slots_count"] > 3:
+            parts.append(f"{date_str} ({slots_preview} i więcej)")
+        else:
+            parts.append(f"{date_str} ({slots_preview})")
+    
+    return "Najbliższe wolne terminy: " + ", ".join(parts) + ". Który dzień Panu odpowiada?"
+
+
+# ============================================================================
+# PREPROCESSING DAT
+# ============================================================================
+
+def preprocess_date_text(date_text: str) -> str:
+    """
+    Czyści tekst daty przed przekazaniem do dateparser.
+    Usuwa polskie przyimki które mogą mylić parser.
+    """
+    if not date_text:
+        return date_text
+    
+    text = date_text.lower().strip()
+    
+    # Usuń przyimki z początku
+    prefixes_to_remove = [
+        "na ", "w dniu ", "dnia ", "w ", "we ", "za "
+    ]
+    
+    for prefix in prefixes_to_remove:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    
+    # Mapowanie dni tygodnia na formy rozumiane przez dateparser
+    day_mappings = {
+        # Biernik/Miejscownik → Mianownik
+        "poniedziałek": "poniedziałek",
+        "wtorek": "wtorek", 
+        "środę": "środa",
+        "środe": "środa",
+        "czwartek": "czwartek",
+        "piątek": "piątek",
+        "sobotę": "sobota",
+        "sobote": "sobota",
+        "niedzielę": "niedziela",
+        "niedziele": "niedziela",
+    }
+    
+    for wrong, correct in day_mappings.items():
+        if text == wrong or text.startswith(wrong + " "):
+            text = text.replace(wrong, correct, 1)
+            break
+    
+    return text.strip()
+
+
+# ============================================================================
+# WALIDACJA SLOTÓW
+# ============================================================================
+
+async def validate_slot_available(
+    tenant: Dict,
+    staff: Dict, 
+    service: Dict,
+    date: datetime,
+    time_str: str
+) -> Tuple[bool, List[str]]:
+    """
+    Sprawdza czy konkretny slot jest dostępny.
+    Pobiera ŚWIEŻE dane z API (bez cache).
+    
+    Returns:
+        (is_available, current_slots)
+    """
+    logger.info(f"🔍 Validating slot: {date.strftime('%Y-%m-%d')} at {time_str}")
+    
+    # Pobierz świeże sloty z API (bypass cache)
+    try:
+        current_slots = await get_available_slots_from_api(tenant, staff, service, date)
+    except Exception as e:
+        logger.error(f"❌ API error during validation: {e}")
+        # Fallback - użyj cached
+        current_slots = await get_available_slots(tenant, staff, service, date)
+    
+    logger.info(f"📅 Fresh slots from API: {current_slots}")
+    
+    # Normalizuj do porównania
+    time_normalized = _normalize_time(time_str)
+    slots_normalized = [_normalize_time(s) for s in current_slots]
+    
+    logger.info(f"🔍 Comparing: '{time_normalized}' in {slots_normalized[:10]}...")
+    
+    is_available = time_normalized in slots_normalized
+    
+    if is_available:
+        logger.info(f"✅ Slot {time_str} is AVAILABLE")
+    else:
+        logger.warning(f"❌ Slot {time_str} is NOT available! Available: {current_slots[:5]}")
+    
+    return (is_available, current_slots)
 
 
 # ============================================================================
@@ -91,7 +247,7 @@ Przekazuj DOKŁADNIE co klient powiedział - nie interpretuj.""",
             },
             "question": {
                 "type": "string",
-                "description": "Jeśli klient pyta o coś (cena, adres, godziny, parking, dojazd itp.) ZAMIAST kontynuować rezerwację - wpisz pytanie. Null jeśli kontynuuje rezerwację."
+                "description": "Jeśli klient pyta o coś (cena, dostępność, godziny, kiedy wolne) - wpisz pytanie. Null jeśli kontynuuje rezerwację."
             }
         },
         required=["confirmation"],
@@ -117,6 +273,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     time_text = args.get("time_text")
     customer_name = args.get("customer_name")
     confirmation = args.get("confirmation", "none")
+    question = args.get("question")
     
     # Pobierz stan z flow_manager
     state = flow_manager.state.get("booking", {})
@@ -137,38 +294,60 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === OBSŁUGA ZMIANY ===
     if confirmation == "change":
-        # Reset odpowiednich pól
         state = {}
         flow_manager.state["booking"] = state
         return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę chce się Pan umówić?",
                              flow_manager, tenant)
     
-    # === OBSŁUGA PYTANIA W TRAKCIE REZERWACJI ===
-    question = args.get("question")
+    # === OBSŁUGA PYTANIA O DOSTĘPNOŚĆ ===
     if question:
-        logger.info(f"❓ Question during booking: {question}")
-        context = build_business_context(tenant)
+        question_lower = question.lower()
         
-        # Znajdź co dalej pytać (wróć do rezerwacji)
-        if "service" not in state:
-            next_step = "Na jaką usługę chce się Pan umówić?"
-        elif "staff" not in state:
-            available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
-            names = natural_list([s["name"] for s in available])
-            next_step = f"Do kogo chce się Pan umówić? Dostępni są {names}."
-        elif "date" not in state:
-            staff_name = odmien_imie(state['staff']['name'])
-            next_step = f"Na jaki dzień chce się Pan umówić do {staff_name}?"
-        elif "time" not in state:
-            slots_text = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:5]])
-            next_step = f"Którą godzinę Pan wybiera? Wolne są: {slots_text}."
-        elif "name" not in state:
-            next_step = "Na jakie imię zapisać wizytę?"
+        # Czy to pytanie o wolne terminy?
+        availability_keywords = [
+            "kiedy wolne", "wolny termin", "wolne terminy", "na jaki", "na jaki dzień",
+            "kiedy można", "kiedy dostępn", "jaki termin", "najbliższy termin",
+            "najszybciej", "jest wolny", "są wolne", "macie wolne"
+        ]
+        
+        is_availability_question = any(kw in question_lower for kw in availability_keywords)
+        
+        if is_availability_question and "service" in state and "staff" in state:
+            # Mamy usługę i pracownika - możemy sprawdzić dostępność
+            logger.info(f"🔍 Checking availability for: {state['service']['name']} with {state['staff']['name']}")
+            
+            try:
+                from flows import play_snippet
+                await play_snippet(flow_manager, "checking")
+            except:
+                pass
+            
+            available_days = await get_next_available_days(
+                tenant, state["staff"], state["service"], max_days=14, limit=3
+            )
+            
+            if available_days:
+                message = format_availability_message(available_days)
+                return await _respond(message, flow_manager, tenant, state=state)
+            else:
+                return await _respond(
+                    "Niestety, w najbliższych dwóch tygodniach nie ma wolnych terminów. "
+                    "Czy chce Pan zostawić kontakt, a oddzwonimy gdy się coś zwolni?",
+                    flow_manager, tenant, state=state)
+        
+        elif is_availability_question and "service" not in state:
+            # Nie mamy usługi - zapytaj najpierw
+            return await _respond(
+                "Żeby sprawdzić dostępne terminy, muszę wiedzieć na jaką usługę. "
+                f"Mamy: {natural_list([s['name'] for s in services[:4]])}. Która Pana interesuje?",
+                flow_manager, tenant, state=state)
+        
         else:
-            next_step = "Czy mogę potwierdzić rezerwację?"
-        
-        # Odpowiedz na pytanie używając GPT (jednorazowo)
-        return await _answer_and_continue(question, context, next_step, flow_manager, tenant, state)
+            # Inne pytanie - użyj GPT
+            logger.info(f"❓ General question during booking: {question}")
+            context = build_business_context(tenant)
+            return await _answer_and_continue(question, context, _get_next_step(state, staff_list), 
+                                             flow_manager, tenant, state)
     
     
     # === 1. WALIDACJA USŁUGI ===
@@ -190,12 +369,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     # === 2. WALIDACJA PRACOWNIKA ===
     if staff_text and "staff" not in state:
         if staff_text.lower() in ["dowolny", "obojętnie", "ktokolwiek", "wszystko jedno"]:
-            # Auto-wybór pierwszego dostępnego
             available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
             if available:
                 state["staff"] = available[0]
                 logger.info(f"✅ Staff (auto): {available[0]['name']}")
-                # 🔥 Poinformuj o wyborze i od razu pytaj o datę
                 staff_name = odmien_imie(available[0]['name'])
                 return await _respond(
                     f"Dobrze, zapiszę do {staff_name}. Na jaki dzień?",
@@ -221,11 +398,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     if "staff" not in state:
         available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
         
-        # 🔥 Auto-wybór gdy tylko 1 pracownik
         if len(available) == 1:
             state["staff"] = available[0]
             logger.info(f"✅ Staff (auto-single): {available[0]['name']}")
-            # Nie pytaj o pracownika - przejdź od razu do daty
         elif len(available) == 0:
             return await _respond(
                 f"Przepraszam, obecnie nie mamy dostępnych pracowników do {state['service']['name']}.",
@@ -239,9 +414,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 3. WALIDACJA DATY (dateparser!) ===
     if date_text and "date" not in state:
-        # 🔥 KLUCZOWE: dateparser zamiast własnego parsera!
+        # 🔥 PREPROCESSING - usuń "na ", "w " itp.
+        date_text_clean = preprocess_date_text(date_text)
+        logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}'")
+        
         parsed_date = dateparser.parse(
-            date_text, 
+            date_text_clean, 
             languages=['pl'],
             settings=DATEPARSER_SETTINGS
         )
@@ -261,24 +439,38 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Proszę wybrać inny dzień.",
                     flow_manager, tenant, state=state)
             
-            # 🔥 NATYCHMIASTOWA WALIDACJA SLOTÓW!
-            # Feedback dla użytkownika
+            # 🔥 WALIDACJA SLOTÓW - świeże dane!
             try:
                 from flows import play_snippet
                 await play_snippet(flow_manager, "checking")
             except:
                 pass
             
-            slots = await get_available_slots(
+            slots = await get_available_slots_from_api(
                 tenant, state["staff"], state["service"], parsed_date
             )
             
+            logger.info(f"📅 Slots for {parsed_date.strftime('%Y-%m-%d')}: {slots}")
+            
             if not slots:
+                # Zaproponuj inne dni
+                available_days = await get_next_available_days(
+                    tenant, state["staff"], state["service"], max_days=14, limit=3
+                )
+                
                 staff_name = odmien_imie(state['staff']['name'])
-                return await _respond(
-                    f"Na {format_date_polish(parsed_date)} u {staff_name} "
-                    f"nie ma wolnych terminów. Proszę wybrać inny dzień.",
-                    flow_manager, tenant, state=state)
+                
+                if available_days:
+                    suggestion = format_availability_message(available_days)
+                    return await _respond(
+                        f"Na {format_date_polish(parsed_date)} u {staff_name} nie ma wolnych terminów. "
+                        f"{suggestion}",
+                        flow_manager, tenant, state=state)
+                else:
+                    return await _respond(
+                        f"Na {format_date_polish(parsed_date)} u {staff_name} nie ma wolnych terminów "
+                        f"i w najbliższych dniach też jest pełny grafik. Przepraszam.",
+                        flow_manager, tenant, state=state)
             
             state["date"] = parsed_date
             state["available_slots"] = slots
@@ -291,36 +483,73 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     if "date" not in state:
         staff_name = odmien_imie(state['staff']['name'])
-        return await _respond(
-            f"Na jaki dzień chce się Pan umówić do {staff_name}?",
-            flow_manager, tenant, state=state)
+        
+        # 🔥 PROPONUJ TERMINY od razu!
+        available_days = await get_next_available_days(
+            tenant, state["staff"], state["service"], max_days=14, limit=3
+        )
+        
+        if available_days:
+            first_day = available_days[0]
+            other_days = available_days[1:]
+            
+            first_date_str = format_date_polish(first_day["date"])
+            first_slots = natural_list([format_hour_polish(s) for s in first_day["slots"][:3]])
+            
+            if other_days:
+                other_dates = natural_list([format_date_polish(d["date"]) for d in other_days])
+                return await _respond(
+                    f"U {staff_name} najbliższy wolny termin to {first_date_str}: {first_slots}. "
+                    f"Wolne też {other_dates}. Który dzień Panu odpowiada?",
+                    flow_manager, tenant, state=state)
+            else:
+                return await _respond(
+                    f"U {staff_name} najbliższy wolny termin to {first_date_str}: {first_slots}. "
+                    f"Odpowiada Panu?",
+                    flow_manager, tenant, state=state)
+        else:
+            return await _respond(
+                f"U {staff_name} w najbliższych dwóch tygodniach nie ma wolnych terminów. "
+                f"Przepraszam.",
+                flow_manager, tenant, state=state)
     
     # === 4. WALIDACJA GODZINY ===
     if time_text and "time" not in state:
         parsed_time = _parse_time(time_text)
         
         if parsed_time:
-            # Sprawdź czy slot dostępny
-            slots = state.get("available_slots", [])
+            # 🔥 WALIDACJA - sprawdź czy slot nadal wolny!
+            is_available, current_slots = await validate_slot_available(
+                tenant, state["staff"], state["service"], state["date"], parsed_time
+            )
             
-            # Normalizuj do porównania
-            time_normalized = _normalize_time(parsed_time)
-            slot_found = None
-            
-            for slot in slots:
-                if _normalize_time(slot) == time_normalized:
-                    slot_found = slot
-                    break
-            
-            if slot_found:
-                state["time"] = slot_found
-                logger.info(f"✅ Time: {slot_found}")
+            if is_available:
+                state["time"] = parsed_time
+                state["available_slots"] = current_slots  # Odśwież listę
+                logger.info(f"✅ Time: {parsed_time}")
             else:
-                slots_text = natural_list([format_hour_polish(s) for s in slots[:6]])
-                return await _respond(
-                    f"Godzina {format_hour_polish(parsed_time)} jest niedostępna. "
-                    f"Wolne są: {slots_text}.",
-                    flow_manager, tenant, state=state)
+                # Slot zajęty - pokaż aktualne wolne
+                if current_slots:
+                    slots_text = natural_list([format_hour_polish(s) for s in current_slots[:6]])
+                    return await _respond(
+                        f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
+                        f"Wolne są: {slots_text}.",
+                        flow_manager, tenant, state=state)
+                else:
+                    # Cały dzień zajęty
+                    state.pop("date", None)
+                    available_days = await get_next_available_days(
+                        tenant, state["staff"], state["service"], max_days=14, limit=3
+                    )
+                    if available_days:
+                        suggestion = format_availability_message(available_days)
+                        return await _respond(
+                            f"Na ten dzień nie ma już wolnych terminów. {suggestion}",
+                            flow_manager, tenant, state=state)
+                    else:
+                        return await _respond(
+                            "Na ten dzień nie ma już wolnych terminów i w najbliższych dniach też jest pełny grafik.",
+                            flow_manager, tenant, state=state)
         else:
             slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
             return await _respond(
@@ -338,7 +567,6 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     if customer_name and "name" not in state:
         name = customer_name.strip()
         
-        # Wyczyść
         for prefix in ["pan ", "pani ", "na "]:
             if name.lower().startswith(prefix):
                 name = name[len(prefix):]
@@ -362,14 +590,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         if confirmation == "yes":
             state["confirmed"] = True
         else:
-            # Pokaż podsumowanie
             staff_name = odmien_imie(state['staff']['name'])
-            customer_gender = detect_gender(state['name'])  # "Pana" lub "Pani"
-            customer_name = odmien_imie(state['name'])
+            customer_gender = detect_gender(state['name'])
+            customer_name_declined = odmien_imie(state['name'])
             summary = (
                 f"Podsumowuję: {state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}, "
-                f"na {customer_gender} {customer_name}. Czy mogę potwierdzić?"
+                f"na {customer_gender} {customer_name_declined}. Czy mogę potwierdzić?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -380,6 +607,26 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 # ============================================================================
 # FUNKCJE POMOCNICZE
 # ============================================================================
+
+def _get_next_step(state: Dict, staff_list: List) -> str:
+    """Określa następny krok w rezerwacji"""
+    if "service" not in state:
+        return "Na jaką usługę chce się Pan umówić?"
+    elif "staff" not in state:
+        available = [s for s in staff_list if staff_can_do_service(s, state.get("service", {}))]
+        names = natural_list([s["name"] for s in available])
+        return f"Do kogo chce się Pan umówić? Dostępni są {names}."
+    elif "date" not in state:
+        staff_name = odmien_imie(state['staff']['name'])
+        return f"Na jaki dzień chce się Pan umówić do {staff_name}?"
+    elif "time" not in state:
+        slots_text = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:5]])
+        return f"Którą godzinę Pan wybiera? Wolne są: {slots_text}."
+    elif "name" not in state:
+        return "Na jakie imię zapisać wizytę?"
+    else:
+        return "Czy mogę potwierdzić rezerwację?"
+
 
 def _parse_time(text: str) -> Optional[str]:
     """Parsuje godzinę z tekstu polskiego"""
@@ -400,7 +647,6 @@ def _parse_time(text: str) -> Optional[str]:
         if word in text:
             return f"{hour}:00"
     
-    # Numeryczne
     import re
     
     # "14:30", "14.30"
@@ -424,15 +670,19 @@ def _parse_time(text: str) -> Optional[str]:
 
 
 def _normalize_time(time_val) -> str:
-    """Normalizuje czas do formatu H:MM"""
+    """Normalizuje czas do formatu H:MM dla porównań"""
     if isinstance(time_val, str):
         if ":" in time_val:
             parts = time_val.split(":")
-            return f"{int(parts[0])}:{parts[1]}"
+            h = int(parts[0])
+            m = parts[1].zfill(2)  # "0" → "00"
+            return f"{h}:{m}"
         return f"{int(time_val)}:00"
     elif isinstance(time_val, int):
         return f"{time_val}:00"
     return str(time_val)
+
+
 async def _answer_and_continue(
     question: str,
     context: str,
@@ -461,7 +711,7 @@ ZASADY:
 - NIE WYMYŚLAJ informacji których nie masz
 - Mów w rodzaju żeńskim (jestem asystentką)
 - Używaj formy "Pan/Pani"
-- Na końcu NIE pytaj czy mogę w czymś pomóc (wrócisz do rezerwacji)"""},
+- Na końcu NIE pytaj czy mogę w czymś pomóc"""},
                 {"role": "user", "content": question}
             ],
             max_tokens=150,
@@ -475,18 +725,10 @@ ZASADY:
         logger.error(f"❌ GPT error: {e}")
         answer = "Przepraszam, nie mam tej informacji"
     
-    # Połącz odpowiedź z powrotem do rezerwacji
     full_response = f"{answer} Wracając do rezerwacji - {next_step.lower()}"
     
-    # Zapisz stan i odpowiedz
-    flow_manager.state["booking"] = state
-    
-    from pipecat.frames.frames import TTSSpeakFrame
-    await flow_manager.task.queue_frame(TTSSpeakFrame(text=full_response))
-    
-    logger.info(f"🎤 RESPONSE: {full_response[:80]}...")
-    
-    return (None, create_booking_node(tenant))
+    return await _respond(full_response, flow_manager, tenant, state=state)
+
 
 async def _respond(
     text: str, 
@@ -497,11 +739,9 @@ async def _respond(
 ) -> Tuple:
     """Wysyła odpowiedź przez TTS i zwraca następny node"""
     
-    # Zapisz stan
     if state is not None:
         flow_manager.state["booking"] = state
     
-    # Wyślij TTS
     from pipecat.frames.frames import TTSSpeakFrame
     await flow_manager.task.queue_frame(TTSSpeakFrame(text=text))
     
@@ -512,53 +752,7 @@ async def _respond(
         return (None, create_anything_else_node(tenant))
     else:
         return (None, create_booking_node(tenant))
-async def _answer_and_continue(
-    question: str,
-    context: str,
-    next_step: str,
-    flow_manager: FlowManager,
-    tenant: Dict,
-    state: Dict
-) -> Tuple:
-    """Odpowiada na pytanie w trakcie rezerwacji i wraca do procesu"""
-    import openai
-    
-    try:
-        client = openai.OpenAI()
-        
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
 
-INFORMACJE O FIRMIE:
-{context}
-
-ZASADY:
-- Odpowiedz TYLKO na pytanie
-- Mów krótko i konkretnie
-- Używaj formy "Pan/Pani"
-- NIE wymyślaj informacji których nie masz"""
-                },
-                {"role": "user", "content": question}
-            ],
-            max_tokens=150,
-            temperature=0.3
-        )
-        
-        answer = response.choices[0].message.content.strip()
-        logger.info(f"💬 Answer: {answer[:50]}...")
-        
-    except Exception as e:
-        logger.error(f"❌ GPT error: {e}")
-        answer = "Przepraszam, nie mam tej informacji"
-    
-    # Połącz odpowiedź z powrotem do rezerwacji
-    full_response = f"{answer} Wracając do rezerwacji - {next_step.lower()}"
-    
-    return await _respond(full_response, flow_manager, tenant, state=state)
 
 async def _save_booking(
     state: Dict,
@@ -566,11 +760,10 @@ async def _save_booking(
     tenant: Dict,
     caller_phone: str
 ) -> Tuple:
-    """Zapisuje rezerwację do API"""
+    """Zapisuje rezerwację do API - z PODWÓJNĄ walidacją"""
     
     logger.info("💾 SAVING BOOKING...")
     
-    # Feedback dla użytkownika
     try:
         from flows import play_snippet
         await play_snippet(flow_manager, "saving")
@@ -578,28 +771,27 @@ async def _save_booking(
         pass
     
     try:
-        # Double-check slotów
-        current_slots = await get_available_slots(
-            tenant, state["staff"], state["service"], state["date"]
+        # 🔥 KLUCZOWE: Jeszcze raz sprawdź czy slot jest wolny!
+        is_available, current_slots = await validate_slot_available(
+            tenant, state["staff"], state["service"], state["date"], state["time"]
         )
         
-        time_normalized = _normalize_time(state["time"])
-        slots_normalized = [_normalize_time(s) for s in current_slots]
-        
-        if time_normalized not in slots_normalized:
-            # Zajęte!
+        if not is_available:
+            logger.warning(f"❌ Slot was taken between confirmation and save!")
+            
             if current_slots:
                 state.pop("time", None)
                 state["available_slots"] = current_slots
                 slots_text = natural_list([format_hour_polish(s) for s in current_slots[:5]])
                 return await _respond(
-                    f"Ta godzina właśnie została zajęta. Wolne są: {slots_text}.",
+                    f"Przepraszam, ta godzina właśnie została zajęta przez kogoś innego. "
+                    f"Pozostały wolne: {slots_text}. Którą wybrać?",
                     flow_manager, tenant, state=state)
             else:
                 state.pop("date", None)
                 state.pop("time", None)
                 return await _respond(
-                    "Na ten dzień nie ma już wolnych terminów. Proszę wybrać inny dzień.",
+                    "Przepraszam, ten dzień właśnie się zapełnił. Proszę wybrać inny termin.",
                     flow_manager, tenant, state=state)
         
         # Zapisz
@@ -666,7 +858,6 @@ def create_booking_node(tenant: Dict) -> Dict:
     services_text = ", ".join(s["name"] for s in services[:5])
     staff_text = ", ".join(s["name"] for s in staff_list)
     
-    # Aktualna data
     now = datetime.now()
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
     
@@ -692,14 +883,16 @@ ZASADY:
         
         "task_messages": [{
             "role": "system",
-            "content": """ZAWSZE wywołaj book_appointment z tym co klient powiedział.
+            "content": """ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 
 Przykłady:
 - "na strzyżenie do Ani" → book_appointment(service="strzyżenie", staff="Ania")
 - "jutro" → book_appointment(date_text="jutro")
 - "na trzynastą" → book_appointment(time_text="na trzynastą")
 - "tak, potwierdzam" → book_appointment(confirmation="yes")
-- "nie, dziękuję" → book_appointment(confirmation="no")"""
+- "nie, dziękuję" → book_appointment(confirmation="no")
+- "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
+- "na jaki dzień jest wolne?" → book_appointment(question="na jaki dzień jest wolne?")"""
         }],
         
         "functions": [
@@ -725,11 +918,9 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     
     logger.info("📅 BOOKING START (simple)")
     
-    # Reset stanu
     flow_manager.state["booking"] = {}
     flow_manager.state["booking_confirmed"] = False
     
-    # 🔥 OD RAZU powiedz coś - nie czekaj!
     services = tenant.get("services", [])
     names = natural_list([s["name"] for s in services[:4]])
     
@@ -739,21 +930,6 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     )
     
     return (None, create_booking_node(tenant))
-
-
-def _extract_initial_message(flow_manager: FlowManager) -> Optional[str]:
-    """Wyciąga pierwszą wiadomość klienta"""
-    try:
-        context = flow_manager.get_current_context()
-        
-        for msg in reversed(context):
-            if msg.get("role") == "user":
-                content = msg.get("content", "").strip()
-                if len(content) > 5:
-                    return content
-        return None
-    except:
-        return None
 
 
 # ============================================================================

@@ -1,4 +1,5 @@
 # flows_helpers.py - Funkcje pomocnicze dla Pipecat Flows
+# WERSJA 1.1 - Dodano eksport get_available_slots_from_api
 """
 Zawiera:
 - Parsowanie dat i godzin (polskie)
@@ -282,7 +283,10 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
 async def get_available_slots_from_api(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[str]:
-    """Pobiera wolne sloty z API panelu (Google Calendar) - OBSŁUGUJE MINUTY"""
+    """
+    Pobiera wolne sloty z API panelu (Google Calendar) - BEZ CACHE.
+    Zwraca świeże dane bezpośrednio z API.
+    """
     staff_id = staff.get("id")
     service_id = service.get("id")
     date_str = date.strftime("%Y-%m-%d")
@@ -292,8 +296,10 @@ async def get_available_slots_from_api(
         logger.warning("⚠️ No panel slug configured")
         return []
     
+    logger.info(f"📅 Fetching fresh slots from API: staff={staff_id}, date={date_str}")
+    
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
                 f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
                 params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
@@ -315,11 +321,13 @@ async def get_available_slots_from_api(
                     elif isinstance(slot, int):
                         result.append(f"{slot}:00")
                 
-                logger.info(f"📅 Got {len(result)} slots from API for {date_str}")
+                logger.info(f"📅 API returned {len(result)} slots for {date_str}: {result[:5]}...")
                 return result
             else:
-                logger.warning(f"⚠️ Calendar API returned {response.status_code}")
+                logger.warning(f"⚠️ Calendar API returned {response.status_code}: {response.text[:200]}")
                 
+    except httpx.TimeoutException:
+        logger.error(f"❌ Calendar API timeout for {date_str}")
     except Exception as e:
         logger.error(f"❌ Calendar API error: {e}")
     
@@ -361,6 +369,8 @@ def get_staff_working_hours(staff: dict, weekday: int) -> tuple[int, int] | None
         logger.warning(f"⚠️ Error parsing staff working hours: {e}")
     
     return None
+
+
 async def get_available_slots_from_working_hours(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[str]:
@@ -407,13 +417,13 @@ def _slot_to_minutes(slot: str) -> int:
     return int(parts[0]) * 60 + int(parts[1])
 
 
-# Cache dla slotów (żeby nie odpytywać API wielokrotnie)
+# Cache dla slotów (używany tylko przez get_available_slots, nie przez _from_api)
 _slots_cache = {}
 
 async def get_available_slots(
     tenant: dict, staff: dict, service: dict, date: datetime
-) -> List[int]:
-    """Główna funkcja - z cache 60s"""
+) -> List[str]:
+    """Główna funkcja - z cache 60s (używaj get_available_slots_from_api dla świeżych danych)"""
     # Cache key
     cache_key = f"{staff.get('id')}_{date.strftime('%Y-%m-%d')}"
     
@@ -579,6 +589,8 @@ async def increment_sms_count(tenant_id: str):
         logger.info(f"📱 SMS count incremented for {tenant_id}")
     except Exception as e:
         logger.error(f"📱 SMS count error: {e}")
+
+
 # ==========================================
 # BUDOWANIE KONTEKSTU DLA ODPOWIEDZI
 # ==========================================
@@ -695,7 +707,7 @@ def build_business_context(tenant: dict) -> str:
                     except:
                         pass
             if staff_hours:
-                parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))  # 🔥 POPRAWIONE!
+                parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
     
     # Ostrzeżenie na końcu
     parts.append("""⚠️ WAŻNE ZASADY:
@@ -716,12 +728,6 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
     """
     Dopasuj usługę z tolerancją na literówki.
     Uniwersalne - działa dla każdej branży (fryzjer, kosmetyczka, mechanik...).
-    
-    Przykłady:
-    - "strzyzenie" → "Strzyżenie męskie" ✓
-    - "curzenie" → "Strzyżenie męskie" ✓ (błąd Deepgram)
-    - "manikur" → "Manicure" ✓
-    - "przeglond" → "Przegląd" ✓
     """
     if not query or not services:
         return None
@@ -791,6 +797,7 @@ def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.85) -> 
     
     logger.warning(f"⚠️ Staff not found: '{query}'. Bot will ask.")
     return None
+
 
 def staff_can_do_service(staff: dict, service: dict) -> bool:
     """
