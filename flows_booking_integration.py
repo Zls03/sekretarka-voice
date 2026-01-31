@@ -117,6 +117,13 @@ def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
     try:
         context = flow_manager.get_current_context()
         
+        # 🔥 DEBUG: Pokaż co jest w kontekście
+        logger.info(f"📝 CONTEXT DEBUG: {len(context)} messages")
+        for i, msg in enumerate(context[-5:]):  # Ostatnie 5
+            role = msg.get("role", "?")
+            content = msg.get("content", "")[:80]
+            logger.info(f"📝 [{i}] {role}: {content}...")
+        
         # Szukaj ostatniej wiadomości user (to ta która wywołała start_booking)
         for msg in reversed(context):
             if msg.get("role") == "user":
@@ -125,6 +132,7 @@ def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
                 # Sprawdź czy to nie jest tylko "tak", "halo" itp.
                 ignore_phrases = ["tak", "halo", "słucham", "proszę", "ok", "dobrze", "no"]
                 if content.lower() in ignore_phrases:
+                    logger.info(f"📝 Skipping ignored phrase: '{content}'")
                     continue
                 
                 # Sprawdź czy zawiera słowa kluczowe rezerwacji
@@ -133,12 +141,12 @@ def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
                 
                 content_lower = content.lower()
                 if any(kw in content_lower for kw in booking_keywords):
-                    logger.info(f"📝 Found initial booking message: '{content[:50]}...'")
+                    logger.info(f"📝 Found initial booking message: '{content[:80]}...'")
                     return content
                 
                 # Jeśli to pierwsza sensowna wiadomość - zwróć ją
                 if len(content) > 10:
-                    logger.info(f"📝 Using first substantial message: '{content[:50]}...'")
+                    logger.info(f"📝 Using first substantial message: '{content[:80]}...'")
                     return content
         
         logger.warning("📝 No initial booking message found in context")
@@ -146,6 +154,8 @@ def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
         
     except Exception as e:
         logger.error(f"📝 Error extracting initial message: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
