@@ -353,26 +353,40 @@ async def validate_and_merge(
             errors.append(f"Nie rozumiem daty '{parsed.date}'. Powiedz np. jutro, w piątek, 15 lutego.")
             logger.warning(f"❌ VALIDATOR: date not parsed '{parsed.date}'")
     
-    # --- POBIERZ SLOTY jeśli mamy datę i pracownika i usługę ---
-    if state.selected_date and state.selected_staff and state.selected_service and not state.available_slots:
-        try:
-            slots = await get_available_slots(tenant, state.selected_staff, state.selected_service, state.selected_date)
-            if slots:
-                state.available_slots = slots
-                logger.info(f"✅ VALIDATOR: got {len(slots)} slots for {state.selected_date.strftime('%Y-%m-%d')}")
-            else:
-                errors.append(f"Na {format_date_polish(state.selected_date)} brak wolnych terminów. Wybierz inny dzień.")
-                state.selected_date = None  # Reset daty żeby klient wybrał inną
-                logger.warning(f"❌ VALIDATOR: no slots available")
-        except Exception as e:
-            logger.error(f"❌ VALIDATOR: slots error: {e}")
-            errors.append("Problem ze sprawdzeniem dostępności. Spróbuj ponownie.")
-    
     # --- GODZINA ---
-    if parsed.time and not state.selected_time and state.available_slots:
+    # 🔥 FIX: Obsłuż godzinę NAWET jeśli nie mamy jeszcze slotów (zostaną pobrane)
+    if parsed.time and not state.selected_time:
         parsed_time = parse_time(parsed.time)
         if parsed_time:
-            # Normalizacja i porównanie
+            # Zapisz tymczasowo - walidacja ze slotami będzie poniżej
+            state._pending_time = parsed_time
+            logger.info(f"⏰ VALIDATOR: time parsed '{parsed.time}' → {parsed_time} (pending validation)")
+        else:
+            errors.append(f"Nie rozumiem godziny '{parsed.time}'. Powiedz np. na trzynastą, o 14:30.")
+            logger.warning(f"❌ VALIDATOR: time not parsed '{parsed.time}'")
+    
+    # --- POBIERZ SLOTY i WALIDUJ GODZINĘ ---
+    # 🔥 FIX: Pobierz sloty GDY mamy datę+pracownika+usługę (nawet jeśli już mamy pending_time)
+    if state.selected_date and state.selected_staff and state.selected_service:
+        if not state.available_slots:
+            try:
+                slots = await get_available_slots(tenant, state.selected_staff, state.selected_service, state.selected_date)
+                if slots:
+                    state.available_slots = slots
+                    logger.info(f"✅ VALIDATOR: got {len(slots)} slots for {state.selected_date.strftime('%Y-%m-%d')}")
+                else:
+                    errors.append(f"Na {format_date_polish(state.selected_date)} brak wolnych terminów u {state.selected_staff['name']}. Wybierz inny dzień.")
+                    state.selected_date = None  # Reset daty
+                    state._pending_time = None  # Reset pending time
+                    logger.warning(f"❌ VALIDATOR: no slots available")
+            except Exception as e:
+                logger.error(f"❌ VALIDATOR: slots error: {e}")
+                errors.append("Problem ze sprawdzeniem dostępności. Spróbuj ponownie.")
+        
+        # Teraz waliduj pending_time jeśli mamy sloty
+        if hasattr(state, '_pending_time') and state._pending_time and state.available_slots:
+            pending = state._pending_time
+            
             def normalize_slot(s):
                 if isinstance(s, str) and ":" in s:
                     parts = s.split(":")
@@ -383,24 +397,24 @@ async def validate_and_merge(
                     return f"{s}:00"
                 return str(s)
             
-            parsed_normalized = normalize_slot(parsed_time)
+            pending_normalized = normalize_slot(pending)
             slot_match = None
             
             for slot in state.available_slots:
-                if normalize_slot(slot) == parsed_normalized:
+                if normalize_slot(slot) == pending_normalized:
                     slot_match = slot
                     break
             
             if slot_match:
                 state.selected_time = slot_match
-                logger.info(f"✅ VALIDATOR: time matched '{parsed.time}' → {slot_match}")
+                logger.info(f"✅ VALIDATOR: time confirmed '{pending}' → {slot_match}")
             else:
                 slots_text = ", ".join(format_hour_polish(s) for s in state.available_slots[:5])
-                errors.append(f"Godzina {format_hour_polish(parsed_time)} jest niedostępna. Wolne: {slots_text}")
-                logger.warning(f"❌ VALIDATOR: time {parsed_time} not in slots {state.available_slots}")
-        else:
-            errors.append(f"Nie rozumiem godziny '{parsed.time}'. Powiedz np. na trzynastą, o 14:30.")
-            logger.warning(f"❌ VALIDATOR: time not parsed '{parsed.time}'")
+                errors.append(f"Godzina {format_hour_polish(pending)} jest niedostępna. Wolne: {slots_text}")
+                logger.warning(f"❌ VALIDATOR: time {pending} not in slots {state.available_slots}")
+            
+            # Usuń pending
+            state._pending_time = None
     
     # --- IMIĘ ---
     if parsed.customer_name and not state.customer_name:
