@@ -122,9 +122,9 @@ TWOJE ZADANIA:
 - Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
 - Chce się POŻEGNAĆ → end_conversation"""
 
-        role_extra = f"""
-USŁUGI: {services_list}
-PRACOWNICY: {staff_list}"""
+        # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
+        role_extra = build_business_context(tenant)
+        role_extra += f"\n\nPRACOWNICY: {staff_list}"
 
     else:
         functions = [
@@ -146,8 +146,8 @@ TWOJE ZADANIA:
 
 WAŻNE: Jeśli klient podał imię i treść wiadomości, przekaż je w contact_owner(customer_name=..., message=...)."""
 
-        role_extra = f"""
-USŁUGI/CENNIK: {services_list}"""
+        # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
+        role_extra = build_business_context(tenant)
     
     return {
         "name": "greeting",
