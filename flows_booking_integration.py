@@ -100,13 +100,19 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
             logger.info("✅ BOOKING CONFIRMED on first message!")
             flow_manager.state["booking_active"] = False
             from flows import create_anything_else_node
-            return ({"success": True, "message": response}, create_anything_else_node(tenant))
+            # 🔥 FIX: Zwróć STRING, nie dict - żeby TTS wypowiedział!
+            return (response, create_anything_else_node(tenant))
         
-        # Zwróć odpowiedź i kontynuuj
-        return ({"message": response}, create_booking_hard_node(tenant, new_state, client_gender))
+        # 🔥 FIX: Zwróć STRING, nie dict!
+        return (response, create_booking_hard_node(tenant, new_state, client_gender))
     
-    # Brak initial message - standardowy start
-    return ({"status": "started"}, create_booking_hard_node(tenant, state, client_gender))
+    # Brak initial message - standardowy start (zapytaj o usługę)
+    from flows_booking_fsm import generate_response, build_generator_context
+    ctx = build_generator_context(BookingStep.SERVICE, state, tenant)
+    initial_response = await generate_response(ctx)
+    
+    # 🔥 FIX: Zwróć STRING!
+    return (initial_response, create_booking_hard_node(tenant, state, client_gender))
 
 
 def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
@@ -342,25 +348,29 @@ async def handle_booking_input_v2(
         logger.info("✅ BOOKING CONFIRMED!")
         flow_manager.state["booking_active"] = False
         from flows import create_anything_else_node
-        return ({"success": True, "message": response}, create_anything_else_node(tenant))
+        # 🔥 FIX: Zwróć STRING dla TTS!
+        return (response, create_anything_else_node(tenant))
     
     elif is_done:
         # 👋 Zakończenie (cancel, goodbye)
         logger.info("👋 BOOKING ENDED")
         flow_manager.state["booking_active"] = False
         from flows import create_end_node
-        return ({"message": response}, create_end_node())
+        # 🔥 FIX: Zwróć STRING!
+        return (response, create_end_node())
     
     elif new_state.current_step == BookingStep.FAILED:
         # ❌ Błąd - przekieruj do właściciela
         logger.warning("❌ BOOKING FAILED - escalating")
         flow_manager.state["booking_active"] = False
         from flows_contact import create_collect_contact_name_node
-        return ({"error": response}, create_collect_contact_name_node(tenant))
+        # 🔥 FIX: Zwróć STRING!
+        return (response, create_collect_contact_name_node(tenant))
     
     else:
         # 🔄 Kontynuuj rezerwację - wróć do HARD NODE
-        return ({"message": response}, create_booking_hard_node(tenant, new_state, client_gender))
+        # 🔥 FIX: Zwróć STRING!
+        return (response, create_booking_hard_node(tenant, new_state, client_gender))
 
 
 def normalize_stt_input(text: str, current_step: BookingStep) -> str:
