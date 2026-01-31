@@ -508,6 +508,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     async def check_max_duration():
         """Sprawdza czy nie przekroczono max czasu rozmowy"""
+        nonlocal conversation_ended  # ← MUSI BYĆ TUTAJ, NA POCZĄTKU!
         warning_given = False
         
         while True:
@@ -538,20 +539,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Warning message error: {e}")
             
+            # Koniec czasu - rozłącz NATYCHMIAST
             if elapsed >= MAX_CALL_DURATION:
                 logger.warning(f"🛑 Max call duration reached: {elapsed:.0f}s - FORCING HANGUP")
-                nonlocal conversation_ended
-                conversation_ended = True
+                conversation_ended = True  # ← Teraz działa bo nonlocal jest na górze
                 
                 try:
                     from pipecat.frames.frames import TTSSpeakFrame, EndFrame
                     
-                    # Bezpośredni TTS - nie czekaj na LLM!
                     await task.queue_frame(
                         TTSSpeakFrame(text="Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
                     )
                     
-                    # Daj 3 sekundy na TTS, potem FORCE END
                     async def force_end():
                         await asyncio.sleep(3.0)
                         try:
