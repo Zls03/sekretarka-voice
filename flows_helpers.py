@@ -607,31 +607,33 @@ def build_business_context(tenant: dict) -> str:
         # Tryb z rezerwacjami - usługi z kalendarza
         services = tenant.get("services", [])
         if services:
-            svc_text = []
+            svc_lines = []
             for s in services:
                 price = s.get('price', 'cena do uzgodnienia')
                 duration = s.get('duration_minutes', 30)
-                svc_text.append(f"{s['name']} - {price} zł ({duration} min)")
-            parts.append(f"CENNIK: {', '.join(svc_text)}")
+                svc_lines.append(f"• {s['name']} = {price} zł ({duration} min)")
+            cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
+            parts.append(cennik_text)
     else:
         # Tryb informacyjny - usługi z info_services
         info_services = tenant.get("info_services", [])
         if info_services:
-            svc_text = []
+            svc_lines = []
             for s in info_services:
                 name = s.get('name', '')
                 price = s.get('price', '')
                 description = s.get('description', '')
                 
                 if price and description:
-                    svc_text.append(f"{name} - {price} ({description})")
+                    svc_lines.append(f"• {name} = {price} ({description})")
                 elif price:
-                    svc_text.append(f"{name} - {price}")
+                    svc_lines.append(f"• {name} = {price}")
                 elif description:
-                    svc_text.append(f"{name} ({description})")
+                    svc_lines.append(f"• {name} ({description})")
                 else:
-                    svc_text.append(name)
-            parts.append(f"CENNIK/USŁUGI: {', '.join(svc_text)}")
+                    svc_lines.append(f"• {name}")
+            cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
+            parts.append(cennik_text)
         
         # Dodaj informację że rezerwacje są wyłączone
         parts.append("UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon.")
@@ -696,7 +698,10 @@ def build_business_context(tenant: dict) -> str:
                 parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))  # 🔥 POPRAWIONE!
     
     # Ostrzeżenie na końcu
-    parts.append("⚠️ Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji. NIE WYMYŚLAJ.")
+    parts.append("""⚠️ WAŻNE ZASADY:
+- Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji
+- NIGDY NIE WYMYŚLAJ cen, godzin ani innych faktów
+- Podawaj ceny DOKŁADNIE tak jak są napisane powyżej""")
     
     return "\n\n".join(parts)
 
