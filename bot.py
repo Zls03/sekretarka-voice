@@ -394,8 +394,22 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1200,   # ✅ OK
-            endpointing=400,         # 🆕 Dodaj! Pomaga wykryć koniec zdania
+            utterance_end_ms=1200,
+            endpointing=400,
+            # 🔥 Keyterms - boost rozpoznawania godzin i krótkich słów
+            keyterms=[
+                # Godziny
+                "dziewiąta", "dziesiąta", "jedenasta", "dwunasta",
+                "trzynasta", "czternasta", "piętnasta", "szesnasta",
+                "siedemnasta", "osiemnasta",
+                # Półgodziny
+                "trzydzieści", "wpół",
+                # Potwierdzenia (często mylone)
+                "tak", "nie", "dobrze", "okej",
+                # Dni
+                "poniedziałek", "wtorek", "środa", "czwartek", 
+                "piątek", "sobota",
+            ],
         )
     )
     
