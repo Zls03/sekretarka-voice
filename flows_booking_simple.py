@@ -28,7 +28,7 @@ from flows_helpers import (
     fuzzy_match_service, fuzzy_match_staff, 
     staff_can_do_service, send_booking_sms,
     increment_sms_count, get_opening_hours,
-    POLISH_DAYS,
+    POLISH_DAYS, build_business_context,
 )
 
 # Import funkcji odmiany i formatowania
@@ -88,6 +88,10 @@ Przekazuj DOKŁADNIE co klient powiedział - nie interpretuj.""",
                 "type": "string",
                 "enum": ["yes", "no", "change", "none"],
                 "description": "Czy klient potwierdza: 'yes' (tak/dobrze), 'no' (nie/anuluj), 'change' (chce zmienić), 'none' (nie dotyczy)"
+            },
+            "question": {
+                "type": "string",
+                "description": "Jeśli klient pyta o coś (cena, adres, godziny, parking, dojazd itp.) ZAMIAST kontynuować rezerwację - wpisz pytanie. Null jeśli kontynuuje rezerwację."
             }
         },
         required=["confirmation"],
@@ -139,6 +143,34 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę chce się Pan umówić?",
                              flow_manager, tenant)
     
+    # === OBSŁUGA PYTANIA W TRAKCIE REZERWACJI ===
+    question = args.get("question")
+    if question:
+        logger.info(f"❓ Question during booking: {question}")
+        context = build_business_context(tenant)
+        
+        # Znajdź co dalej pytać (wróć do rezerwacji)
+        if "service" not in state:
+            next_step = "Na jaką usługę chce się Pan umówić?"
+        elif "staff" not in state:
+            available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
+            names = natural_list([s["name"] for s in available])
+            next_step = f"Do kogo chce się Pan umówić? Dostępni są {names}."
+        elif "date" not in state:
+            staff_name = odmien_imie(state['staff']['name'])
+            next_step = f"Na jaki dzień chce się Pan umówić do {staff_name}?"
+        elif "time" not in state:
+            slots_text = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:5]])
+            next_step = f"Którą godzinę Pan wybiera? Wolne są: {slots_text}."
+        elif "name" not in state:
+            next_step = "Na jakie imię zapisać wizytę?"
+        else:
+            next_step = "Czy mogę potwierdzić rezerwację?"
+        
+        # Odpowiedz na pytanie używając GPT (jednorazowo)
+        return await _answer_and_continue(question, context, next_step, flow_manager, tenant, state)
+    
+    
     # === 1. WALIDACJA USŁUGI ===
     if service_text and "service" not in state:
         found = fuzzy_match_service(service_text, services)
@@ -188,11 +220,22 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     if "staff" not in state:
         available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
-        names = natural_list([s["name"] for s in available])
-        return await _respond(
-            f"Świetnie, {state['service']['name']}. Do kogo chce się Pan umówić? "
-            f"Dostępni są {names}. Może być też dowolna osoba.",
-            flow_manager, tenant, state=state)
+        
+        # 🔥 Auto-wybór gdy tylko 1 pracownik
+        if len(available) == 1:
+            state["staff"] = available[0]
+            logger.info(f"✅ Staff (auto-single): {available[0]['name']}")
+            # Nie pytaj o pracownika - przejdź od razu do daty
+        elif len(available) == 0:
+            return await _respond(
+                f"Przepraszam, obecnie nie mamy dostępnych pracowników do {state['service']['name']}.",
+                flow_manager, tenant, state=state)
+        else:
+            names = natural_list([s["name"] for s in available])
+            return await _respond(
+                f"Świetnie, {state['service']['name']}. Do kogo chce się Pan umówić? "
+                f"Dostępni są {names}. Może być też dowolna osoba.",
+                flow_manager, tenant, state=state)
     
     # === 3. WALIDACJA DATY (dateparser!) ===
     if date_text and "date" not in state:
@@ -390,7 +433,60 @@ def _normalize_time(time_val) -> str:
     elif isinstance(time_val, int):
         return f"{time_val}:00"
     return str(time_val)
+async def _answer_and_continue(
+    question: str,
+    context: str,
+    next_step: str,
+    flow_manager: FlowManager,
+    tenant: Dict,
+    state: Dict
+) -> Tuple:
+    """Odpowiada na pytanie klienta i wraca do rezerwacji"""
+    import openai
+    
+    try:
+        client = openai.OpenAI()
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
 
+INFORMACJE O FIRMIE:
+{context}
+
+ZASADY:
+- Odpowiedz TYLKO na pytanie
+- Użyj DOKŁADNYCH danych z powyższych informacji
+- NIE WYMYŚLAJ informacji których nie masz
+- Mów w rodzaju żeńskim (jestem asystentką)
+- Używaj formy "Pan/Pani"
+- Na końcu NIE pytaj czy mogę w czymś pomóc (wrócisz do rezerwacji)"""},
+                {"role": "user", "content": question}
+            ],
+            max_tokens=150,
+            temperature=0.3
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        logger.info(f"💬 Answer: {answer}")
+        
+    except Exception as e:
+        logger.error(f"❌ GPT error: {e}")
+        answer = "Przepraszam, nie mam tej informacji"
+    
+    # Połącz odpowiedź z powrotem do rezerwacji
+    full_response = f"{answer} Wracając do rezerwacji - {next_step.lower()}"
+    
+    # Zapisz stan i odpowiedz
+    flow_manager.state["booking"] = state
+    
+    from pipecat.frames.frames import TTSSpeakFrame
+    await flow_manager.task.queue_frame(TTSSpeakFrame(text=full_response))
+    
+    logger.info(f"🎤 RESPONSE: {full_response[:80]}...")
+    
+    return (None, create_booking_node(tenant))
 
 async def _respond(
     text: str, 
@@ -416,7 +512,53 @@ async def _respond(
         return (None, create_anything_else_node(tenant))
     else:
         return (None, create_booking_node(tenant))
+async def _answer_and_continue(
+    question: str,
+    context: str,
+    next_step: str,
+    flow_manager: FlowManager,
+    tenant: Dict,
+    state: Dict
+) -> Tuple:
+    """Odpowiada na pytanie w trakcie rezerwacji i wraca do procesu"""
+    import openai
+    
+    try:
+        client = openai.OpenAI()
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
 
+INFORMACJE O FIRMIE:
+{context}
+
+ZASADY:
+- Odpowiedz TYLKO na pytanie
+- Mów krótko i konkretnie
+- Używaj formy "Pan/Pani"
+- NIE wymyślaj informacji których nie masz"""
+                },
+                {"role": "user", "content": question}
+            ],
+            max_tokens=150,
+            temperature=0.3
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        logger.info(f"💬 Answer: {answer[:50]}...")
+        
+    except Exception as e:
+        logger.error(f"❌ GPT error: {e}")
+        answer = "Przepraszam, nie mam tej informacji"
+    
+    # Połącz odpowiedź z powrotem do rezerwacji
+    full_response = f"{answer} Wracając do rezerwacji - {next_step.lower()}"
+    
+    return await _respond(full_response, flow_manager, tenant, state=state)
 
 async def _save_booking(
     state: Dict,
