@@ -538,26 +538,34 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Warning message error: {e}")
             
-            # Koniec czasu - rozłącz z pożegnaniem
             if elapsed >= MAX_CALL_DURATION:
-                logger.warning(f"🛑 Max call duration reached: {elapsed:.0f}s")
+                logger.warning(f"🛑 Max call duration reached: {elapsed:.0f}s - FORCING HANGUP")
+                nonlocal conversation_ended
+                conversation_ended = True
+                
                 try:
-                    from pipecat.frames.frames import LLMMessagesAppendFrame, EndFrame
+                    from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+                    
+                    # Bezpośredni TTS - nie czekaj na LLM!
                     await task.queue_frame(
-                        LLMMessagesAppendFrame(
-                            messages=[{
-                                "role": "system",
-                                "content": "Czas rozmowy się skończył. Powiedz KRÓTKO: 'Dziękuję za rozmowę, zapraszam do ponownego kontaktu. Do widzenia!'"
-                            }],
-                            run_llm=True
-                        )
+                        TTSSpeakFrame(text="Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
                     )
-                    await asyncio.sleep(3)  # Daj czas na pożegnanie
-                    await task.queue_frame(EndFrame())
+                    
+                    # Daj 3 sekundy na TTS, potem FORCE END
+                    async def force_end():
+                        await asyncio.sleep(3.0)
+                        try:
+                            await task.queue_frame(EndFrame())
+                            logger.info("🔚 EndFrame sent after max duration")
+                        except:
+                            await task.cancel()
+                    
+                    asyncio.create_task(force_end())
+                    
                 except Exception as e:
                     logger.error(f"End call error: {e}")
                     await task.cancel()
-       
+                
                 break
 
     # ==========================================

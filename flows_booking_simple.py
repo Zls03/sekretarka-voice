@@ -119,12 +119,21 @@ def format_availability_message(available_days: List[Dict]) -> str:
 def preprocess_date_text(date_text: str) -> str:
     """
     Czyści tekst daty przed przekazaniem do dateparser.
-    Usuwa polskie przyimki które mogą mylić parser.
+    Usuwa polskie przyimki i modyfikatory czasowe.
     """
     if not date_text:
         return date_text
     
     text = date_text.lower().strip()
+    
+    # 🔥 NOWE: Usuń modyfikatory czasowe (PRZED usunięciem przyimków!)
+    time_modifiers = [
+        " po południu", " popołudniu", " popoludniu",
+        " rano", " wieczorem", " przed południem",
+        " po poludniu",  # bez polskich znaków
+    ]
+    for mod in time_modifiers:
+        text = text.replace(mod, "")
     
     # Usuń przyimki z początku
     prefixes_to_remove = [
@@ -138,7 +147,6 @@ def preprocess_date_text(date_text: str) -> str:
     
     # Mapowanie dni tygodnia na formy rozumiane przez dateparser
     day_mappings = {
-        # Biernik/Miejscownik → Mianownik
         "poniedziałek": "poniedziałek",
         "wtorek": "wtorek", 
         "środę": "środa",
@@ -157,7 +165,6 @@ def preprocess_date_text(date_text: str) -> str:
             break
     
     return text.strip()
-
 
 # ============================================================================
 # WALIDACJA SLOTÓW
@@ -368,6 +375,14 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 2. WALIDACJA PRACOWNIKA ===
     if staff_text and "staff" not in state:
+        # 🔥 FIX: Ignoruj przyimki jako imię (STT czasem rozpoznaje "do" osobno)
+        if staff_text.lower().strip() in ["do", "na", "u", "od", "dla", "z"]:
+            available = [s for s in staff_list if staff_can_do_service(s, state.get("service", {}))]
+            names = natural_list([s["name"] for s in available])
+            return await _respond(
+                f"Do kogo chce się Pan umówić? Dostępni są {names}.",
+                flow_manager, tenant, state=state)
+        
         if staff_text.lower() in ["dowolny", "obojętnie", "ktokolwiek", "wszystko jedno"]:
             available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
             if available:
@@ -393,8 +408,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             else:
                 names = ", ".join(s["name"] for s in staff_list)
                 return await _respond(f"Nie mamy pracownika '{staff_text}'. Dostępni: {names}.",
-                                     flow_manager, tenant, state=state)
-    
+                                    flow_manager, tenant, state=state)
+        
     if "staff" not in state:
         available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
         
