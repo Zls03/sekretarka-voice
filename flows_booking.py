@@ -217,6 +217,8 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
     flow_manager.state["customer_name"] = None
     flow_manager.state["available_slots"] = []
     flow_manager.state["pre_selected_staff"] = None  # Pre-wybór z kontekstu
+    flow_manager.state["current_step"] = "SERVICE"  # 🆕 Jawny krok
+    flow_manager.state["booking_confirmed"] = False  # 🆕 Reset flagi
     
     # Walidacja
     services = tenant.get("services", [])
@@ -380,7 +382,8 @@ async def handle_select_service(args: dict, flow_manager: FlowManager, tenant: d
     
     reset_retry_count(flow_manager, "service")
     flow_manager.state["selected_service"] = found
-    logger.info(f"✅ [1/6] Service: {found['name']}")
+    flow_manager.state["current_step"] = "STAFF"  # 🆕 Jawny krok
+    logger.info(f"✅ [1/6] Service: {found['name']} → next: STAFF")
     
     # Sprawdź czy pracownik był pre-wybrany
     pre_staff = flow_manager.state.get("pre_selected_staff")
@@ -504,7 +507,8 @@ async def handle_select_staff(args: dict, flow_manager: FlowManager, tenant: dic
     
     reset_retry_count(flow_manager, "staff")
     flow_manager.state["selected_staff"] = found
-    logger.info(f"✅ [2/6] Staff: {found['name']}")
+    flow_manager.state["current_step"] = "DATE"  # 🆕 Jawny krok
+    logger.info(f"✅ [2/6] Staff: {found['name']} → next: DATE")
     
     return ({"success": True, "staff": found["name"]}, create_get_date_node(tenant, found))
 
@@ -629,8 +633,9 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     reset_retry_count(flow_manager, "date")
     flow_manager.state["selected_date"] = parsed_date
     flow_manager.state["available_slots"] = slots
+    flow_manager.state["current_step"] = "TIME"  # 🆕 Jawny krok
     
-    logger.info(f"✅ [3/6] Date: {parsed_date.strftime('%Y-%m-%d')}, slots: {slots}")
+    logger.info(f"✅ [3/6] Date: {parsed_date.strftime('%Y-%m-%d')}, slots: {slots} → next: TIME")
     
     date_text = format_date_polish(parsed_date)
     slots_text = format_slots_natural(slots, format_hour_polish)
@@ -697,34 +702,71 @@ def select_time_function(tenant: dict, available_slots: list) -> FlowsFunctionSc
 
 
 async def handle_select_time(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Handler: walidacja godziny w KODZIE (obsługuje H:MM)"""
+    """Handler: walidacja godziny w KODZIE (obsługuje H:MM z normalizacją)"""
     hour_str = args.get("hour", "")
-    slots = flow_manager.state.get("available_slots", [])  # Teraz List[str]!
+    slots = flow_manager.state.get("available_slots", [])
     
-    # Parsuj godzinę (teraz zwraca "14:30" lub "14:00")
+    logger.info(f"🕐 select_time: hour_str='{hour_str}', slots={slots}")
+    
     parsed_time = parse_time(hour_str)
+    logger.info(f"🕐 parsed_time: {parsed_time}")
     
     if parsed_time is None:
+        if not check_retry_limit(flow_manager, "time"):
+            return (None, create_booking_failed_node(tenant, "nie udało się wybrać godziny"))
+        
+        date = flow_manager.state.get("selected_date")
+        date_text = format_date_polish(date) if date else ""
+        slots_text = format_slots_natural(slots, format_hour_polish)
         return ({
-            "success": False,
             "error": "Nie zrozumiałam godziny. Proszę podać jeszcze raz."
-        }, None)
+        }, create_get_time_node(tenant, slots, date_text, slots_text))
     
-    # Sprawdź czy slot dostępny
-    if parsed_time not in slots:
-        available_text = ", ".join([format_hour_polish(s) for s in slots[:5]])
+    # 🔥 NORMALIZACJA - znajdź pasujący slot (obsługuje "09:00" vs "9:00")
+    def normalize_slot(s):
+        """'09:00' i '9:00' → '9:00'"""
+        if isinstance(s, str) and ":" in s:
+            parts = s.split(":")
+            h = int(parts[0])
+            m = parts[1] if len(parts) > 1 else "00"
+            return f"{h}:{m}"
+        elif isinstance(s, int):
+            return f"{s}:00"
+        return str(s)
+    
+    parsed_normalized = normalize_slot(parsed_time)
+    slot_match = None
+    
+    for slot in slots:
+        if normalize_slot(slot) == parsed_normalized:
+            slot_match = slot
+            logger.info(f"🕐 Found matching slot: {slot}")
+            break
+    
+    if not slot_match:
+        logger.warning(f"🕐 No match! parsed={parsed_normalized}, slots_normalized={[normalize_slot(s) for s in slots]}")
+        
+        if not check_retry_limit(flow_manager, "time"):
+            return (None, create_booking_failed_node(tenant, "wybrana godzina niedostępna"))
+        
+        date = flow_manager.state.get("selected_date")
+        date_text = format_date_polish(date) if date else ""
+        slots_text = format_slots_natural(slots, format_hour_polish)
         return ({
-            "success": False,
-            "error": f"Ta godzina jest niedostępna. Wolne terminy: {available_text}"
-        }, None)
+            "error": f"Ta godzina jest niedostępna. Wolne terminy: {slots_text}"
+        }, create_get_time_node(tenant, slots, date_text, slots_text))
     
-    # Zapisz w state
-    flow_manager.state["selected_time"] = parsed_time
+    reset_retry_count(flow_manager, "time")
+    flow_manager.state["selected_time"] = slot_match
+    flow_manager.state["current_step"] = "NAME"  # 🆕 Jawny krok
+    hour_text = format_hour_polish(slot_match)
+    
+    logger.info(f"✅ [4/6] Time: {slot_match} → next: NAME")
     
     return ({
         "success": True,
-        "time": format_hour_polish(parsed_time)
-    }, "get_name")
+        "time": hour_text
+    }, create_get_name_node(tenant, hour_text))
 
 # ============================================================================
 # KROK 5/6: IMIĘ KLIENTA
@@ -781,7 +823,8 @@ async def handle_set_customer_name(args: dict, flow_manager: FlowManager, tenant
     
     reset_retry_count(flow_manager, "name")
     flow_manager.state["customer_name"] = validated
-    logger.info(f"✅ [5/6] Name: {validated}")
+    flow_manager.state["current_step"] = "CONFIRM"  # 🆕 Jawny krok
+    logger.info(f"✅ [5/6] Name: {validated} → next: CONFIRM")
     
     # Buduj podsumowanie
     service = flow_manager.state.get("selected_service", {})
@@ -887,7 +930,20 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
         return ({"error": "System nie odpowiada. Spróbuj ponownie lub zostaw wiadomość."}, 
                 create_collect_contact_name_node(tenant))
     
-    if hour not in current_slots:
+    def normalize_slot(s):
+        if isinstance(s, str) and ":" in s:
+            parts = s.split(":")
+            h = int(parts[0])
+            m = parts[1] if len(parts) > 1 else "00"
+            return f"{h}:{m}"
+        elif isinstance(s, int):
+            return f"{s}:00"
+        return str(s)
+    
+    hour_normalized = normalize_slot(hour)
+    slots_normalized = [normalize_slot(s) for s in current_slots]
+    
+    if hour_normalized not in slots_normalized:
         logger.warning(f"⚠️ Slot {hour}:00 no longer available!")
         await log_error(
             flow_manager,
@@ -947,6 +1003,8 @@ async def handle_confirm_booking_yes(args: dict, flow_manager: FlowManager, tena
     if booking_saved:
         # 🛡️ Ustaw flagę że rezerwacja zakończona sukcesem
         flow_manager.state["booking_confirmed"] = True
+        flow_manager.state["current_step"] = "DONE"  # 🆕 Jawny krok
+        logger.info(f"✅ [6/6] BOOKING CONFIRMED! Step: DONE")
         
         sms_info = " Wysłałam SMS z potwierdzeniem." if booking_code else ""
         return (

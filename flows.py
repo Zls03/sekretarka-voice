@@ -490,15 +490,34 @@ def end_conversation_function() -> FlowsFunctionSchema:
 
 
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
-    # 🛡️ OCHRONA: Sprawdź czy rezerwacja jest w trakcie
-    has_service = flow_manager.state.get("selected_service") is not None
-    is_confirmed = flow_manager.state.get("booking_confirmed", False)
+    """Handler: zakończenie rozmowy - z ochroną potwierdzonej rezerwacji"""
     
-    if has_service and not is_confirmed:
-        # Rezerwacja w trakcie ale nie potwierdzona - traktuj jako anulowanie
-        logger.warning("⚠️ end_conversation called during active booking - treating as cancel")
+    # 🛡️ OCHRONA 1: Jeśli rezerwacja POTWIERDZONA - nie anuluj!
+    if flow_manager.state.get("booking_confirmed"):
+        logger.info("✅ Booking was confirmed - clean exit (no cancel)")
+        flow_manager.state["conversation_ended"] = True
         
-        # Reset stanu rezerwacji
+        from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
+        
+        async def quick_hangup():
+            await asyncio.sleep(1.8)
+            try:
+                await flow_manager.task.queue_frame(EndFrame())
+                logger.info("🔚 EndFrame sent")
+            except Exception as e:
+                logger.error(f"Error sending EndFrame: {e}")
+        
+        asyncio.create_task(quick_hangup())
+        return (None, create_end_node())
+    
+    # 🛡️ OCHRONA 2: Rezerwacja W TRAKCIE (nie potwierdzona) - anuluj
+    current_step = flow_manager.state.get("current_step", "")
+    has_service = flow_manager.state.get("selected_service") is not None
+    
+    if has_service and current_step in ["SERVICE", "STAFF", "DATE", "TIME", "NAME", "CONFIRM"]:
+        logger.warning(f"⚠️ end_conversation during booking (step={current_step}) - cancelling")
+        
         # Reset state
         flow_manager.state["selected_service"] = None
         flow_manager.state["selected_staff"] = None
@@ -506,13 +525,10 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
         flow_manager.state["selected_time"] = None
         flow_manager.state["customer_name"] = None
         flow_manager.state["available_slots"] = []
-        flow_manager.state["pre_selected_staff"] = None  # Pre-wybór z kontekstu
-        flow_manager.state["booking_confirmed"] = False  # 🛡️ Reset flagi potwierdzenia
+        flow_manager.state["current_step"] = ""
         
-        # Wróć do anything_else zamiast kończyć
         tenant = flow_manager.state.get("tenant", {})
         
-        # Powiedz że rezerwacja anulowana
         from pipecat.frames.frames import TTSSpeakFrame
         await flow_manager.task.queue_frame(TTSSpeakFrame(text="Rozumiem, rezerwacja anulowana."))
         
@@ -522,25 +538,21 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
         )
     
     # Normalny flow - zakończ rozmowę
-    logger.info("👋 Ending conversation")
+    logger.info("👋 Ending conversation (no active booking)")
     flow_manager.state["conversation_ended"] = True
     
     from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-    
-    # Powiedz "do widzenia" przez TTS
     await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
     
-    # Rozłącz SZYBCIEJ - 1.8s wystarczy na krótkie pożegnanie
     async def quick_hangup():
         await asyncio.sleep(1.8)
         try:
             await flow_manager.task.queue_frame(EndFrame())
-            logger.info("🔚 EndFrame sent - disconnecting")
+            logger.info("🔚 EndFrame sent")
         except Exception as e:
             logger.error(f"Error sending EndFrame: {e}")
     
     asyncio.create_task(quick_hangup())
-    
     return (None, create_end_node())
 
 def create_end_node(message_saved: bool = False) -> dict:
