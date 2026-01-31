@@ -44,7 +44,8 @@ def start_booking_function() -> FlowsFunctionSchema:
 
 async def handle_start_booking(args: dict, flow_manager: FlowManager):
     """
-    Handler startowy - inicjalizuje FSM i zwraca pierwszy node.
+    Handler startowy - inicjalizuje FSM i PRZETWARZA PIERWSZĄ WIADOMOŚĆ.
+    🔥 FIX: Pobiera tekst klienta z kontekstu i od razu go przetwarza!
     """
     tenant = flow_manager.state.get("tenant", {})
     caller_phone = flow_manager.state.get("caller_phone", "unknown")
@@ -69,18 +70,83 @@ async def handle_start_booking(args: dict, flow_manager: FlowManager):
     state = BookingState()
     state.current_step = BookingStep.SERVICE
     
+    # Wykryj płeć klienta z kontekstu
+    client_gender = detect_client_gender(flow_manager)
+    flow_manager.state["client_gender"] = client_gender
+    
     # 🔥 WAŻNE: Ustaw flagę że booking jest aktywny
     flow_manager.state["booking_active"] = True
     flow_manager.state["booking_state"] = state
     flow_manager.state["booking_confirmed"] = False
     flow_manager.state["current_step"] = state.current_step.value
     
-    # Wykryj płeć klienta z kontekstu (jeśli możliwe)
-    client_gender = detect_client_gender(flow_manager)
-    flow_manager.state["client_gender"] = client_gender
+    # 🔥 FIX: Pobierz PIERWSZĄ wiadomość klienta z kontekstu i przetwórz ją!
+    initial_message = extract_initial_booking_message(flow_manager)
     
-    # Zwróć node który będzie zbierał odpowiedzi
+    if initial_message:
+        logger.info(f"📥 INITIAL MESSAGE FOUND: '{initial_message}'")
+        
+        # Przetwórz od razu przez FSM!
+        response, new_state, is_done = await handle_booking_message_v2(
+            initial_message, state, tenant, caller_phone, client_gender
+        )
+        
+        # Aktualizuj stan
+        flow_manager.state["booking_state"] = new_state
+        flow_manager.state["booking_confirmed"] = new_state.booking_confirmed
+        flow_manager.state["current_step"] = new_state.current_step.value
+        
+        if is_done and new_state.booking_confirmed:
+            logger.info("✅ BOOKING CONFIRMED on first message!")
+            flow_manager.state["booking_active"] = False
+            from flows import create_anything_else_node
+            return ({"success": True, "message": response}, create_anything_else_node(tenant))
+        
+        # Zwróć odpowiedź i kontynuuj
+        return ({"message": response}, create_booking_hard_node(tenant, new_state, client_gender))
+    
+    # Brak initial message - standardowy start
     return ({"status": "started"}, create_booking_hard_node(tenant, state, client_gender))
+
+
+def extract_initial_booking_message(flow_manager: FlowManager) -> Optional[str]:
+    """
+    🔥 Wyciąga pierwszą wiadomość klienta która zawiera prośbę o rezerwację.
+    Szuka w kontekście ostatniej wiadomości user przed wywołaniem start_booking.
+    """
+    try:
+        context = flow_manager.get_current_context()
+        
+        # Szukaj ostatniej wiadomości user (to ta która wywołała start_booking)
+        for msg in reversed(context):
+            if msg.get("role") == "user":
+                content = msg.get("content", "").strip()
+                
+                # Sprawdź czy to nie jest tylko "tak", "halo" itp.
+                ignore_phrases = ["tak", "halo", "słucham", "proszę", "ok", "dobrze", "no"]
+                if content.lower() in ignore_phrases:
+                    continue
+                
+                # Sprawdź czy zawiera słowa kluczowe rezerwacji
+                booking_keywords = ["umówić", "zapisać", "rezerwac", "wizyt", "termin", 
+                                   "strzyżenie", "farbowanie", "manicure", "usług"]
+                
+                content_lower = content.lower()
+                if any(kw in content_lower for kw in booking_keywords):
+                    logger.info(f"📝 Found initial booking message: '{content[:50]}...'")
+                    return content
+                
+                # Jeśli to pierwsza sensowna wiadomość - zwróć ją
+                if len(content) > 10:
+                    logger.info(f"📝 Using first substantial message: '{content[:50]}...'")
+                    return content
+        
+        logger.warning("📝 No initial booking message found in context")
+        return None
+        
+    except Exception as e:
+        logger.error(f"📝 Error extracting initial message: {e}")
+        return None
 
 
 def detect_client_gender(flow_manager: FlowManager) -> str:
