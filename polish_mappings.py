@@ -1,9 +1,16 @@
 # polish_mappings.py - Mapowania dla polskiego języka (voice AI)
+# WERSJA 2.0 - Rozszerzona o odmianę imion, wykrywanie płci, naturalne listy
 """
-Kompleksowe mapowania dla STT w języku polskim.
+Kompleksowe mapowania dla STT/TTS w języku polskim.
 Obsługuje różne formy gramatyczne i błędy transkrypcji.
 
-Używane przez: parse_time(), fuzzy_match_staff(), parse_polish_date()
+NOWE W V2:
+- 150+ imion z odmianą (dopełniacz)
+- Wykrywanie płci po imieniu
+- Naturalne listy ("A, B i C")
+- Lepsze reguły automatyczne
+
+Używane przez: flows_booking_simple.py, parse_time(), fuzzy_match_staff()
 """
 
 # ==========================================
@@ -112,8 +119,9 @@ NUMBER_TO_HOUR_WORD = {
     22: "dwudziestej drugiej",
 }
 
+
 # ==========================================
-# IMIONA - zdrobnienia i warianty
+# IMIONA - zdrobnienia i warianty (dla STT)
 # ==========================================
 
 NAME_ALIASES = {
@@ -139,6 +147,24 @@ NAME_ALIASES = {
     "beata": "beata", "beatka": "beata",
     "dorota": "dorota", "dorcia": "dorota",
     "paulina": "paulina", "paula": "paulina",
+    "zuzia": "zuzanna", "zuza": "zuzanna",
+    "hania": "hanna", "hanka": "hanna",
+    "jola": "jolanta", "jolka": "jolanta",
+    "madzia": "magdalena",
+    "krysia": "krystyna", "kryśka": "krystyna",
+    "bożenka": "bożena",
+    "grażynka": "grażyna",
+    "danusia": "danuta", "danka": "danuta",
+    "renata": "renata", "renia": "renata",
+    "aldona": "aldona", "aldonka": "aldona",
+    "maja": "maja",
+    "lena": "lena", "lenka": "lena",
+    "julia": "julia", "julka": "julia",
+    "weronika": "weronika", "werka": "weronika",
+    "dominika": "dominika",
+    "patrycja": "patrycja",
+    "sandra": "aleksandra",
+    "ola": "aleksandra",
     
     # Męskie - zdrobnienia → pełne imię
     "tomek": "tomasz", "tomcio": "tomasz",
@@ -146,7 +172,7 @@ NAME_ALIASES = {
     "krzysiek": "krzysztof", "krzyś": "krzysztof",
     "piotrek": "piotr", "piotruś": "piotr",
     "marcin": "marcin", "marciniek": "marcin",
-    "michałek": "michał", "michał": "michał",
+    "michałek": "michał",
     "janek": "jan", "jasiek": "jan", "jaś": "jan",
     "maciek": "maciej", "maciuś": "maciej",
     "witek": "wiktor", "wicio": "wiktor",
@@ -154,22 +180,304 @@ NAME_ALIASES = {
     "arek": "arkadiusz", "aruś": "arkadiusz",
     "darek": "dariusz", "daruś": "dariusz",
     "łukasz": "łukasz", "łuki": "łukasz",
-    "paweł": "paweł", "pawełek": "paweł",
-    "adam": "adam", "adaś": "adam",
+    "pawełek": "paweł",
+    "adaś": "adam",
     "rafał": "rafał", "rafcio": "rafał",
     "kamil": "kamil", "kamilek": "kamil",
     "sebastian": "sebastian", "seba": "sebastian",
     "grzesiek": "grzegorz", "grześ": "grzegorz",
     "daniel": "daniel", "danek": "daniel",
+    "kuba": "jakub", "kubuś": "jakub",
+    "staszek": "stanisław", "staś": "stanisław",
+    "stefek": "stefan",
+    "józek": "józef", "józio": "józef",
+    "zbyszek": "zbigniew", "zbysio": "zbigniew",
+    "rysiek": "ryszard", "rysio": "ryszard",
+    "leszek": "leszek",
+    "heniek": "henryk", "henio": "henryk",
+    "władek": "władysław",
+    "bogdan": "bogdan", "bogdanek": "bogdan",
+    "mateusz": "mateusz", "mati": "mateusz",
+    "damian": "damian",
+    "dawid": "dawid",
+    "hubert": "hubert",
+    "filip": "filip",
+    "oskar": "oskar",
+    "szymon": "szymon", "szymek": "szymon",
+    "kacper": "kacper",
+    "dominik": "dominik",
+    "patryk": "patryk",
+    "adrian": "adrian",
+    "przemek": "przemysław", "przemcio": "przemysław",
+    "mirek": "mirosław", "miruś": "mirosław",
+    "jacek": "jacek",
+    "mariusz": "mariusz",
+    "robert": "robert",
 }
 
 # Odwrotne - pełne imię → możliwe zdrobnienia (do rozpoznawania)
-# Używane gdy w bazie mamy "Ania" a klient mówi "Anna"
 FULL_NAME_TO_ALIASES = {}
 for alias, full in NAME_ALIASES.items():
     if full not in FULL_NAME_TO_ALIASES:
         FULL_NAME_TO_ALIASES[full] = []
     FULL_NAME_TO_ALIASES[full].append(alias)
+
+
+# ==========================================
+# ODMIANA IMION (dopełniacz) - NOWE W V2!
+# ==========================================
+
+# Słownik: mianownik → dopełniacz (150+ imion)
+IMIE_DOPELNIACZ = {
+    # ==========================================
+    # ŻEŃSKIE - popularne (TOP 50)
+    # ==========================================
+    "anna": "anny",
+    "maria": "marii",
+    "katarzyna": "katarzyny",
+    "małgorzata": "małgorzaty",
+    "agnieszka": "agnieszki",
+    "barbara": "barbary",
+    "krystyna": "krystyny",
+    "elżbieta": "elżbiety",
+    "ewa": "ewy",
+    "teresa": "teresy",
+    "joanna": "joanny",
+    "magdalena": "magdaleny",
+    "monika": "moniki",
+    "danuta": "danuty",
+    "zofia": "zofii",
+    "grażyna": "grażyny",
+    "bożena": "bożeny",
+    "aleksandra": "aleksandry",
+    "janina": "janiny",
+    "marta": "marty",
+    "dorota": "doroty",
+    "beata": "beaty",
+    "jolanta": "jolanty",
+    "renata": "renaty",
+    "iwona": "iwony",
+    "halina": "haliny",
+    "izabela": "izabeli",
+    "karolina": "karoliny",
+    "natalia": "natalii",
+    "justyna": "justyny",
+    "sylwia": "sylwii",
+    "wiktoria": "wiktorii",
+    "paulina": "pauliny",
+    "kinga": "kingi",
+    "patrycja": "patrycji",
+    "dominika": "dominiki",
+    "weronika": "weroniki",
+    "julia": "julii",
+    "zuzanna": "zuzanny",
+    "hanna": "hanny",
+    "alicja": "alicji",
+    "daria": "darii",
+    "aldona": "aldony",
+    "edyta": "edyty",
+    "aneta": "anety",
+    "cecylia": "cecylii",
+    "emilia": "emilii",
+    "gabriela": "gabrieli",
+    "helena": "heleny",
+    "irena": "ireny",
+    "jadwiga": "jadwigi",
+    "lidia": "lidii",
+    "lucyna": "lucyny",
+    "łucja": "łucji",
+    "marianna": "marianny",
+    "marlena": "marleny",
+    "milena": "mileny",
+    "nina": "niny",
+    "olga": "olgi",
+    "róża": "róży",
+    "sabina": "sabiny",
+    "urszula": "urszuli",
+    "wanda": "wandy",
+    "żaneta": "żanety",
+    "maja": "mai",
+    "lena": "leny",
+    "oliwia": "oliwii",
+    "amelia": "amelii",
+    "laura": "laury",
+    "klaudia": "klaudii",
+    "nicole": "nicole",  # nieodmienne
+    "nikola": "nikoli",
+    
+    # ==========================================
+    # ŻEŃSKIE - zdrobnienia
+    # ==========================================
+    "ania": "ani",
+    "kasia": "kasi",
+    "basia": "basi",
+    "gosia": "gosi",
+    "asia": "asi",
+    "ola": "oli",
+    "ela": "eli",
+    "magda": "magdy",
+    "aga": "agi",
+    "iza": "izy",
+    "ewa": "ewy",
+    "monia": "moni",
+    "daria": "dari",
+    "darka": "darki",
+    "natka": "natki",
+    "kinga": "kingi",
+    "sylwia": "sylwii",
+    "marta": "marty",
+    "beata": "beaty",
+    "dorota": "doroty",
+    "jola": "joli",
+    "krysia": "krysi",
+    "hania": "hani",
+    "zuzia": "zuzi",
+    "julka": "julki",
+    "lenka": "lenki",
+    "wika": "wiki",
+    "renia": "reni",
+    "danusia": "danusi",
+    "madzia": "madzi",
+    "grażynka": "grażynki",
+    "bożenka": "bożenki",
+    "werka": "werki",
+    "aldonka": "aldonki",
+    
+    # ==========================================
+    # MĘSKIE - popularne (TOP 60)
+    # ==========================================
+    "jan": "jana",
+    "andrzej": "andrzeja",
+    "piotr": "piotra",
+    "krzysztof": "krzysztofa",
+    "stanisław": "stanisława",
+    "tomasz": "tomasza",
+    "paweł": "pawła",
+    "józef": "józefa",
+    "marcin": "marcina",
+    "marek": "marka",
+    "michał": "michała",
+    "grzegorz": "grzegorza",
+    "jerzy": "jerzego",
+    "tadeusz": "tadeusza",
+    "adam": "adama",
+    "łukasz": "łukasza",
+    "zbigniew": "zbigniewa",
+    "ryszard": "ryszarda",
+    "dariusz": "dariusza",
+    "henryk": "henryka",
+    "mariusz": "mariusza",
+    "kazimierz": "kazimierza",
+    "wojciech": "wojciecha",
+    "robert": "roberta",
+    "mateusz": "mateusza",
+    "rafał": "rafała",
+    "jacek": "jacka",
+    "janusz": "janusza",
+    "maciej": "macieja",
+    "sławomir": "sławomira",
+    "jarosław": "jarosława",
+    "kamil": "kamila",
+    "wiesław": "wiesława",
+    "roman": "romana",
+    "władysław": "władysława",
+    "arkadiusz": "arkadiusza",
+    "przemysław": "przemysława",
+    "sebastian": "sebastiana",
+    "mirosław": "mirosława",
+    "leszek": "leszka",
+    "daniel": "daniela",
+    "dawid": "dawida",
+    "damian": "damiana",
+    "szymon": "szymona",
+    "kacper": "kacpra",
+    "filip": "filipa",
+    "hubert": "huberta",
+    "oskar": "oskara",
+    "wiktor": "wiktora",
+    "dominik": "dominika",
+    "patryk": "patryka",
+    "adrian": "adriana",
+    "jakub": "jakuba",
+    "bartłomiej": "bartłomieja",
+    "bartosz": "bartosza",
+    "bogdan": "bogdana",
+    "stefan": "stefana",
+    "edward": "edwarda",
+    "mieczysław": "mieczysława",
+    "zygmunt": "zygmunta",
+    "bogusław": "bogusława",
+    "bernard": "bernarda",
+    "cezary": "cezarego",
+    "emil": "emila",
+    "franciszek": "franciszka",
+    "igor": "igora",
+    "karol": "karola",
+    "leon": "leona",
+    "maksymilian": "maksymiliana",
+    "nikodem": "nikodema",
+    "oliwier": "oliwiera",
+    "samuel": "samuela",
+    "tymoteusz": "tymoteusza",
+    "błażej": "błażeja",
+    "borys": "borysa",
+    "bruno": "bruna",
+    "gustaw": "gustawa",
+    "konrad": "konrada",
+    "leonard": "leonarda",
+    "marcel": "marcela",
+    "norbert": "norberta",
+    "olaf": "olafa",
+    "oleg": "olega",
+    "radosław": "radosława",
+    "sylwester": "sylwestra",
+    "waldemar": "waldemara",
+    "witold": "witolda",
+    
+    # ==========================================
+    # MĘSKIE - zdrobnienia
+    # ==========================================
+    "tomek": "tomka",
+    "bartek": "bartka",
+    "krzysiek": "krzyśka",
+    "piotrek": "piotrka",
+    "janek": "janka",
+    "jasiek": "jaśka",
+    "maciek": "maćka",
+    "witek": "witka",
+    "wojtek": "wojtka",
+    "arek": "arka",
+    "darek": "darka",
+    "grzesiek": "grześka",
+    "staszek": "staśka",
+    "józek": "józka",
+    "zbyszek": "zbyszka",
+    "rysiek": "ryśka",
+    "heniek": "heńka",
+    "władek": "władka",
+    "kuba": "kuby",
+    "szymon": "szymona",
+    "szymek": "szymka",
+    "kacper": "kacpra",
+    "mati": "matiego",
+    "seba": "seby",
+    "przemek": "przemka",
+    "mirek": "mirka",
+    "rafcio": "rafcia",
+    "pawełek": "pawełka",
+    "adaś": "adasia",
+    "bogdanek": "bogdanka",
+    "stefek": "stefka",
+    "leszek": "leszka",
+    "jacek": "jacka",
+}
+
+# Imiona męskie kończące się na 'a' (wyjątki)
+MESKIE_NA_A = {
+    "kuba", "barnaba", "bonawentura", "kosma", "dyzma", 
+    "jarema", "saba", "boryna",  # literackie/rzadkie
+}
+
 
 # ==========================================
 # DNI TYGODNIA - wszystkie formy
@@ -208,6 +516,7 @@ NUMBER_TO_DAY = {
     4: "piątek", 5: "sobota", 6: "niedziela",
 }
 
+
 # ==========================================
 # MIESIĄCE
 # ==========================================
@@ -227,6 +536,7 @@ MONTH_TO_NUMBER = {
     "grudzień": 12, "grudzien": 12, "grudnia": 12,
 }
 
+
 # ==========================================
 # CZĘSTE BŁĘDY STT (Deepgram)
 # ==========================================
@@ -243,16 +553,17 @@ STT_CORRECTIONS = {
     "anka": "ania",
     "wiktór": "wiktor",
     "viktora": "wiktora",
-    "wiktorach": "wiktora",  # z logów!
-    "wiktor wiktor": "wiktor",  # podwójne z logów!
+    "wiktorach": "wiktora",
+    "wiktor wiktor": "wiktor",
     
     # Inne
     "okej": "ok",
     "okey": "ok",
 }
 
+
 # ==========================================
-# HELPER FUNCTIONS
+# FUNKCJE POMOCNICZE - PODSTAWOWE
 # ==========================================
 
 def normalize_polish_text(text: str) -> str:
@@ -287,11 +598,274 @@ def apply_stt_corrections(text: str) -> str:
     if text_lower in STT_CORRECTIONS:
         return STT_CORRECTIONS[text_lower]
     
-    # Stosuj korekty tylko na granicach słów (żeby "anka" nie zmieniło "bankomat")
+    # Stosuj korekty tylko na granicach słów
     for error, correction in STT_CORRECTIONS.items():
         text_lower = re.sub(rf'\b{re.escape(error)}\b', correction, text_lower)
     
     return text_lower
+
+
+# ==========================================
+# FUNKCJE ODMIANY - NOWE W V2!
+# ==========================================
+
+def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
+    """
+    Odmienia imię przez przypadki.
+    
+    Args:
+        imie: Imię w mianowniku (np. "Ania", "Paweł")
+        przypadek: "dopelniacz" (u Ani), "biernik" (widzę Anię), etc.
+    
+    Returns:
+        Odmienione imię
+    
+    Przykłady:
+        odmien_imie("Ania") → "Ani"
+        odmien_imie("Paweł") → "Pawła"
+        odmien_imie("Wiktor") → "Wiktora"
+        odmien_imie("Katarzyna") → "Katarzyny"
+    """
+    if not imie:
+        return imie
+    
+    imie_clean = imie.strip()
+    imie_lower = imie_clean.lower()
+    original_case = imie_clean[0].isupper() if imie_clean else False
+    
+    # 1. Sprawdź słownik (najdokładniejsze)
+    if imie_lower in IMIE_DOPELNIACZ:
+        result = IMIE_DOPELNIACZ[imie_lower]
+        return result.title() if original_case else result
+    
+    # 2. Sprawdź alias → pełne imię → słownik
+    if imie_lower in NAME_ALIASES:
+        full_name = NAME_ALIASES[imie_lower]
+        if full_name in IMIE_DOPELNIACZ:
+            # Ale zwróć odmienione zdrobnienie, nie pełne imię
+            # np. "Ania" → "Ani", nie "Anny"
+            pass  # użyj reguł poniżej
+    
+    # 3. Reguły automatyczne (dla nieznanych imion)
+    result = _odmien_reguly(imie_lower)
+    
+    return result.title() if original_case else result
+
+
+def _odmien_reguly(imie: str) -> str:
+    """Automatyczne reguły odmiany przez dopełniacz."""
+    
+    # Żeńskie kończące się na -ia → -i
+    if imie.endswith("ia"):
+        return imie[:-1]  # Ania → Ani, Maria → Mari, Kasia → Kasi
+    
+    # Żeńskie kończące się na -ja → -i (Maja → Mai)
+    if imie.endswith("ja"):
+        return imie[:-2] + "i"  # Maja → Mai
+    
+    # Żeńskie kończące się na -a (ale nie -ia, -ja) → -y
+    if imie.endswith("a") and imie not in MESKIE_NA_A:
+        # Sprawdź czy spółgłoska miękka przed 'a' → wtedy -i
+        if len(imie) > 2:
+            przedostatnia = imie[-2]
+            # Po k, g → -i (Kinga → Kingi, Olga → Olgi)
+            if przedostatnia in "kg":
+                return imie[:-1] + "i"
+            # Po innych → -y (Marta → Marty, Beata → Beaty)
+            else:
+                return imie[:-1] + "y"
+        return imie[:-1] + "y"
+    
+    # Męskie na -eł → -ła (Paweł → Pawła)
+    if imie.endswith("eł"):
+        return imie[:-2] + "ła"
+    
+    # Męskie na -ał → -ała (Michał → Michała)
+    if imie.endswith("ał"):
+        return imie[:-2] + "ała"
+    
+    # Męskie na -ek → -ka (Tomek → Tomka, Marek → Marka)
+    if imie.endswith("ek"):
+        return imie[:-2] + "ka"
+    
+    # Męskie na -ec → -ca (tylko niektóre, np. Tadeusz)
+    # To rzadkie, pomijam
+    
+    # Męskie na spółgłoskę → +a (Piotr → Piotra, Adam → Adama)
+    if imie[-1] not in "aeiouyąęó":
+        return imie + "a"
+    
+    # Męskie na -y → -ego (Jerzy → Jerzego) - WAŻNE!
+    if imie.endswith("y"):
+        return imie[:-1] + "ego"
+    
+    # Męskie na -i/-o → -ego/-a (rzadkie)
+    if imie.endswith("i"):
+        return imie + "ego"
+    if imie.endswith("o"):
+        return imie[:-1] + "a"  # Bruno → Bruna
+    
+    # Fallback - zwróć bez zmian
+    return imie
+
+
+def detect_gender(imie: str) -> str:
+    """
+    Wykrywa płeć na podstawie imienia.
+    
+    Returns:
+        "Pana" lub "Pani"
+    
+    Przykłady:
+        detect_gender("Paweł") → "Pana"
+        detect_gender("Anna") → "Pani"
+        detect_gender("Kuba") → "Pana"  # wyjątek
+        detect_gender("Jerzy") → "Pana"
+    """
+    if not imie:
+        return "Pana"  # default męski
+    
+    imie_lower = imie.lower().strip()
+    
+    # Wyjątki - męskie kończące się na 'a'
+    if imie_lower in MESKIE_NA_A:
+        return "Pana"
+    
+    # Sprawdź alias
+    if imie_lower in NAME_ALIASES:
+        full = NAME_ALIASES[imie_lower]
+        if full.endswith("a"):
+            return "Pani"
+        return "Pana"
+    
+    # Standardowa reguła
+    if imie_lower.endswith("a"):
+        return "Pani"
+    else:
+        return "Pana"
+
+
+def detect_gender_verb(imie: str) -> str:
+    """
+    Zwraca końcówkę czasownika w czasie przeszłym.
+    
+    Returns:
+        "a" (żeńska) lub "" (męska)
+    
+    Przykłady:
+        f"Zapisał{detect_gender_verb('Paweł')}m" → "Zapisałem" (jako bot-kobieta mówi o kliencie)
+        
+    Ale dla bota-kobiety mówiącej o sobie:
+        "Zapisałam" (zawsze żeńska)
+    """
+    gender = detect_gender(imie)
+    return "" if gender == "Pana" else "a"
+
+
+# ==========================================
+# FUNKCJE LISTY - NOWE W V2!
+# ==========================================
+
+def natural_list(items: list, connector: str = "i") -> str:
+    """
+    Tworzy naturalną listę po polsku.
+    
+    Args:
+        items: Lista elementów
+        connector: Łącznik (domyślnie "i", może być "lub", "albo")
+    
+    Przykłady:
+        natural_list(["Ania"]) → "Ania"
+        natural_list(["Ania", "Wiktor"]) → "Ania i Wiktor"
+        natural_list(["9:00", "10:00", "11:00"]) → "9:00, 10:00 i 11:00"
+        natural_list(["A", "B"], "lub") → "A lub B"
+    """
+    if not items:
+        return ""
+    
+    # Konwertuj wszystko na stringi
+    str_items = [str(i) for i in items]
+    
+    if len(str_items) == 1:
+        return str_items[0]
+    elif len(str_items) == 2:
+        return f"{str_items[0]} {connector} {str_items[1]}"
+    else:
+        return ", ".join(str_items[:-1]) + f" {connector} " + str_items[-1]
+
+
+def format_staff_list(staff_list: list, with_services: bool = False) -> str:
+    """
+    Formatuje listę pracowników naturalnie.
+    
+    Przykłady:
+        format_staff_list([{"name": "Ania"}, {"name": "Wiktor"}]) 
+        → "Ania i Wiktor"
+    """
+    if not staff_list:
+        return "brak pracowników"
+    
+    names = [s.get("name", "?") for s in staff_list]
+    return natural_list(names)
+
+
+def format_service_list(services: list) -> str:
+    """
+    Formatuje listę usług naturalnie.
+    
+    Przykłady:
+        format_service_list([{"name": "Strzyżenie"}, {"name": "Farbowanie"}])
+        → "strzyżenie i farbowanie"
+    """
+    if not services:
+        return "brak usług"
+    
+    names = [s.get("name", "?").lower() for s in services]
+    return natural_list(names)
+
+
+def format_slots_list(slots: list, max_items: int = 5) -> str:
+    """
+    Formatuje listę godzin naturalnie.
+    
+    Args:
+        slots: Lista godzin (np. ["9:00", "10:00", "11:00"])
+        max_items: Maksymalna liczba do wyświetlenia
+    
+    Przykłady:
+        format_slots_list(["9:00", "10:00", "11:00"])
+        → "dziewiąta, dziesiąta i jedenasta"
+    """
+    if not slots:
+        return "brak wolnych terminów"
+    
+    # Importuj helper do formatowania godzin
+    try:
+        from flows_helpers import format_hour_polish
+    except ImportError:
+        # Fallback
+        def format_hour_polish(h):
+            if isinstance(h, str) and ":" in h:
+                hour = int(h.split(":")[0])
+            else:
+                hour = int(h)
+            return NUMBER_TO_HOUR_WORD.get(hour, f"{hour}:00")
+    
+    # Ogranicz i sformatuj
+    limited = slots[:max_items]
+    formatted = [format_hour_polish(s) for s in limited]
+    
+    result = natural_list(formatted)
+    
+    if len(slots) > max_items:
+        result += f" (i {len(slots) - max_items} więcej)"
+    
+    return result
+
+
+# ==========================================
+# FUNKCJE PARSOWANIA - ROZSZERZONE
+# ==========================================
 
 def parse_hour_from_text(text: str) -> int | None:
     """
@@ -315,10 +889,8 @@ def parse_hour_from_text(text: str) -> int | None:
     if text in HOUR_TO_NUMBER:
         return HOUR_TO_NUMBER[text]
     
-    # 2. Sprawdź frazy z kontekstem NAJPIERW (dłuższe frazy mają priorytet)
-    #    Sortuj po długości malejąco żeby "szósta po południu" było przed "szósta"
+    # 2. Sprawdź frazy z kontekstem (dłuższe frazy mają priorytet)
     for word, hour in sorted(HOUR_TO_NUMBER.items(), key=lambda x: -len(x[0])):
-        # Użyj granic słów żeby "sześć" nie złapało się w "szesnasta"
         if re.search(rf'\b{re.escape(word)}\b', text):
             return hour
     
@@ -329,7 +901,7 @@ def parse_hour_from_text(text: str) -> int | None:
         if 0 <= hour <= 23:
             return hour
     
-    # 4. Fallback - porównaj bez polskich znaków (ostatnia deska ratunku)
+    # 4. Fallback - bez polskich znaków
     text_normalized = normalize_polish_text(text)
     for word, hour in sorted(HOUR_TO_NUMBER.items(), key=lambda x: -len(x[0])):
         word_normalized = normalize_polish_text(word)
@@ -369,7 +941,7 @@ def match_staff_name(query: str, staff_list: list) -> dict | None:
         staff_alias = NAME_ALIASES.get(staff_first_name, staff_first_name)
         staff_alias_normalized = normalize_polish_text(staff_alias)
         
-        # Porównania - z i bez polskich znaków
+        # Porównania
         checks = [
             query == staff_name,
             query == staff_first_name,
@@ -390,9 +962,48 @@ def match_staff_name(query: str, staff_list: list) -> dict | None:
                 return staff
     
     return None
+
+
 # ==========================================
 # ALIASY DLA KOMPATYBILNOŚCI
 # ==========================================
 
 POLISH_DAYS = NUMBER_TO_DAY
 POLISH_DAYS_REVERSE = {v: k for k, v in NUMBER_TO_DAY.items()}
+
+
+# ==========================================
+# TESTY (uruchom: python polish_mappings.py)
+# ==========================================
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("TESTY POLISH_MAPPINGS V2")
+    print("=" * 60)
+    
+    # Test odmiany imion
+    print("\n📝 ODMIANA IMION (dopełniacz):")
+    test_names = [
+        "Ania", "Anna", "Kasia", "Katarzyna", "Magda", "Marta", "Kinga", "Olga",
+        "Paweł", "Wiktor", "Tomek", "Tomasz", "Jan", "Michał", "Jerzy", "Adam",
+        "Kuba", "Maja", "Julia",
+    ]
+    for name in test_names:
+        declined = odmien_imie(name)
+        gender = detect_gender(name)
+        print(f"  {name:15} → {declined:15} ({gender})")
+    
+    # Test naturalnych list
+    print("\n📋 NATURALNE LISTY:")
+    print(f"  1 element:  {natural_list(['Ania'])}")
+    print(f"  2 elementy: {natural_list(['Ania', 'Wiktor'])}")
+    print(f"  3 elementy: {natural_list(['Ania', 'Wiktor', 'Kasia'])}")
+    print(f"  z 'lub':    {natural_list(['poniedziałek', 'wtorek'], 'lub')}")
+    
+    # Test formatowania godzin
+    print("\n🕐 FORMATOWANIE GODZIN:")
+    test_slots = ["9:00", "10:00", "11:00", "12:00", "13:00", "14:00"]
+    print(f"  {format_slots_list(test_slots, 3)}")
+    print(f"  {format_slots_list(test_slots, 6)}")
+    
+    print("\n✅ Testy zakończone!")

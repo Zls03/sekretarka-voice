@@ -22,7 +22,6 @@ from typing import Optional, Dict, Tuple, List
 from loguru import logger
 from pipecat_flows import FlowManager, FlowsFunctionSchema
 
-# Import TYLKO potrzebnych helperów
 from flows_helpers import (
     format_hour_polish, format_date_polish,
     get_available_slots, save_booking_to_api,
@@ -30,6 +29,11 @@ from flows_helpers import (
     staff_can_do_service, send_booking_sms,
     increment_sms_count, get_opening_hours,
     POLISH_DAYS,
+)
+
+# Import funkcji odmiany i formatowania
+from polish_mappings import (
+    odmien_imie, detect_gender, natural_list,
 )
 
 
@@ -147,8 +151,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                                  flow_manager, tenant, state=state)
     
     if "service" not in state:
-        names = ", ".join(s["name"] for s in services[:5])
-        return await _respond(f"Na jaką usługę chce się Pan umówić? Mamy: {names}.",
+        names = natural_list([s["name"] for s in services[:5]])
+        return await _respond(f"Na jaką usługę chce się Pan umówić? Mamy {names}.",
                              flow_manager, tenant, state=state)
     
     # === 2. WALIDACJA PRACOWNIKA ===
@@ -159,6 +163,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             if available:
                 state["staff"] = available[0]
                 logger.info(f"✅ Staff (auto): {available[0]['name']}")
+                # 🔥 Poinformuj o wyborze i od razu pytaj o datę
+                staff_name = odmien_imie(available[0]['name'])
+                return await _respond(
+                    f"Dobrze, zapiszę do {staff_name}. Na jaki dzień?",
+                    flow_manager, tenant, state=state)
         else:
             found = fuzzy_match_staff(staff_text, staff_list)
             if found:
@@ -179,10 +188,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     if "staff" not in state:
         available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
-        names = ", ".join(s["name"] for s in available)
+        names = natural_list([s["name"] for s in available])
         return await _respond(
             f"Świetnie, {state['service']['name']}. Do kogo chce się Pan umówić? "
-            f"Dostępni: {names}. Może być też dowolna osoba.",
+            f"Dostępni są {names}. Może być też dowolna osoba.",
             flow_manager, tenant, state=state)
     
     # === 3. WALIDACJA DATY (dateparser!) ===
@@ -222,8 +231,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             )
             
             if not slots:
+                staff_name = odmien_imie(state['staff']['name'])
                 return await _respond(
-                    f"Na {format_date_polish(parsed_date)} u {state['staff']['name']} "
+                    f"Na {format_date_polish(parsed_date)} u {staff_name} "
                     f"nie ma wolnych terminów. Proszę wybrać inny dzień.",
                     flow_manager, tenant, state=state)
             
@@ -237,8 +247,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 flow_manager, tenant, state=state)
     
     if "date" not in state:
+        staff_name = odmien_imie(state['staff']['name'])
         return await _respond(
-            f"Na jaki dzień chce się Pan umówić do {state['staff']['name']}?",
+            f"Na jaki dzień chce się Pan umówić do {staff_name}?",
             flow_manager, tenant, state=state)
     
     # === 4. WALIDACJA GODZINY ===
@@ -262,22 +273,22 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 state["time"] = slot_found
                 logger.info(f"✅ Time: {slot_found}")
             else:
-                slots_text = ", ".join(format_hour_polish(s) for s in slots[:6])
+                slots_text = natural_list([format_hour_polish(s) for s in slots[:6]])
                 return await _respond(
                     f"Godzina {format_hour_polish(parsed_time)} jest niedostępna. "
-                    f"Wolne: {slots_text}.",
+                    f"Wolne są: {slots_text}.",
                     flow_manager, tenant, state=state)
         else:
-            slots_text = ", ".join(format_hour_polish(s) for s in state["available_slots"][:6])
+            slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
             return await _respond(
-                f"Nie rozumiem godziny '{time_text}'. Wolne: {slots_text}.",
+                f"Nie rozumiem godziny '{time_text}'. Wolne są: {slots_text}.",
                 flow_manager, tenant, state=state)
     
     if "time" not in state:
-        slots_text = ", ".join(format_hour_polish(s) for s in state["available_slots"][:6])
+        slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
         return await _respond(
-            f"Na {format_date_polish(state['date'])} wolne godziny: {slots_text}. "
-            f"Którą Pan wybiera?",
+            f"Na {format_date_polish(state['date'])} wolne są: {slots_text}. "
+            f"Którą godzinę Pan wybiera?",
             flow_manager, tenant, state=state)
     
     # === 5. WALIDACJA IMIENIA ===
@@ -309,10 +320,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             state["confirmed"] = True
         else:
             # Pokaż podsumowanie
+            staff_name = odmien_imie(state['staff']['name'])
+            customer_gender = detect_gender(state['name'])  # "Pana" lub "Pani"
+            customer_name = odmien_imie(state['name'])
             summary = (
-                f"Podsumowuję: {state['service']['name']} u {state['staff']['name']}, "
+                f"Podsumowuję: {state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}, "
-                f"na Pana {state['name']}. Czy potwierdzam?"
+                f"na {customer_gender} {customer_name}. Czy mogę potwierdzić?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -435,9 +449,9 @@ async def _save_booking(
             if current_slots:
                 state.pop("time", None)
                 state["available_slots"] = current_slots
-                slots_text = ", ".join(format_hour_polish(s) for s in current_slots[:5])
+                slots_text = natural_list([format_hour_polish(s) for s in current_slots[:5]])
                 return await _respond(
-                    f"Ta godzina właśnie została zajęta. Wolne: {slots_text}.",
+                    f"Ta godzina właśnie została zajęta. Wolne są: {slots_text}.",
                     flow_manager, tenant, state=state)
             else:
                 state.pop("date", None)
@@ -478,9 +492,10 @@ async def _save_booking(
             flow_manager.state["booking_confirmed"] = True
             
             sms_info = " Wysłałam SMS z potwierdzeniem." if booking_code else ""
+            staff_name = odmien_imie(state['staff']['name'])
             
             return await _respond(
-                f"Gotowe! {state['service']['name']} u {state['staff']['name']}, "
+                f"Gotowe! {state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
                 f"{sms_info} Do zobaczenia!",
                 flow_manager, tenant, done=True)
@@ -572,12 +587,14 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     flow_manager.state["booking"] = {}
     flow_manager.state["booking_confirmed"] = False
     
-    # Sprawdź czy klient coś już powiedział
-    initial_text = _extract_initial_message(flow_manager)
+    # 🔥 OD RAZU powiedz coś - nie czekaj!
+    services = tenant.get("services", [])
+    names = natural_list([s["name"] for s in services[:4]])
     
-    if initial_text:
-        # Przetwórz od razu - ale przez node (GPT wywoła book_appointment)
-        logger.info(f"📥 Initial message: '{initial_text}'")
+    from pipecat.frames.frames import TTSSpeakFrame
+    await flow_manager.task.queue_frame(
+        TTSSpeakFrame(text=f"Chętnie pomogę umówić wizytę. Na jaką usługę? Mamy {names}.")
+    )
     
     return (None, create_booking_node(tenant))
 
