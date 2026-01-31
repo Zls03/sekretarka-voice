@@ -210,6 +210,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     flow_manager, tenant, state=state)
             
             # 🔥 NATYCHMIASTOWA WALIDACJA SLOTÓW!
+            # Feedback dla użytkownika
+            try:
+                from flows import play_snippet
+                await play_snippet(flow_manager, "checking")
+            except:
+                pass
+            
             slots = await get_available_slots(
                 tenant, state["staff"], state["service"], parsed_date
             )
@@ -406,6 +413,13 @@ async def _save_booking(
     """Zapisuje rezerwację do API"""
     
     logger.info("💾 SAVING BOOKING...")
+    
+    # Feedback dla użytkownika
+    try:
+        from flows import play_snippet
+        await play_snippet(flow_manager, "saving")
+    except:
+        pass
     
     try:
         # Double-check slotów
