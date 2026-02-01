@@ -105,16 +105,32 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     logger.info(f"📞 Contact owner: reason='{reason}', name='{customer_name}', msg='{message[:30] if message else ''}'")
     
-    # Zapisz dane jeśli już podane
+    # Zapisz imię jeśli podane
     if customer_name:
         flow_manager.state["contact_name"] = customer_name
-    if message:
-        flow_manager.state["contact_message"] = message
     
-    # Jeśli mamy już imię i wiadomość - zapisz od razu
-    if customer_name and message:
-        logger.info("📞 Have name and message - saving directly")
-        return await save_and_confirm_message(flow_manager, tenant, customer_name, message)
+    # 🔥 FIX: Waliduj treść wiadomości - nie akceptuj "meta" opisów od GPT
+    if message:
+        invalid_patterns = [
+            "klient chce", "chce zostawić", "prosi o", "chciałby",
+            "jest mężczyzną", "jest kobietą", "klient jest", "klient prosi",
+            "zostawić wiadomość", "przekazać wiadomość"
+        ]
+        message_lower = message.lower()
+        is_meta_description = any(inv in message_lower for inv in invalid_patterns)
+        
+        if is_meta_description or len(message) < 15:
+            logger.info(f"📞 Rejecting meta-description as message: '{message[:50]}'")
+            message = ""  # Zignoruj - zapytamy o prawdziwą treść
+        else:
+            flow_manager.state["contact_message"] = message
+    
+    # Jeśli mamy już imię i PRAWDZIWĄ wiadomość - zapisz od razu
+    if customer_name and flow_manager.state.get("contact_message"):
+        logger.info("📞 Have name and valid message - saving directly")
+        return await save_and_confirm_message(
+            flow_manager, tenant, customer_name, flow_manager.state["contact_message"]
+        )
     
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
@@ -123,12 +139,11 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     logger.info(f"📞 Transfer available: {has_transfer} (enabled={transfer_enabled}, number='{transfer_number}')")
     
-    # 🔥 NAJPIERW sprawdź czy klient chce WIADOMOŚĆ (wyższy priorytet!)
+    # NAJPIERW sprawdź czy klient chce WIADOMOŚĆ
     message_keywords = ["wiadomość", "zostawić", "przekazać", "niech oddzwoni", "napisać"]
     wants_message = any(kw in reason for kw in message_keywords)
     
     if wants_message:
-        # Klient WYRAŹNIE chce wiadomość → idź do zbierania danych
         logger.info(f"📞 MESSAGE requested based on reason keywords")
         if customer_name:
             return (None, create_collect_message_content_node(tenant))
@@ -138,30 +153,22 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     # POTEM sprawdź czy chce TRANSFER
     transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "rozmawiać z"]
     wants_transfer = any(kw in reason for kw in transfer_keywords)
-
+    
     if wants_transfer:
         if has_transfer:
-            # Transfer dostępny → wykonaj
             logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
             return await execute_transfer(flow_manager, tenant)
         else:
-            # Transfer NIEDOSTĘPNY → wyjaśnij i zbierz wiadomość
             logger.info(f"📞 Transfer requested but DISABLED - offering message")
             return ("Niestety nie mogę teraz połączyć bezpośrednio, ale chętnie przekażę wiadomość do właściciela.", 
                     create_collect_contact_name_node(tenant))
-
     elif has_transfer:
-        # Transfer dostępny ale klient nie sprecyzował → zapytaj
         return (None, create_contact_choice_node(tenant))
-
     else:
-        # Brak transferu → tylko wiadomość
         if customer_name:
             return (None, create_collect_message_content_node(tenant))
         else:
             return (None, create_collect_contact_name_node(tenant))
-
-
 # ============================================================================
 # NODE: Wybór - wiadomość czy połączenie (gdy transfer dostępny)
 # ============================================================================
@@ -360,7 +367,7 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
 
 
 async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str):
-    """Zapisz wiadomość, wyślij email ze streszczeniem, potwierdź klientowi I ROZŁĄCZ"""
+    """Zapisz wiadomość, wyślij email ze streszczeniem W TLE, potwierdź klientowi I ROZŁĄCZ"""
     from flows import create_end_node, send_message_email
     
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
@@ -369,22 +376,23 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     owner_email = tenant.get("notification_email") or tenant.get("email")
     
-    if owner_email:
-        try:
-            # 🔥 NOWE: Generuj streszczenie rozmowy
-            conversation_summary = await generate_conversation_summary(flow_manager)
-            logger.info(f"📋 Summary generated: {conversation_summary[:50]}...")
-            
-            # Dodaj streszczenie do wiadomości
-            message_with_summary = f"{message}\n\n---\n📋 Streszczenie rozmowy:\n{conversation_summary}"
-            
-            # Użyj ISTNIEJĄCEJ funkcji z flows.py
-            await send_message_email(tenant, name, message_with_summary, caller_phone, owner_email)
-            logger.info(f"📧 Email sent to: {owner_email}")
-        except Exception as e:
-            logger.error(f"📧 Email error: {e}")
-    else:
-        logger.warning("📧 No owner email configured!")
+    # 🔥 NOWE: Wyślij email W TLE - nie blokuj odpowiedzi!
+    async def send_email_with_summary():
+        if owner_email:
+            try:
+                conversation_summary = await generate_conversation_summary(flow_manager)
+                logger.info(f"📋 Summary generated: {conversation_summary[:50]}...")
+                
+                message_with_summary = f"{message}\n\n---\n📋 Streszczenie rozmowy:\n{conversation_summary}"
+                await send_message_email(tenant, name, message_with_summary, caller_phone, owner_email)
+                logger.info(f"📧 Email sent to: {owner_email}")
+            except Exception as e:
+                logger.error(f"📧 Email error: {e}")
+        else:
+            logger.warning("📧 No owner email configured!")
+    
+    # Uruchom w tle - NIE CZEKAJ na email!
+    asyncio.create_task(send_email_with_summary())
     
     flow_manager.state["contact_name"] = None
     flow_manager.state["contact_message"] = None
@@ -404,7 +412,6 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     return (f"Dziękuję {name}. Przekazałam wiadomość do właściciela, który oddzwoni. Do widzenia!",
             create_end_node(message_saved=True))
-
 # ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     """Wykonaj transfer rozmowy do właściciela"""
