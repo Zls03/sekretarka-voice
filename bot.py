@@ -57,6 +57,120 @@ logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
 
 app = FastAPI()
+# ==========================================
+# KEYTERMS BUILDER - dynamiczne słowa per firma
+# ==========================================
+
+def build_keyterms(tenant: dict) -> list:
+    """
+    Buduje listę keyterms dla Deepgram na podstawie danych firmy.
+    Automatycznie wyciąga słowa z: nazwy, usług, pracowników, FAQ, adresu.
+    """
+    keyterms = set()
+    
+    # 1. BAZOWE - zawsze potrzebne (godziny, dni, potwierdzenia)
+    base_terms = [
+        # Godziny
+        "dziewiąta", "dziesiąta", "jedenasta", "dwunasta",
+        "trzynasta", "czternasta", "piętnasta", "szesnasta",
+        "siedemnasta", "osiemnasta", "dziewiętnasta", "dwudziesta",
+        # Półgodziny
+        "trzydzieści", "wpół",
+        # Potwierdzenia
+        "tak", "nie", "dobrze", "okej", "dziękuję",
+        # Dni
+        "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela",
+        # Rezerwacje
+        "wizyta", "termin", "rezerwacja", "umówić", "zapisać", "odwołać",
+    ]
+    keyterms.update(base_terms)
+    
+    # 2. NAZWA FIRMY
+    name = tenant.get("name", "")
+    if name:
+        # Dodaj całą nazwę i poszczególne słowa
+        keyterms.add(name)
+        for word in name.split():
+            if len(word) > 2:
+                keyterms.add(word)
+    
+    # 3. USŁUGI (booking ON → services, booking OFF → info_services)
+    services = tenant.get("services", []) or tenant.get("info_services", [])
+    for svc in services:
+        svc_name = svc.get("name", "")
+        if svc_name:
+            keyterms.add(svc_name.lower())
+            # Dodaj pojedyncze słowa z nazwy usługi
+            for word in svc_name.split():
+                if len(word) > 3:
+                    keyterms.add(word.lower())
+    
+    # 4. PRACOWNICY
+    staff = tenant.get("staff", [])
+    for s in staff:
+        staff_name = s.get("name", "")
+        if staff_name:
+            keyterms.add(staff_name)
+            # Dodaj pierwsze imię osobno
+            first_name = staff_name.split()[0] if " " in staff_name else staff_name
+            keyterms.add(first_name)
+    
+    # 5. FAQ - wyciągnij ważne słowa z pytań i odpowiedzi
+    faq = tenant.get("faq", [])
+    # Słowa które często są źle rozpoznawane
+    important_patterns = [
+        "multisport", "benefit", "medicover", "luxmed", "karnet", "karta",
+        "rejestracja", "online", "strona", "parking", "płatność", "gotówka",
+        "blik", "przelew", "faktura", "vat",
+    ]
+    for f in faq:
+        question = f.get("question", "").lower()
+        answer = f.get("answer", "").lower()
+        full_text = question + " " + answer
+        
+        for pattern in important_patterns:
+            if pattern in full_text:
+                keyterms.add(pattern)
+        
+        # Wyciągnij też nazwy własne (wielkie litery w odpowiedzi)
+        for word in f.get("answer", "").split():
+            # Słowa zaczynające się wielką literą (nazwy własne)
+            if len(word) > 3 and word[0].isupper() and word.isalpha():
+                keyterms.add(word)
+    
+    # 6. ADRES - nazwy miejscowości, ulic
+    address = tenant.get("address", "")
+    if address:
+        # Usuń typowe prefiksy i wyciągnij słowa
+        for prefix in ["ul.", "ul ", "al.", "al ", "pl.", "pl "]:
+            address = address.replace(prefix, " ")
+        
+        for word in address.split():
+            # Tylko słowa > 3 znaki, bez cyfr
+            clean_word = word.strip(",.;:")
+            if len(clean_word) > 3 and clean_word.isalpha():
+                keyterms.add(clean_word)
+    
+    # 7. RĘCZNE KEYTERMS Z BAZY (opcjonalne - na przyszłość)
+    custom = tenant.get("stt_keywords", "")
+    if custom:
+        for word in custom.split(","):
+            word = word.strip()
+            if word:
+                keyterms.add(word)
+    
+    # Konwertuj na listę i ogranicz rozmiar
+    result = list(keyterms)
+    
+    # Deepgram zaleca max ~200 keyterms
+    if len(result) > 200:
+        logger.warning(f"⚠️ Too many keyterms ({len(result)}), truncating to 200")
+        result = result[:200]
+    
+    logger.info(f"🎤 Built {len(result)} keyterms for {tenant.get('name', 'unknown')}")
+    logger.debug(f"🎤 Keyterms sample: {result[:15]}...")
+    
+    return result
 
 @app.post("/twilio/incoming")
 async def twilio_incoming(request: Request):
@@ -383,7 +497,11 @@ async def websocket_endpoint(websocket: WebSocket):
     # STT - Deepgram
     # UWAGA: NIE ustawiamy encoding/sample_rate bo TwilioFrameSerializer
     # już konwertuje mulaw 8kHz → PCM 16kHz dla pipeline
+    # STT - Deepgram z dynamicznymi keyterms per firma
     from deepgram import LiveOptions
+    
+    # 🔥 Buduj keyterms dynamicznie na podstawie danych firmy
+    tenant_keyterms = build_keyterms(tenant)
     
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
@@ -396,20 +514,7 @@ async def websocket_endpoint(websocket: WebSocket):
             interim_results=True,
             utterance_end_ms=1200,
             endpointing=400,
-            # 🔥 Keyterms - boost rozpoznawania godzin i krótkich słów
-            keyterm=[
-                # Godziny
-                "dziewiąta", "dziesiąta", "jedenasta", "dwunasta",
-                "trzynasta", "czternasta", "piętnasta", "szesnasta",
-                "siedemnasta", "osiemnasta",
-                # Półgodziny
-                "trzydzieści", "wpół",
-                # Potwierdzenia (często mylone)
-                "tak", "nie", "dobrze", "okej",
-                # Dni
-                "poniedziałek", "wtorek", "środa", "czwartek", 
-                "piątek", "sobota",
-            ],
+            keyterm=tenant_keyterms,  # 🔥 Dynamiczne per firma!
         )
     )
     
