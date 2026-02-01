@@ -4,7 +4,7 @@ PIPECAT FLOWS MIGRATION v1.3
 ============================
 Dodano wybór TTS provider (ElevenLabs / Cartesia) per tenant
 """
-
+import time 
 import os
 import sys
 import json
@@ -369,7 +369,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,      # Wyższy próg (domyślnie 0.7)
                     start_secs=0.25,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.2,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
@@ -610,6 +610,66 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["started_at"] = datetime.utcnow()
     flow_manager.state["greeting_played"] = greeting_played
     flow_manager.state["caller_phone"] = caller_phone
+
+    # ==========================================
+    # ⏱️ TIMING LOGS - szczegółowe pomiary opóźnień
+    # ==========================================
+    
+    @stt.event_handler("on_transcript_complete")
+    async def on_stt_complete(stt_service, transcript):
+        """Loguj gdy STT zakończy rozpoznawanie"""
+        text = ""
+        if hasattr(transcript, 'text'):
+            text = transcript.text
+        elif isinstance(transcript, dict):
+            text = transcript.get("text", "")
+        
+        if text and text.strip():
+            flow_manager.state["_stt_end_time"] = time.time()
+            logger.info(f"⏱️ [STT DONE] '{text[:40]}...' | Waiting for LLM...")
+    
+    @llm.event_handler("on_llm_started")
+    async def on_llm_started(llm_service):
+        """LLM zaczął przetwarzać"""
+        stt_end = flow_manager.state.get("_stt_end_time", time.time())
+        wait_ms = (time.time() - stt_end) * 1000
+        flow_manager.state["_llm_start_time"] = time.time()
+        logger.info(f"⏱️ [LLM START] Wait from STT: {wait_ms:.0f}ms")
+    
+    @llm.event_handler("on_llm_first_token")
+    async def on_llm_first_token(llm_service):
+        """LLM zwrócił pierwszy token (TTFB)"""
+        llm_start = flow_manager.state.get("_llm_start_time", time.time())
+        ttfb_ms = (time.time() - llm_start) * 1000
+        logger.info(f"⏱️ [LLM TTFB] {ttfb_ms:.0f}ms")
+    
+    @llm.event_handler("on_llm_completed")
+    async def on_llm_completed(llm_service):
+        """LLM zakończył generowanie"""
+        llm_start = flow_manager.state.get("_llm_start_time", time.time())
+        total_ms = (time.time() - llm_start) * 1000
+        flow_manager.state["_llm_end_time"] = time.time()
+        logger.info(f"⏱️ [LLM DONE] Total: {total_ms:.0f}ms")
+    
+    @tts.event_handler("on_tts_started")
+    async def on_tts_started(tts_service):
+        """TTS zaczął generować audio"""
+        llm_end = flow_manager.state.get("_llm_end_time", time.time())
+        wait_ms = (time.time() - llm_end) * 1000
+        flow_manager.state["_tts_start_time"] = time.time()
+        logger.info(f"⏱️ [TTS START] Wait from LLM: {wait_ms:.0f}ms")
+    
+    @tts.event_handler("on_tts_first_audio")
+    async def on_tts_first_audio(tts_service):
+        """TTS zwrócił pierwsze audio (TTFB)"""
+        tts_start = flow_manager.state.get("_tts_start_time", time.time())
+        stt_end = flow_manager.state.get("_stt_end_time", time.time())
+        
+        tts_ttfb_ms = (time.time() - tts_start) * 1000
+        total_ms = (time.time() - stt_end) * 1000
+        
+        logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
+        logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
     # ==========================================
     # STT TRANSCRIPT LOGGING
     # ==========================================
