@@ -110,17 +110,21 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         functions = [
             start_booking_function(),
             manage_booking_function(tenant),
-            answer_question_function(tenant),
-            contact_owner_function(tenant),  # NOWE - zastępuje escalate_to_human
+            contact_owner_function(tenant),
             end_conversation_function(),
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
-TWOJE ZADANIA:
-- Chce się UMÓWIĆ na wizytę → start_booking
-- Chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę → manage_booking
-- Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
-- Chce się POŻEGNAĆ → end_conversation"""
+⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
+Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ, pracowników.
+Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto pracuje?" 
+→ ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
+
+FUNKCJE WYWOŁUJ TYLKO GDY:
+- start_booking → klient WYRAŹNIE chce się UMÓWIĆ na wizytę
+- manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę  
+- contact_owner → klient chce KONTAKT z właścicielem/zostawić wiadomość
+- end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
         role_extra = build_business_context(tenant)
@@ -140,23 +144,24 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
 
     else:
         functions = [
-            answer_question_function(tenant),
             manage_booking_function(tenant),
-            contact_owner_function(tenant),  # NOWE - zastępuje collect_message + escalate_to_human
+            contact_owner_function(tenant),
             end_conversation_function(),
         ]
         task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
 
-WAŻNE - REZERWACJE SĄ WYŁĄCZONE:
-Jeśli klient chce się umówić, powiedz że rezerwacja telefoniczna nie jest dostępna i użyj contact_owner.
+⚠️ REZERWACJE SĄ WYŁĄCZONE!
+Jeśli klient chce się umówić → powiedz że rezerwacja telefoniczna nie jest dostępna i zaproponuj contact_owner.
 
-TWOJE ZADANIA:
-- Ma PYTANIE (cennik, godziny, usługi, dojazd) → answer_question  
-- Chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę → manage_booking
-- Chce KONTAKT z właścicielem/zostawić wiadomość/połączyć → contact_owner
-- Chce się POŻEGNAĆ → end_conversation
+⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
+Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ.
+Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?" 
+→ ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
-WAŻNE: Jeśli klient podał imię i treść wiadomości, przekaż je w contact_owner(customer_name=..., message=...)."""
+FUNKCJE WYWOŁUJ TYLKO GDY:
+- manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
+- contact_owner → klient chce KONTAKT z właścicielem/zostawić wiadomość
+- end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
         role_extra = build_business_context(tenant)
@@ -377,25 +382,37 @@ def create_continue_conversation_node(tenant: dict) -> dict:
     services = tenant.get("services", [])
     staff = tenant.get("staff", [])
     
+    # Pełny kontekst dla odpowiedzi na pytania
+    role_extra = build_business_context(tenant)
+    
     return {
         "name": "continue_conversation",
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
             "content": f"""Kontynuuj rozmowę. NIE witaj się ponownie.
+
+{role_extra}
+
 USŁUGI: {", ".join([s["name"] for s in services])}
 PRACOWNICY: {", ".join([s["name"] for s in staff])}"""
         }],
         "task_messages": [{
             "role": "system",
-            "content": "Umówić → start_booking, Pytanie → answer_question, Koniec → end_conversation"
+            "content": """⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
+Na pytania o cennik, godziny, adres → ODPOWIEDZ z informacji powyżej.
+
+FUNKCJE TYLKO GDY:
+- start_booking → klient chce się UMÓWIĆ
+- contact_owner → klient chce KONTAKT z właścicielem
+- end_conversation → klient się ŻEGNA"""
         }],
         "functions": [
             start_booking_function(),
-            answer_question_function(tenant),
+            contact_owner_function(tenant),
+            end_conversation_function(),
         ]
     }
-
 async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str, conversation_context: str = ""):
     """Wyślij email z wiadomością do właściciela - z GPT streszczeniem"""
     import httpx
