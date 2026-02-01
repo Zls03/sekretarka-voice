@@ -120,6 +120,10 @@ Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ, pracowników.
 Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto pracuje?" 
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
+⚠️ PO KAŻDEJ ODPOWIEDZI:
+Zawsze kończ KRÓTKIM pytaniem, np: "Czy mogę w czymś jeszcze pomóc?", "Czy to wszystko?", "Mogę jeszcze doradzić?"
+Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
+
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - start_booking → klient WYRAŹNIE chce się UMÓWIĆ na wizytę
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę  
@@ -157,6 +161,10 @@ Jeśli klient chce się umówić → powiedz że rezerwacja telefoniczna nie jes
 Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ.
 Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?" 
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
+
+⚠️ PO KAŻDEJ ODPOWIEDZI:
+Zawsze kończ KRÓTKIM pytaniem, np: "Czy mogę w czymś jeszcze pomóc?", "Czy to wszystko?", "Mogę jeszcze doradzić?"
+Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
@@ -210,64 +218,7 @@ ZASADY:
         }],
         "functions": functions
     }
-# ==========================================
-# FUNKCJA: Odpowiedź na pytanie (NAPRAWIONA!)
-# ==========================================
 
-def answer_question_function(tenant: dict) -> FlowsFunctionSchema:
-    return FlowsFunctionSchema(
-        name="answer_question",
-        description="Klient ma pytanie (godziny, ceny, lokalizacja, inne)",
-        properties={
-            "question": {"type": "string", "description": "Pytanie klienta"}
-        },
-        required=["question"],
-        handler=lambda args, fm: handle_answer_question(args, fm, tenant),
-    )
-
-
-async def handle_answer_question(args: dict, flow_manager: FlowManager, tenant: dict):
-    question = args.get("question", "")
-    logger.info(f"❓ Question: {question}")
-    
-    # Buduj kontekst z danych firmy
-    context = build_business_context(tenant)
-    
-    # Przejdź do node'a który ODPOWIE na pytanie
-    return (None, create_answer_node(tenant, question, context))
-
-def create_answer_node(tenant: dict, question: str, context: str) -> dict:
-    return {
-        "name": "answer_question_node",
-        "respond_immediately": True,
-        "role_messages": [{
-            "role": "system",
-            "content": f"""Odpowiedz na pytanie klienta.
-
-INFORMACJE O FIRMIE:
-{context}
-
-ZASADY:
-- Odpowiedz KRÓTKO (1-2 zdania)
-- Użyj informacji z FAQ jeśli pasują
-- Na końcu zadaj KRÓTKIE pytanie czy klient potrzebuje czegoś jeszcze
-- WAŻNE: Użyj INNEGO zakończenia niż w poprzednich odpowiedziach! Wybierz coś nowego, np: "Czy mogę w czymś jeszcze pomóc?", "Czy to wszystko?", "Mogę jeszcze w czymś doradzić?"
-- ZAWSZE używaj formy grzecznościowej "Pan/Pani" - NIGDY "ty"
-- NIE POWTARZAJ tego samego zakończenia dwa razy"""
-        }],
-        "task_messages": [{
-            "role": "system",
-            "content": f"""Pytanie: "{question}"
-
-Po odpowiedzi CZEKAJ na reakcję klienta."""
-        }],
-        "functions": [
-            start_booking_function(),
-            answer_question_function(tenant),
-            contact_owner_function(tenant),
-            end_conversation_function(),
-        ]
-    }
 
 # ==========================================
 # FUNKCJA: Zarządzanie wizytą (przełóż/odwołaj) - FALLBACK
