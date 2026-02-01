@@ -113,7 +113,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
             contact_owner_function(tenant),
             end_conversation_function(),
         ]
-        task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...". 
+NIE witaj się ponownie - NIE mów "dzień dobry"! Odpowiadaj od razu na temat.
 
 ⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
 Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ, pracowników.
@@ -152,7 +153,8 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
             contact_owner_function(tenant),
             end_conversation_function(),
         ]
-        task_content = f"""Klient usłyszał przywitanie. CZEKAJ na odpowiedź.
+        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...". 
+NIE witaj się ponownie - NIE mów "dzień dobry"! Odpowiadaj od razu na temat.
 
 ⚠️ REZERWACJE SĄ WYŁĄCZONE!
 Jeśli klient chce się umówić → powiedz że rezerwacja telefoniczna nie jest dostępna i zaproponuj contact_owner.
