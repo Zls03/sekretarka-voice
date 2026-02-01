@@ -14,7 +14,52 @@ from pipecat_flows import FlowManager, FlowsFunctionSchema
 from loguru import logger
 import asyncio
 
-
+# ============================================================================
+# HELPER: Streszczenie rozmowy
+# ============================================================================
+async def generate_conversation_summary(flow_manager) -> str:
+    """Generuje 2-zdaniowe streszczenie rozmowy przez GPT"""
+    try:
+        import openai
+        import os
+        
+        # Zbierz kontekst rozmowy
+        context = flow_manager.get_current_context()
+        
+        # Wyciągnij tylko user/assistant messages
+        conversation = []
+        for msg in context:
+            if msg.get("role") in ["user", "assistant"]:
+                content = msg.get("content", "")
+                if content and len(content) > 2:
+                    role = "Klient" if msg["role"] == "user" else "Bot"
+                    conversation.append(f"{role}: {content}")
+        
+        if not conversation:
+            return "Brak treści rozmowy."
+        
+        conversation_text = "\n".join(conversation[-10:])  # Ostatnie 10 wiadomości
+        
+        # Szybkie streszczenie przez GPT
+        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "system",
+                "content": "Streść poniższą rozmowę w MAKSYMALNIE 2 zdaniach po polsku. Skup się na tym czego klient chciał i jakie informacje otrzymał."
+            }, {
+                "role": "user", 
+                "content": conversation_text
+            }],
+            max_tokens=100,
+            temperature=0.3
+        )
+        
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        logger.error(f"Summary generation error: {e}")
+        return "Nie udało się wygenerować streszczenia."
 # ============================================================================
 # GŁÓWNA FUNKCJA - GPT wywołuje gdy klient chce kontakt
 # ============================================================================
@@ -314,13 +359,9 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     return await save_and_confirm_message(flow_manager, tenant, name, message)
 
 
-# ============================================================================
-# AKCJE: Zapis wiadomości i Transfer
-# ============================================================================
-
 async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str):
-    """Zapisz wiadomość, wyślij email, potwierdź klientowi I ROZŁĄCZ"""
-    from flows import send_message_email, create_end_node
+    """Zapisz wiadomość, wyślij email ze streszczeniem, potwierdź klientowi I ROZŁĄCZ"""
+    from flows import create_end_node, send_message_email
     
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     
@@ -330,7 +371,15 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     if owner_email:
         try:
-            await send_message_email(tenant, name, message, caller_phone, owner_email)
+            # 🔥 NOWE: Generuj streszczenie rozmowy
+            conversation_summary = await generate_conversation_summary(flow_manager)
+            logger.info(f"📋 Summary generated: {conversation_summary[:50]}...")
+            
+            # Dodaj streszczenie do wiadomości
+            message_with_summary = f"{message}\n\n---\n📋 Streszczenie rozmowy:\n{conversation_summary}"
+            
+            # Użyj ISTNIEJĄCEJ funkcji z flows.py
+            await send_message_email(tenant, name, message_with_summary, caller_phone, owner_email)
             logger.info(f"📧 Email sent to: {owner_email}")
         except Exception as e:
             logger.error(f"📧 Email error: {e}")
@@ -339,11 +388,11 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     flow_manager.state["contact_name"] = None
     flow_manager.state["contact_message"] = None
-    flow_manager.state["conversation_ended"] = True  # 🔥 Dodaj flagę
+    flow_manager.state["conversation_ended"] = True
     
-    # 🔥 Zaplanuj rozłączenie po TTS
+    # Zaplanuj rozłączenie po TTS
     async def auto_hangup_after_message():
-        await asyncio.sleep(3.0)  # Czas na "Dziękuję Marcin. Przekazałam..."
+        await asyncio.sleep(3.0)
         try:
             from pipecat.frames.frames import EndFrame
             await flow_manager.task.queue_frame(EndFrame())
@@ -356,7 +405,7 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     return (f"Dziękuję {name}. Przekazałam wiadomość do właściciela, który oddzwoni. Do widzenia!",
             create_end_node(message_saved=True))
 
-
+# ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     """Wykonaj transfer rozmowy do właściciela"""
     from flows import create_end_node
