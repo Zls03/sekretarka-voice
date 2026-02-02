@@ -612,21 +612,64 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
     
     async def check_max_duration():
-        """Sprawdza czy nie przekroczono max czasu rozmowy"""
-        nonlocal conversation_ended  # ← MUSI BYĆ TUTAJ, NA POCZĄTKU!
+        """Sprawdza max czas rozmowy + wykrywa przedłużającą się ciszę"""
+        nonlocal conversation_ended
         warning_given = False
+        silence_warning_given = False
         
         while True:
             await asyncio.sleep(5)  # Sprawdzaj co 5 sekund
             
-            # Jeśli rozmowa już zakończona - przerwij monitoring
             if conversation_ended:
                 logger.info("⏱️ Duration monitor stopped - conversation ended")
                 break
             
             elapsed = (datetime.utcnow() - call_start_time).total_seconds()
             
-            # Ostrzeżenie 30 sekund przed końcem
+            # ==========================================
+            # 🆕 WYKRYWANIE PRZEDŁUŻAJĄCEJ SIĘ CISZY
+            # ==========================================
+            last_speech = flow_manager.state.get("_stt_end_time")
+            if last_speech:
+                silence_seconds = time.time() - last_speech
+                
+                # Po 15s ciszy - ostrzeżenie
+                if silence_seconds > 15 and not silence_warning_given:
+                    logger.warning(f"🔇 Extended silence: {silence_seconds:.0f}s - asking if still there")
+                    silence_warning_given = True
+                    try:
+                        from pipecat.frames.frames import TTSSpeakFrame
+                        await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
+                    except Exception as e:
+                        logger.error(f"Silence warning error: {e}")
+                
+                # Po 25s ciszy - rozłącz
+                if silence_seconds > 25:
+                    logger.warning(f"🔇 No response for {silence_seconds:.0f}s - ending call")
+                    conversation_ended = True
+                    
+                    try:
+                        from pipecat.frames.frames import TTSSpeakFrame, EndFrame
+                        await task.queue_frame(TTSSpeakFrame(text="Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!"))
+                        
+                        async def force_end():
+                            await asyncio.sleep(2.5)
+                            await task.queue_frame(EndFrame())
+                            logger.info("🔚 EndFrame sent after extended silence")
+                        
+                        asyncio.create_task(force_end())
+                    except Exception as e:
+                        logger.error(f"Silence hangup error: {e}")
+                    
+                    break
+                
+                # Reset warning jeśli user coś powiedział
+                if silence_seconds < 10:
+                    silence_warning_given = False
+            
+            # ==========================================
+            # OSTRZEŻENIE 30s PRZED KOŃCEM
+            # ==========================================
             if elapsed >= MAX_CALL_DURATION - 30 and not warning_given:
                 logger.warning(f"⚠️ Call approaching max duration: {elapsed:.0f}s / {MAX_CALL_DURATION}s")
                 warning_given = True
@@ -644,10 +687,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Warning message error: {e}")
             
-            # Koniec czasu - rozłącz NATYCHMIAST
+            # ==========================================
+            # MAX DURATION - ROZŁĄCZ
+            # ==========================================
             if elapsed >= MAX_CALL_DURATION:
                 logger.warning(f"🛑 Max call duration reached: {elapsed:.0f}s - FORCING HANGUP")
-                conversation_ended = True  # ← Teraz działa bo nonlocal jest na górze
+                conversation_ended = True
                 
                 try:
                     from pipecat.frames.frames import TTSSpeakFrame, EndFrame
