@@ -82,6 +82,8 @@ def build_keyterms(tenant: dict) -> list:
         "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela",
         # Rezerwacje
         "wizyta", "termin", "rezerwacja", "umówić", "zapisać", "odwołać",
+        # Cennik / ceny
+        "cennik", "cena", "ceny", "ile kosztuje", "koszt", "wycena",
     ]
     keyterms.update(base_terms)
     
@@ -512,6 +514,23 @@ async def websocket_endpoint(websocket: WebSocket):
                                 staff_list.append(staff_dict)
                             
                             tenant["staff"] = staff_list
+
+                            # 🔥 Uzupełnij tenant["services"] jeśli puste
+                            # (gdy usługi są TYLKO w staff_services, nie w tabeli services)
+                            if not tenant.get("services"):
+                                all_services = {}
+                                for s in staff_list:
+                                    for svc in s.get("services", []):
+                                        svc_id = svc.get("id")
+                                        if svc_id and svc_id not in all_services:
+                                            all_services[svc_id] = svc
+                                tenant["services"] = list(all_services.values())
+                                if tenant["services"]:
+                                    logger.info(f"   services: {len(tenant['services'])} (built from staff)")
+                                else:
+                                    logger.warning(f"   ⚠️ No services found!")
+                            else:
+                                logger.info(f"   services: {len(tenant['services'])} (from DB)")
                             
                             logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
                             logger.info(f"   tts_provider: {tenant.get('tts_provider')}")
