@@ -354,20 +354,14 @@ def create_tts_service(tenant: dict):
         )
         
         # 🔤 Text transform: zamień skróty na pełne słowa przed TTS
+        import re
         async def expand_abbreviations(text: str, aggregation_type=None) -> str:
-            replacements = {
-                " ul. ": " ulicy ",
-                " ul.": " ulicy",
-                " zł.": " złotych.",
-                " zł,": " złotych,",
-                " zł ": " złotych ",
-                " zł": " złotych",
-                " godz. ": " godzina ",
-                " tel. ": " telefon ",
-                " nr ": " numer ",
-            }
-            for abbr, full in replacements.items():
-                text = text.replace(abbr, full)
+            # Regex - łapie skróty niezależnie od pozycji w chunku
+            text = re.sub(r'\bul\.', 'ulicy', text)
+            text = re.sub(r'\bnr\b', 'numer', text)
+            text = re.sub(r'\btel\.', 'telefon', text)
+            text = re.sub(r'\bgodz\.', 'godzina', text)
+            text = re.sub(r'(\d+)\s*zł\b', r'\1 złotych', text)
             return text
         
         tts.add_text_transformer(expand_abbreviations)
@@ -870,9 +864,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # 🔥 WARM-UP: Rozgrzej ElevenLabs - wyślij pauzę SSML (niesłyszalną)
         try:
-            from pipecat.frames.frames import TTSSpeakFrame
-            await task.queue_frame(TTSSpeakFrame(text='<break time="0.1s" />'))
-            logger.info("🔥 TTS warm-up sent (silent SSML)")
+            await asyncio.sleep(0.3)
+            logger.info("🔥 TTS warm-up delay (300ms)")
         except Exception as e:
             logger.debug(f"TTS warm-up failed (non-critical): {e}")
         
