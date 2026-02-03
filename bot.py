@@ -847,8 +847,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("🎤 Client connected - starting flow")
         asyncio.create_task(check_max_duration())
         
-        # 🔥 WARM-UP: Rozgrzej ElevenLabs TTS WebSocket
-        # Wysyła minimalny tekst żeby ElevenLabs utworzył audio context
+
         # i "rozgrzał" model dla tego głosu - kolejne requesty będą szybsze
         try:
             from pipecat.frames.frames import TTSSpeakFrame
