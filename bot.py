@@ -344,7 +344,7 @@ def create_tts_service(tenant: dict):
         # ElevenLabs - użyj głosu z bazy lub domyślnego
         voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
         logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id}")
-        return ElevenLabsTTSService(
+        tts = ElevenLabsTTSService(
             api_key=os.getenv("ELEVENLABS_API_KEY"),
             voice_id=voice_id,
             model="eleven_turbo_v2_5",
@@ -352,7 +352,27 @@ def create_tts_service(tenant: dict):
             stability=0.6,
             similarity_boost=0.75,
         )
-
+        
+        # 🔤 Text transform: zamień skróty na pełne słowa przed TTS
+        async def expand_abbreviations(text: str, aggregation_type=None) -> str:
+            replacements = {
+                " ul. ": " ulicy ",
+                " ul.": " ulicy",
+                " zł.": " złotych.",
+                " zł,": " złotych,",
+                " zł ": " złotych ",
+                " zł": " złotych",
+                " godz. ": " godzina ",
+                " tel. ": " telefon ",
+                " nr ": " numer ",
+            }
+            for abbr, full in replacements.items():
+                text = text.replace(abbr, full)
+            return text
+        
+        tts.add_text_transformer(expand_abbreviations)
+        
+        return tts
 
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
