@@ -83,7 +83,7 @@ def build_keyterms(tenant: dict) -> list:
         # Rezerwacje
         "wizyta", "termin", "rezerwacja", "umówić", "zapisać", "odwołać",
         # Cennik / ceny
-        "cennik", "cena", "ceny", "ile kosztuje", "koszt", "wycena",
+        "cennik", "cena", "ceny", "ile kosztuje", "koszt",
     ]
     keyterms.update(base_terms)
     
