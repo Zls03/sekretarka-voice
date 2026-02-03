@@ -868,11 +868,11 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(check_max_duration())
         
 
-        # i "rozgrzał" model dla tego głosu - kolejne requesty będą szybsze
+        # 🔥 WARM-UP: Rozgrzej ElevenLabs - wyślij pauzę SSML (niesłyszalną)
         try:
             from pipecat.frames.frames import TTSSpeakFrame
-            await task.queue_frame(TTSSpeakFrame(text=" ."))
-            logger.info("🔥 TTS warm-up sent")
+            await task.queue_frame(TTSSpeakFrame(text='<break time="0.1s" />'))
+            logger.info("🔥 TTS warm-up sent (silent SSML)")
         except Exception as e:
             logger.debug(f"TTS warm-up failed (non-critical): {e}")
         
