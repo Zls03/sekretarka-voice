@@ -413,7 +413,9 @@ def create_tts_service(tenant: dict):
             return number_to_polish(num) + " " + zloty_form(num)
         
         async def expand_abbreviations(text: str, aggregation_type=None) -> str:
-            # 0. Fix chunkowania GPT: "złotychotych" → "złotych"
+            # 0. Fix chunkowania GPT: usuń resztkę "otych" z początku chunka
+            text = re.sub(r'^otych\b\s*', '', text)
+            # 0b. Fix sklejonych tokenów
             text = text.replace('złotychotych', 'złotych')
             text = text.replace('złotyotych', 'złoty')
             text = text.replace('złoteotych', 'złote')
