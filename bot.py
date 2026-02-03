@@ -353,7 +353,6 @@ def create_tts_service(tenant: dict):
             similarity_boost=0.75,
         )
         
-        # 🔤 Text transform: zamień skróty na pełne słowa przed TTS
         # 🔤 Text transform: zamień skróty i liczby na pełne słowa przed TTS
         import re
         
@@ -414,8 +413,12 @@ def create_tts_service(tenant: dict):
             return number_to_polish(num) + " " + zloty_form(num)
         
         async def expand_abbreviations(text: str, aggregation_type=None) -> str:
-            # 1. Ceny: "189 zł" → "sto osiemdziesiąt dziewięć złotych"
-            text = re.sub(r'(\d+)\s*złotych', replace_number, text)
+            # 0. Fix chunkowania GPT: "złotychotych" → "złotych"
+            text = text.replace('złotychotych', 'złotych')
+            text = text.replace('złotyotych', 'złoty')
+            text = text.replace('złoteotych', 'złote')
+            # 1. Ceny: "189 złotych" → "sto osiemdziesiąt dziewięć złotych"
+            text = re.sub(r'(\d+)\s*złotych\b', replace_number, text)
             text = re.sub(r'(\d+)\s*zł\b', replace_number, text)
             # 2. Skróty
             text = re.sub(r'\bul\.', 'ulicy', text)
