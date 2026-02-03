@@ -80,7 +80,7 @@ async def get_next_available_days(
             if slots and len(slots) > 0:
                 results.append({
                     "date": check_date,
-                    "slots": slots[:6],  # Max 6 slotów do pokazania
+                    "slots": slots,  # _slots_summary sama wybierze reprezentatywne
                     "slots_count": len(slots)
                 })
                 
@@ -93,6 +93,22 @@ async def get_next_available_days(
     
     return results
 
+def _slots_summary(slots: List[str]) -> str:
+    """Podsumowanie slotów: 3 rozłożone przykłady"""
+    if not slots:
+        return "brak wolnych terminów"
+    if len(slots) <= 3:
+        return natural_list([format_hour_polish(s) for s in slots])
+    
+    # Weź 3: początek, środek, koniec
+    first = slots[0]
+    mid = slots[len(slots) // 2]
+    last = slots[-1]
+    
+    # Unikaj duplikatów (gdyby mid == first lub last)
+    picked = list(dict.fromkeys([first, mid, last]))
+    
+    return "na przykład " + natural_list([format_hour_polish(s) for s in picked]) + " i inne"
 
 def format_availability_message(available_days: List[Dict]) -> str:
     """Formatuje wiadomość o dostępnych terminach po polsku"""
@@ -102,12 +118,7 @@ def format_availability_message(available_days: List[Dict]) -> str:
     parts = []
     for day_info in available_days:
         date_str = format_date_polish(day_info["date"])
-        slots_preview = natural_list([format_hour_polish(s) for s in day_info["slots"][:3]])
-        
-        if day_info["slots_count"] > 3:
-            parts.append(f"{date_str} ({slots_preview} i więcej)")
-        else:
-            parts.append(f"{date_str} ({slots_preview})")
+        parts.append(f"{date_str} ({_slots_summary(day_info['slots'])})")
     
     return "Najbliższe wolne terminy: " + ", ".join(parts) + ". Który dzień Panu odpowiada?"
 
@@ -509,7 +520,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             other_days = available_days[1:]
             
             first_date_str = format_date_polish(first_day["date"])
-            first_slots = natural_list([format_hour_polish(s) for s in first_day["slots"][:3]])
+            first_slots = _slots_summary(first_day["slots"])
             
             if other_days:
                 other_dates = natural_list([format_date_polish(d["date"]) for d in other_days])
@@ -530,6 +541,44 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 4. WALIDACJA GODZINY ===
     if time_text and "time" not in state:
+        # 🔥 NOWE: Obsługa pory dnia ("po południu", "rano")
+        time_lower = time_text.lower().strip()
+        
+        afternoon_phrases = ["po południu", "popołudniu", "popoludniu", "po poludniu", "popołudniow", "popoludniow"]
+        morning_phrases = ["rano", "z rana", "przed południem", "przedpołudni", "dopołudni"]
+        
+        is_time_range = False
+        filtered = []
+        range_name = ""
+        
+        if any(p in time_lower for p in afternoon_phrases):
+            filtered = [s for s in state.get("available_slots", []) if int(s.split(":")[0]) >= 12]
+            is_time_range = True
+            range_name = "po południu"
+        elif any(p in time_lower for p in morning_phrases):
+            filtered = [s for s in state.get("available_slots", []) if int(s.split(":")[0]) < 12]
+            is_time_range = True
+            range_name = "rano"
+        
+        if is_time_range:
+            if "date" not in state:
+                # Nie mamy jeszcze daty - nie możemy filtrować slotów
+                return await _respond(
+                    f"Rozumiem, szukamy terminu {range_name}. Na jaki dzień?",
+                    flow_manager, tenant, state=state)
+            
+            if filtered:
+                slots_text = _slots_summary(filtered)
+                return await _respond(
+                    f"Tak, {range_name} wolne są: {slots_text}. Którą godzinę wybrać?",
+                    flow_manager, tenant, state=state)
+            else:
+                all_slots = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:6]])
+                return await _respond(
+                    f"Niestety {range_name} nie ma wolnych terminów. "
+                    f"Dostępne godziny to: {all_slots}.",
+                    flow_manager, tenant, state=state)
+        
         parsed_time = _parse_time(time_text)
         
         if parsed_time:
@@ -545,7 +594,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             else:
                 # Slot zajęty - pokaż aktualne wolne
                 if current_slots:
-                    slots_text = natural_list([format_hour_polish(s) for s in current_slots[:6]])
+                    slots_text = _slots_summary(current_slots)
                     return await _respond(
                         f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
                         f"Wolne są: {slots_text}.",
@@ -572,7 +621,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 flow_manager, tenant, state=state)
     
     if "time" not in state:
-        slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
+        slots_text = _slots_summary(state["available_slots"])
         return await _respond(
             f"Na {format_date_polish(state['date'])} wolne są: {slots_text}. "
             f"Którą godzinę Pan wybiera?",
@@ -635,7 +684,7 @@ def _get_next_step(state: Dict, staff_list: List) -> str:
         staff_name = odmien_imie(state['staff']['name'])
         return f"Na jaki dzień chce się Pan umówić do {staff_name}?"
     elif "time" not in state:
-        slots_text = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:5]])
+        slots_text = _slots_summary(state.get("available_slots", []))
         return f"Którą godzinę Pan wybiera? Wolne są: {slots_text}."
     elif "name" not in state:
         return "Na jakie imię zapisać wizytę?"
@@ -797,7 +846,7 @@ async def _save_booking(
             if current_slots:
                 state.pop("time", None)
                 state["available_slots"] = current_slots
-                slots_text = natural_list([format_hour_polish(s) for s in current_slots[:5]])
+                slots_text = _slots_summary(current_slots)
                 return await _respond(
                     f"Przepraszam, ta godzina właśnie została zajęta przez kogoś innego. "
                     f"Pozostały wolne: {slots_text}. Którą wybrać?",
@@ -904,6 +953,10 @@ Przykłady:
 - "na strzyżenie do Ani" → book_appointment(service="strzyżenie", staff="Ania")
 - "jutro" → book_appointment(date_text="jutro")
 - "na trzynastą" → book_appointment(time_text="na trzynastą")
+- "po południu" → book_appointment(time_text="po południu")
+- "rano" → book_appointment(time_text="rano")
+- "przed południem" → book_appointment(time_text="rano")
+- "coś popołudniowego" → book_appointment(time_text="po południu")
 - "tak, potwierdzam" → book_appointment(confirmation="yes")
 - "nie, dziękuję" → book_appointment(confirmation="no")
 - "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
