@@ -582,7 +582,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,      # Wyższy próg (domyślnie 0.7)
                     start_secs=0.25,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    stop_secs=0.8,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
