@@ -353,6 +353,7 @@ def create_tts_service(tenant: dict):
             output_format="pcm_24000",
             stability=0.6,
             similarity_boost=0.75,
+            speed=1.1,   # lekko szybsza mowa
         )
         
         # 🔤 Text transform: zamień skróty i liczby na pełne słowa przed TTS
@@ -581,7 +582,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,      # Wyższy próg (domyślnie 0.7)
                     start_secs=0.25,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
@@ -621,7 +622,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4.1-mini",
+        model="gpt-4.1-nano",
         params=BaseOpenAILLMService.InputParams(
             temperature=0.4,
             max_completion_tokens=150,
