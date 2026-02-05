@@ -66,8 +66,10 @@ async def warmup_llm(llm):
     """Rozgrzewa OpenAI - otwiera połączenie, ładuje model. Skraca TTFB o 400-700ms."""
     try:
         logger.info("🔥 LLM warm-up start")
+        # Pobierz nazwę modelu - Pipecat może trzymać ją w różnych atrybutach
+        model_name = getattr(llm, 'model', None) or getattr(llm, 'model_name', None) or getattr(llm, '_model', None) or "gpt-4.1-mini"
         await llm._client.chat.completions.create(
-            model=llm.model,
+            model=model_name,
             messages=[{"role": "user", "content": "OK"}],
             max_tokens=1,
         )
