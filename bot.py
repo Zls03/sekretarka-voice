@@ -8,7 +8,7 @@ import time
 import os
 import sys
 import json
-from pipecat.frames.frames import EndFrame
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 import asyncio
 from datetime import datetime
 from loguru import logger
@@ -57,6 +57,33 @@ logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
 
 app = FastAPI()
+
+# ==========================================
+# 🔥 WARM-UP FUNCTIONS - rozgrzewanie serwisów
+# ==========================================
+
+async def warmup_llm(llm):
+    """Rozgrzewa OpenAI - otwiera połączenie, ładuje model. Skraca TTFB o 400-700ms."""
+    try:
+        logger.info("🔥 LLM warm-up start")
+        await llm._client.chat.completions.create(
+            model=llm.model,
+            messages=[{"role": "user", "content": "OK"}],
+            max_tokens=1,
+        )
+        logger.info("🔥 LLM warm-up done")
+    except Exception as e:
+        logger.warning(f"LLM warm-up failed (non-critical): {e}")
+
+
+async def warmup_tts(task):
+    """Rozgrzewa TTS (ElevenLabs/Cartesia) - ładuje voice, otwiera połączenie."""
+    try:
+        logger.info("🔥 TTS warm-up start")
+        await task.queue_frame(TTSSpeakFrame(text=" "))
+        logger.info("🔥 TTS warm-up done")
+    except Exception as e:
+        logger.warning(f"TTS warm-up failed (non-critical): {e}")
 # ==========================================
 # KEYTERMS BUILDER - dynamiczne słowa per firma
 # ==========================================
@@ -840,6 +867,10 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
 
+    # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
+    asyncio.create_task(warmup_llm(llm))
+    asyncio.create_task(warmup_tts(task))
+
     # =========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
@@ -945,15 +976,7 @@ async def websocket_endpoint(websocket: WebSocket):
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
         asyncio.create_task(check_max_duration())
-        
 
-        # 🔥 WARM-UP: Rozgrzej ElevenLabs - wyślij pauzę SSML (niesłyszalną)
-        try:
-            await asyncio.sleep(0.3)
-            logger.info("🔥 TTS warm-up delay (300ms)")
-        except Exception as e:
-            logger.debug(f"TTS warm-up failed (non-critical): {e}")
-        
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
         
         # 🔥 Prosty timer: jeśli cisza po greeting → rozłącz
