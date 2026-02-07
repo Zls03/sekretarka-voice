@@ -145,14 +145,12 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
             "staff": staff,
         }
         
-        # Zbuduj odpowiedź
-        parts = []
-        for day_info in available_days:
-            date_str = format_date_polish(day_info["date"])
-            slots_text = _slots_summary(day_info["slots"])
-            parts.append(f"{date_str}: {slots_text}")
+         # KRÓTKA odpowiedź - tylko pierwszy dzień
+        first_day = available_days[0]
+        first_date = format_date_polish(first_day["date"])
+        first_slots = _slots_summary(first_day["slots"])
         
-        message = f"U {staff_name_declined} najbliższe wolne terminy: {', '.join(parts)}. Czy chce się Pan zapisać?"
+        message = f"U {staff_name_declined} najbliższy wolny termin to {first_date}: {first_slots}. Chce się Pan zapisać, czy podać inny dzień do sprawdzenia?"
         
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=message))
         return (None, create_initial_node(tenant, greeting_played=True))
