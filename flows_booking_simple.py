@@ -699,20 +699,41 @@ def _parse_time(text: str) -> Optional[str]:
     
     text = text.lower().strip()
     
-    # 🔥 KOREKTY STT - Deepgram czasem źle rozpoznaje
+    # 🔥 KOREKTY STT
     stt_time_fixes = {
         "siedem zer zero": "7:00",
-        "siedem zero zero": "7:00",
+        "siedem zero zero": "7:00", 
         "siedem zero": "7:00",
         "osiem zer zero": "8:00",
         "osiem zero zero": "8:00",
         "osiem zero": "8:00",
+        "dziewięć zer zero": "9:00",
         "dziewięć zero": "9:00",
-        "dziesięć zero": "10:00",
     }
     for wrong, correct in stt_time_fixes.items():
         if wrong in text:
-            text = text.replace(wrong, correct)
+            return correct
+    
+    # 🔥 NOWE: "wpół do X" = X-1:30
+    if "wpół do" in text or "w pół do" in text:
+        wpol_mappings = {
+            "siódmej": "6:30", "siedmej": "6:30",
+            "ósmej": "7:30", "osmej": "7:30",
+            "dziewiątej": "8:30", "dziewiatej": "8:30",
+            "dziesiątej": "9:30", "dziesiatej": "9:30",
+            "jedenastej": "10:30",
+            "dwunastej": "11:30",
+            "trzynastej": "12:30",
+            "czternastej": "13:30",
+            "piętnastej": "14:30", "pietnastej": "14:30",
+            "szesnastej": "15:30",
+            "siedemnastej": "16:30",
+            "osiemnastej": "17:30",
+        }
+        for word, time in wpol_mappings.items():
+            if word in text:
+                return time
+    
     
     # Słowne godziny
     word_to_hour = {
