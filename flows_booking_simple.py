@@ -699,6 +699,21 @@ def _parse_time(text: str) -> Optional[str]:
     
     text = text.lower().strip()
     
+    # 🔥 KOREKTY STT - Deepgram czasem źle rozpoznaje
+    stt_time_fixes = {
+        "siedem zer zero": "7:00",
+        "siedem zero zero": "7:00",
+        "siedem zero": "7:00",
+        "osiem zer zero": "8:00",
+        "osiem zero zero": "8:00",
+        "osiem zero": "8:00",
+        "dziewięć zero": "9:00",
+        "dziesięć zero": "10:00",
+    }
+    for wrong, correct in stt_time_fixes.items():
+        if wrong in text:
+            text = text.replace(wrong, correct)
+    
     # Słowne godziny
     word_to_hour = {
         "dziewiąt": 9, "dziesiąt": 10, "jedenast": 11, "dwunast": 12,
