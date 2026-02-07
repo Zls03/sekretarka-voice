@@ -986,6 +986,28 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     
     logger.info("📅 BOOKING START (simple)")
     
+    # NOWE: Sprawdź czy mamy soft_interest z check_availability
+    soft_interest = flow_manager.state.get("soft_interest")
+    
+    if soft_interest:
+        # Użyj danych z poprzedniego sprawdzenia
+        flow_manager.state["booking"] = {
+            "service": soft_interest["service"],
+            "staff": soft_interest["staff"],
+        }
+        del flow_manager.state["soft_interest"]
+        
+        from polish_mappings import odmien_imie
+        staff_name = odmien_imie(soft_interest["staff"]["name"])
+        
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text=f"Świetnie! Na jaki dzień chce się Pan zapisać do {staff_name}?")
+        )
+        
+        return (None, create_booking_node(tenant))
+    
+    # Standardowy flow - brak soft_interest
     flow_manager.state["booking"] = {}
     flow_manager.state["booking_confirmed"] = False
     

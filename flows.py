@@ -45,6 +45,123 @@ from flows_helpers import (
 )
 
 # ==========================================
+# FUNKCJA: Sprawdź dostępność (bez rezerwacji)
+# ==========================================
+
+def check_availability_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient pyta o wolne terminy bez chęci rezerwacji"""
+    return FlowsFunctionSchema(
+        name="check_availability",
+        description="""Klient pyta TYLKO o wolne terminy, NIE chce się jeszcze zapisywać.
+Użyj gdy: "kiedy wolny termin?", "kiedy macie wolne?", "na jaki dzień można?", "najbliższy termin?", "czy jest coś wolnego?"
+NIE używaj gdy klient mówi "chcę się umówić" - wtedy użyj start_booking.""",
+        properties={
+            "service": {
+                "type": "string",
+                "description": "Usługa o którą pyta (np. 'strzyżenie męskie')"
+            },
+            "staff": {
+                "type": "string",
+                "description": "Pracownik o którego pyta (np. 'Ania') lub null jeśli dowolny"
+            },
+        },
+        required=[],
+        handler=lambda args, fm: handle_check_availability(args, fm, tenant),
+    )
+
+
+async def handle_check_availability(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Sprawdza kalendarz i odpowiada BEZ wchodzenia w proces rezerwacji"""
+    from flows_helpers import (
+        fuzzy_match_service, fuzzy_match_staff, staff_can_do_service,
+        format_date_polish
+    )
+    from flows_booking_simple import (
+        get_next_available_days, format_availability_message, _slots_summary
+    )
+    from polish_mappings import odmien_imie, natural_list
+    from pipecat.frames.frames import TTSSpeakFrame
+    
+    service_text = args.get("service")
+    staff_text = args.get("staff")
+    
+    services = tenant.get("services", [])
+    staff_list = tenant.get("staff", [])
+    
+    logger.info(f"🔍 CHECK_AVAILABILITY: service={service_text}, staff={staff_text}")
+    
+    # Walidacja usługi
+    service = None
+    if service_text:
+        service = fuzzy_match_service(service_text, services)
+    
+    if not service:
+        names = ", ".join([s["name"] for s in services[:5]])
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text=f"O jaką usługę chodzi? Mamy: {names}.")
+        )
+        return (None, create_initial_node(tenant, greeting_played=True))
+    
+    # Walidacja pracownika
+    staff = None
+    if staff_text and staff_text.lower() not in ["dowolny", "obojętnie", "ktokolwiek"]:
+        staff = fuzzy_match_staff(staff_text, staff_list)
+        if staff and not staff_can_do_service(staff, service):
+            available = [s for s in staff_list if staff_can_do_service(s, service)]
+            names = ", ".join([s["name"] for s in available])
+            await flow_manager.task.queue_frame(
+                TTSSpeakFrame(text=f"{staff['name']} nie wykonuje tej usługi. Wykonują ją: {names}.")
+            )
+            return (None, create_initial_node(tenant, greeting_played=True))
+    
+    # Jeśli brak pracownika - wybierz pierwszego dostępnego
+    if not staff:
+        available = [s for s in staff_list if staff_can_do_service(s, service)]
+        if available:
+            staff = available[0]
+        else:
+            await flow_manager.task.queue_frame(
+                TTSSpeakFrame(text="Przepraszam, obecnie nie ma dostępnych pracowników do tej usługi.")
+            )
+            return (None, create_initial_node(tenant, greeting_played=True))
+    
+    # Sprawdź kalendarz
+    try:
+        from flows import play_snippet
+        await play_snippet(flow_manager, "checking")
+    except:
+        pass
+    
+    available_days = await get_next_available_days(
+        tenant, staff, service, max_days=14, limit=3
+    )
+    
+    staff_name_declined = odmien_imie(staff["name"])
+    
+    if available_days:
+        # Zapisz "soft interest" na wypadek gdyby chciał się zapisać
+        flow_manager.state["soft_interest"] = {
+            "service": service,
+            "staff": staff,
+        }
+        
+        # Zbuduj odpowiedź
+        parts = []
+        for day_info in available_days:
+            date_str = format_date_polish(day_info["date"])
+            slots_text = _slots_summary(day_info["slots"])
+            parts.append(f"{date_str}: {slots_text}")
+        
+        message = f"U {staff_name_declined} najbliższe wolne terminy: {', '.join(parts)}. Czy chce się Pan zapisać?"
+        
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=message))
+        return (None, create_initial_node(tenant, greeting_played=True))
+    else:
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text=f"Niestety u {staff_name_declined} w najbliższych dwóch tygodniach nie ma wolnych terminów.")
+        )
+        return (None, create_initial_node(tenant, greeting_played=True))
+# ==========================================
 # NODE: Powitanie
 # ==========================================
 
@@ -109,6 +226,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     if booking_enabled:
         functions = [
             start_booking_function(),
+            check_availability_function(tenant),
             manage_booking_function(tenant),
             contact_owner_function(tenant),
             end_conversation_function(),
