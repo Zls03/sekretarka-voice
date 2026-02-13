@@ -379,7 +379,7 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("ELEVENLABS_API_KEY"),
             voice_id=voice_id,
             model="eleven_turbo_v2_5",
-            output_format="pcm_16000",
+            output_format="pcm_24000",
             stability=0.6,
             similarity_boost=0.75,
             speed=1.1,   # lekko szybsza mowa
@@ -611,7 +611,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,      # Wyższy próg (domyślnie 0.7)
                     start_secs=0.25,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.0,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    stop_secs=1.5,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
@@ -640,7 +640,7 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=800,
+            utterance_end_ms=1200,
             endpointing=400,
             keyterm=tenant_keyterms,  # 🔥 Dynamiczne per firma!
         )
