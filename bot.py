@@ -885,6 +885,20 @@ async def websocket_endpoint(websocket: WebSocket):
         global_functions=[end_conversation_function()], 
     )
     
+    # 🔥 Warm prompt - przygotowanie kontekstu dla pierwszej odpowiedzi
+    async def send_warm_prompt():
+        try:
+            await llm.run_messages([
+                {"role": "system", "content": f"Jesteś wirtualną asystentką firmy {tenant.get('name')}. Pamiętaj godziny, cennik, pracowników i usługi."},
+                {"role": "user", "content": "OK"}
+            ], max_tokens=1)
+            logger.info("🔥 Warm prompt sent to LLM")
+        except Exception as e:
+            logger.warning(f"Warm prompt failed: {e}")
+
+    asyncio.create_task(send_warm_prompt())
+
+    
     # Zapisz dane tenant w state
     flow_manager.state["tenant"] = tenant
     flow_manager.state["call_sid"] = call_sid
