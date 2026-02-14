@@ -678,9 +678,6 @@ async def websocket_endpoint(websocket: WebSocket):
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
 
-    # Context
-    context = OpenAILLMContext()
-    context_aggregator = llm.create_context_aggregator(context)
     
     # 🔥 Timing state - używane przez event handlery
     timing_state = {
@@ -995,23 +992,6 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
    
-    # ==========================================
-    # STT TRANSCRIPT LOGGING
-    # ==========================================
-    
-    @stt.event_handler("on_transcript")
-    async def on_transcript(stt_service, transcript):
-        """Loguje każdą transkrypcję z Deepgram"""
-        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
-        is_final = transcript.get("is_final", True) if isinstance(transcript, dict) else True
-        
-        if text.strip():
-            if is_final:
-                logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
-            else:
-                logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
-        else:
-            logger.debug(f"🎤 TRANSCRIPT: (empty)")
 
     # ==========================================
     # EVENT HANDLERS
