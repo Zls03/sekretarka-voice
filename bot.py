@@ -58,6 +58,20 @@ logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {messa
 
 app = FastAPI()
 
+@app.on_event("startup")
+async def startup_warmup():
+    """Pre-warm OpenAI connection przy starcie serwera"""
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        await client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": "OK"}],
+            max_tokens=1,
+        )
+        logger.info("🔥 Server startup: OpenAI model pre-warmed")
+    except Exception as e:
+        logger.warning(f"Startup warm failed: {e}")
 # ==========================================
 # 🔥 WARM-UP FUNCTIONS - rozgrzewanie serwisów
 # ==========================================
@@ -870,7 +884,6 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
-    asyncio.create_task(warmup_llm(llm))
     asyncio.create_task(warmup_tts(task))
 
     # =========================================
@@ -885,20 +898,6 @@ async def websocket_endpoint(websocket: WebSocket):
         global_functions=[end_conversation_function()], 
     )
     
-    # 🔥 Warm prompt - przygotowanie kontekstu dla pierwszej odpowiedzi
-    async def send_warm_prompt():
-        try:
-            await llm.run_messages([
-                {"role": "system", "content": f"Jesteś wirtualną asystentką firmy {tenant.get('name')}. Pamiętaj godziny, cennik, pracowników i usługi."},
-                {"role": "user", "content": "OK"}
-            ], max_tokens=1)
-            logger.info("🔥 Warm prompt sent to LLM")
-        except Exception as e:
-            logger.warning(f"Warm prompt failed: {e}")
-
-    asyncio.create_task(send_warm_prompt())
-
-    
     # Zapisz dane tenant w state
     flow_manager.state["tenant"] = tenant
     flow_manager.state["call_sid"] = call_sid
@@ -907,6 +906,21 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["greeting_played"] = greeting_played
     flow_manager.state["caller_phone"] = caller_phone
 
+    # 🔥 Warm prompt - definicja funkcji (wywołanie w on_client_connected)
+    async def send_warm_prompt():
+        try:
+            model_name = getattr(llm, 'model', None) or getattr(llm, 'model_name', None) or "gpt-4.1-mini"
+            await llm._client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": f"Jesteś asystentką {tenant.get('name')}. Cennik: {tenant.get('services', [])}"},
+                    {"role": "user", "content": "OK"}
+                ],
+                max_tokens=1,
+            )
+            logger.info("🔥 Warm prompt done")
+        except Exception as e:
+            logger.warning(f"Warm prompt failed: {e}")
     # ==========================================
     # ⏱️ TIMING LOGS - szczegółowe pomiary opóźnień
     # ==========================================
@@ -994,6 +1008,9 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(check_max_duration())
 
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
+        
+        # 🔥 Warm prompt PO inicjalizacji flow managera
+        asyncio.create_task(send_warm_prompt())
         
         # 🔥 Prosty timer: jeśli cisza po greeting → rozłącz
         if greeting_played:
