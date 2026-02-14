@@ -677,7 +677,80 @@ async def websocket_endpoint(websocket: WebSocket):
     # Context
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
+
+    # Context
+    context = OpenAILLMContext()
+    context_aggregator = llm.create_context_aggregator(context)
     
+    # 🔥 Timing state - używane przez event handlery
+    timing_state = {
+        "_stt_end_time": None,
+        "_llm_start_time": None,
+        "_llm_end_time": None,
+        "_tts_start_time": None,
+    }
+    
+    # ==========================================
+    # ⏱️ TIMING LOGS - MUSZĄ BYĆ PRZED PIPELINE!
+    # ==========================================
+    
+    @stt.event_handler("on_transcript_complete")
+    async def on_stt_complete(stt_service, transcript):
+        text = ""
+        if hasattr(transcript, 'text'):
+            text = transcript.text
+        elif isinstance(transcript, dict):
+            text = transcript.get("text", "")
+        if text and text.strip():
+            timing_state["_stt_end_time"] = time.time()
+            logger.info(f"⏱️ [STT DONE] '{text[:40]}...'")
+    
+    @llm.event_handler("on_llm_started")
+    async def on_llm_started(llm_service):
+        stt_end = timing_state.get("_stt_end_time") or time.time()
+        wait_ms = (time.time() - stt_end) * 1000
+        timing_state["_llm_start_time"] = time.time()
+        logger.info(f"⏱️ [LLM START] Wait from STT: {wait_ms:.0f}ms")
+    
+    @llm.event_handler("on_llm_first_token")
+    async def on_llm_first_token(llm_service):
+        llm_start = timing_state.get("_llm_start_time") or time.time()
+        ttfb_ms = (time.time() - llm_start) * 1000
+        logger.info(f"⏱️ [LLM TTFB] {ttfb_ms:.0f}ms")
+    
+    @llm.event_handler("on_llm_completed")
+    async def on_llm_completed(llm_service):
+        llm_start = timing_state.get("_llm_start_time") or time.time()
+        total_ms = (time.time() - llm_start) * 1000
+        timing_state["_llm_end_time"] = time.time()
+        logger.info(f"⏱️ [LLM DONE] Total: {total_ms:.0f}ms")
+    
+    @tts.event_handler("on_tts_started")
+    async def on_tts_started(tts_service):
+        llm_end = timing_state.get("_llm_end_time") or time.time()
+        wait_ms = (time.time() - llm_end) * 1000
+        timing_state["_tts_start_time"] = time.time()
+        logger.info(f"⏱️ [TTS START] Wait from LLM: {wait_ms:.0f}ms")
+    
+    @tts.event_handler("on_tts_first_audio")
+    async def on_tts_first_audio(tts_service):
+        tts_start = timing_state.get("_tts_start_time") or time.time()
+        stt_end = timing_state.get("_stt_end_time") or time.time()
+        tts_ttfb_ms = (time.time() - tts_start) * 1000
+        total_ms = (time.time() - stt_end) * 1000
+        logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
+        logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
+
+    @stt.event_handler("on_transcript")
+    async def on_transcript(stt_service, transcript):
+        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
+        is_final = transcript.get("is_final", True) if isinstance(transcript, dict) else True
+        if text.strip():
+            if is_final:
+                logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
+            else:
+                logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
+
     # ==========================================
     # TIMEOUT HANDLING
     # ==========================================
@@ -921,65 +994,7 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info("🔥 Warm prompt done")
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
-    # ==========================================
-    # ⏱️ TIMING LOGS - szczegółowe pomiary opóźnień
-    # ==========================================
-    
-    @stt.event_handler("on_transcript_complete")
-    async def on_stt_complete(stt_service, transcript):
-        """Loguj gdy STT zakończy rozpoznawanie"""
-        text = ""
-        if hasattr(transcript, 'text'):
-            text = transcript.text
-        elif isinstance(transcript, dict):
-            text = transcript.get("text", "")
-        
-        if text and text.strip():
-            flow_manager.state["_stt_end_time"] = time.time()
-            logger.info(f"⏱️ [STT DONE] '{text[:40]}...' | Waiting for LLM...")
-    
-    @llm.event_handler("on_llm_started")
-    async def on_llm_started(llm_service):
-        """LLM zaczął przetwarzać"""
-        stt_end = flow_manager.state.get("_stt_end_time", time.time())
-        wait_ms = (time.time() - stt_end) * 1000
-        flow_manager.state["_llm_start_time"] = time.time()
-        logger.info(f"⏱️ [LLM START] Wait from STT: {wait_ms:.0f}ms")
-    
-    @llm.event_handler("on_llm_first_token")
-    async def on_llm_first_token(llm_service):
-        """LLM zwrócił pierwszy token (TTFB)"""
-        llm_start = flow_manager.state.get("_llm_start_time", time.time())
-        ttfb_ms = (time.time() - llm_start) * 1000
-        logger.info(f"⏱️ [LLM TTFB] {ttfb_ms:.0f}ms")
-    
-    @llm.event_handler("on_llm_completed")
-    async def on_llm_completed(llm_service):
-        """LLM zakończył generowanie"""
-        llm_start = flow_manager.state.get("_llm_start_time", time.time())
-        total_ms = (time.time() - llm_start) * 1000
-        flow_manager.state["_llm_end_time"] = time.time()
-        logger.info(f"⏱️ [LLM DONE] Total: {total_ms:.0f}ms")
-    
-    @tts.event_handler("on_tts_started")
-    async def on_tts_started(tts_service):
-        """TTS zaczął generować audio"""
-        llm_end = flow_manager.state.get("_llm_end_time", time.time())
-        wait_ms = (time.time() - llm_end) * 1000
-        flow_manager.state["_tts_start_time"] = time.time()
-        logger.info(f"⏱️ [TTS START] Wait from LLM: {wait_ms:.0f}ms")
-    
-    @tts.event_handler("on_tts_first_audio")
-    async def on_tts_first_audio(tts_service):
-        """TTS zwrócił pierwsze audio (TTFB)"""
-        tts_start = flow_manager.state.get("_tts_start_time", time.time())
-        stt_end = flow_manager.state.get("_stt_end_time", time.time())
-        
-        tts_ttfb_ms = (time.time() - tts_start) * 1000
-        total_ms = (time.time() - stt_end) * 1000
-        
-        logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
-        logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
+   
     # ==========================================
     # STT TRANSCRIPT LOGGING
     # ==========================================
