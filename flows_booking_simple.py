@@ -94,33 +94,35 @@ async def get_next_available_days(
     return results
 
 def _slots_summary(slots: List[str]) -> str:
-    """Podsumowanie slotów: 3 rozłożone przykłady"""
+    """Podsumowanie slotów: max 2 przykłady (voice-friendly)"""
     if not slots:
         return "brak wolnych terminów"
-    if len(slots) <= 3:
-        return natural_list([format_hour_polish(s) for s in slots])
+    if len(slots) == 1:
+        return format_hour_polish(slots[0])
+    if len(slots) == 2:
+        return f"{format_hour_polish(slots[0])} i {format_hour_polish(slots[1])}"
     
-    # Weź 3: początek, środek, koniec
+    # Weź 2: początek i środek (rozłożone w czasie)
     first = slots[0]
     mid = slots[len(slots) // 2]
-    last = slots[-1]
     
-    # Unikaj duplikatów (gdyby mid == first lub last)
-    picked = list(dict.fromkeys([first, mid, last]))
-    
-    return "na przykład " + natural_list([format_hour_polish(s) for s in picked]) + " i inne"
+    return f"{format_hour_polish(first)} i {format_hour_polish(mid)} i inne"
 
 def format_availability_message(available_days: List[Dict]) -> str:
-    """Formatuje wiadomość o dostępnych terminach po polsku"""
+    """Formatuje wiadomość o dostępnych terminach - KRÓTKO (voice-friendly)"""
     if not available_days:
         return "Niestety, w najbliższych dniach nie ma wolnych terminów."
     
-    parts = []
-    for day_info in available_days:
-        date_str = format_date_polish(day_info["date"])
-        parts.append(f"{date_str} ({_slots_summary(day_info['slots'])})")
+    # Tylko pierwszy dzień ze slotami
+    first = available_days[0]
+    date_str = format_date_polish(first["date"])
+    slots_text = _slots_summary(first["slots"])
     
-    return "Najbliższe wolne terminy: " + ", ".join(parts) + ". Który dzień Panu odpowiada?"
+    if len(available_days) > 1:
+        other_dates = natural_list([format_date_polish(d["date"]) for d in available_days[1:]])
+        return f"Najbliższy wolny termin to {date_str}: {slots_text}. Wolne też {other_dates}. Który dzień?"
+    else:
+        return f"Najbliższy wolny termin to {date_str}: {slots_text}. Pasuje?"
 
 
 # ============================================================================
@@ -517,21 +519,18 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         
         if available_days:
             first_day = available_days[0]
-            other_days = available_days[1:]
-            
             first_date_str = format_date_polish(first_day["date"])
             first_slots = _slots_summary(first_day["slots"])
             
-            if other_days:
-                other_dates = natural_list([format_date_polish(d["date"]) for d in other_days])
+            if len(available_days) > 1:
+                other_dates = natural_list([format_date_polish(d["date"]) for d in available_days[1:]])
                 return await _respond(
-                    f"U {staff_name} najbliższy wolny termin to {first_date_str}: {first_slots}. "
-                    f"Wolne też {other_dates}. Który dzień Panu odpowiada?",
+                    f"U {staff_name} najbliższy termin to {first_date_str}: {first_slots}. "
+                    f"Wolne też {other_dates}. Który dzień?",
                     flow_manager, tenant, state=state)
             else:
                 return await _respond(
-                    f"U {staff_name} najbliższy wolny termin to {first_date_str}: {first_slots}. "
-                    f"Odpowiada Panu?",
+                    f"U {staff_name} najbliższy termin to {first_date_str}: {first_slots}. Pasuje?",
                     flow_manager, tenant, state=state)
         else:
             return await _respond(
@@ -928,11 +927,15 @@ async def _save_booking(
             sms_info = " Wysłałam SMS z potwierdzeniem." if booking_code else ""
             staff_name = odmien_imie(state['staff']['name'])
             
-            return await _respond(
-                f"Gotowe! {state['service']['name']} u {staff_name}, "
-                f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
-                f"{sms_info} Do zobaczenia!",
-                flow_manager, tenant, done=True)
+            from pipecat.frames.frames import TTSSpeakFrame
+            await flow_manager.task.queue_frame(TTSSpeakFrame(
+                text=f"Gotowe! {state['service']['name']} u {staff_name}, "
+                     f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
+                     f"{sms_info} Czy mogę jeszcze w czymś pomóc?"
+            ))
+            
+            from flows import create_anything_else_node
+            return (None, create_anything_else_node(tenant))
         else:
             return await _respond(
                 "Wystąpił problem z zapisem. Czy przekazać wiadomość do właściciela?",
