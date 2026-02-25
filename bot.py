@@ -494,17 +494,13 @@ def create_tts_service(tenant: dict):
 
     if tts_provider == 'google':
         from pipecat.services.google.tts import GoogleTTSService
-        import json
         import tempfile
-        import os
         
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: pl-PL-Chirp3-HD-Aoede")
         
-        # Załaduj credentials z env variable
         creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         creds_dict = json.loads(creds_json)
         
-        # Zapisz do temp pliku (Google SDK wymaga pliku)
         creds_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(creds_dict, creds_file)
         creds_file.flush()
