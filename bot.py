@@ -924,15 +924,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def send_warm_prompt():
         try:
-            # Wyślij prawdziwy frame przez pipeline zamiast bezpośrednio przez _client
-            from pipecat.frames.frames import LLMMessagesAppendFrame
-            await task.queue_frame(
-                LLMMessagesAppendFrame(
-                    messages=[{"role": "user", "content": "OK"}],
-                    run_llm=True
-                )
+            await llm._client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[{"role": "user", "content": "OK"}],
+                max_tokens=1,
             )
-            logger.info("🔥 Warm prompt sent via pipeline")
+            logger.info("🔥 Warm prompt done")
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
 
