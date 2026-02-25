@@ -237,7 +237,6 @@ async def twilio_incoming(request: Request):
     
     logger.info(f"📞 Incoming call: {caller} → {called} (CallSid: {call_sid})")
     
-    # Pobierz tenant z bazy
     tenant = await get_tenant_by_phone(called)
     
     if not tenant:
@@ -247,7 +246,6 @@ async def twilio_incoming(request: Request):
             media_type="application/xml"
         )
     
-    # Sprawdź blokadę (limit minut)
     if tenant.get("is_blocked"):
         logger.warning(f"🚫 Tenant {tenant['id']} BLOCKED")
         return Response(
@@ -256,33 +254,18 @@ async def twilio_incoming(request: Request):
         )
     
     logger.info(f"✅ Tenant: {tenant.get('name')}")
-    
     host = request.headers.get("host", "localhost")
-    
-    # Powitanie - używamy Twilio Say dla instant response
-    # Powitanie - MP3 z ElevenLabs (jeśli istnieje) lub Twilio Say
-    first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
-    
-    if tenant.get("greeting_audio"):
-        # Mamy pre-generowane MP3 z ElevenLabs - użyj go!
-        # Dodaj timestamp żeby uniknąć cache
-        import time
-        cache_buster = int(time.time())
-        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
-        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
-    else:
-        # Brak MP3 - użyj Twilio TTS
-        greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
-        logger.info(f"🔊 Using Twilio Say for instant greeting")
+
+    # Bez MP3 - pipeline mówi powitanie przez Azure TTS
+    logger.info(f"🎙️ Pipeline will handle greeting via Azure TTS")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    {greeting_twiml}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
-            <Parameter name="greetingPlayed" value="true" />
+            <Parameter name="greetingPlayed" value="false" />
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
