@@ -103,6 +103,15 @@ async def warmup_tts(task):
         logger.info("🔥 TTS warm-up done")
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
+
+async def warmup_stt(stt):
+    """Rozgrzewa Deepgram STT - otwiera WebSocket connection przed pierwszym pytaniem."""
+    try:
+        logger.info("🔥 STT warm-up start")
+        await stt._connect()
+        logger.info("🔥 STT warm-up done")
+    except Exception as e:
+        logger.warning(f"STT warm-up failed (non-critical): {e}")
 # ==========================================
 # KEYTERMS BUILDER - dynamiczne słowa per firma
 # ==========================================
@@ -472,7 +481,7 @@ def create_tts_service(tenant: dict):
         return tts
     
     if tts_provider == 'azure':
-        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-ZofiaNeural")
+        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-AgnieszkaNeural")
         tts = AzureTTSService(
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
@@ -480,8 +489,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.05",
-                style="customerservice",
+                rate="1.1",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
@@ -692,8 +700,8 @@ async def websocket_endpoint(websocket: WebSocket):
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4.1-mini",
         params=BaseOpenAILLMService.InputParams(
-            temperature=0.4,
-            max_completion_tokens=120,
+            temperature=0.3,
+            max_completion_tokens=80,
         ),
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
@@ -979,7 +987,7 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
-    asyncio.create_task(warmup_tts(task))
+    asyncio.create_task(warmup_stt(stt))
 
     # =========================================
     # PIPECAT FLOWS - State Machine
