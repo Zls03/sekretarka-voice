@@ -373,18 +373,90 @@ def create_tts_service(tenant: dict):
       - jeśli puste/NULL - używa DEFAULT_ELEVENLABS_VOICE_ID
     """
     tts_provider = tenant.get('tts_provider', 'elevenlabs')
-    
+
+    import re
+
+    def number_to_polish(n: int) -> str:
+        if n == 0:
+            return "zero"
+        ones = ["", "jeden", "dwa", "trzy", "cztery", "pięć",
+                "sześć", "siedem", "osiem", "dziewięć"]
+        teens = ["dziesięć", "jedenaście", "dwanaście", "trzynaście",
+                 "czternaście", "piętnaście", "szesnaście", "siedemnaście",
+                 "osiemnaście", "dziewiętnaście"]
+        tens = ["", "dziesięć", "dwadzieścia", "trzydzieści",
+                "czterdzieści", "pięćdziesiąt", "sześćdziesiąt",
+                "siedemdziesiąt", "osiemdziesiąt", "dziewięćdziesiąt"]
+        hundreds = ["", "sto", "dwieście", "trzysta", "czterysta",
+                    "pięćset", "sześćset", "siedemset", "osiemset", "dziewięćset"]
+        parts = []
+        if n >= 1000:
+            t = n // 1000
+            if t == 1:
+                parts.append("tysiąc")
+            elif t in [2, 3, 4]:
+                parts.append(ones[t] + " tysiące")
+            else:
+                parts.append(ones[t] + " tysięcy")
+            n %= 1000
+        if n >= 100:
+            parts.append(hundreds[n // 100])
+            n %= 100
+        if n >= 20:
+            parts.append(tens[n // 10])
+            n %= 10
+            if n > 0:
+                parts.append(ones[n])
+        elif n >= 10:
+            parts.append(teens[n - 10])
+        elif n > 0:
+            parts.append(ones[n])
+        return " ".join(parts)
+
+    def zloty_form(n: int) -> str:
+        if n == 1:
+            return "złoty"
+        last_digit = n % 10
+        last_two = n % 100
+        if last_digit == 1 and last_two != 11:
+            return "złoty"
+        if last_digit in [2, 3, 4] and last_two not in [12, 13, 14]:
+            return "złote"
+        return "złotych"
+
+    def replace_number(match):
+        num = int(match.group(1))
+        if num > 9999:
+            return match.group(0)
+        return number_to_polish(num) + " " + zloty_form(num)
+
+    async def expand_abbreviations(text: str, aggregation_type=None) -> str:
+        text = re.sub(r'^otych\b\s*', '', text)
+        text = text.replace('złotychotych', 'złotych')
+        text = text.replace('złotyotych', 'złoty')
+        text = text.replace('złoteotych', 'złote')
+        text = re.sub(r'(\d+)\s*złotych\b', replace_number, text)
+        text = re.sub(r'(\d+)\s*zł\b', replace_number, text)
+        text = re.sub(r'\bul\.', 'ulicy', text)
+        text = re.sub(r'\bnr\b', 'numer', text)
+        text = re.sub(r'\btel\.', 'telefon', text)
+        text = re.sub(r'\bgodz\.', 'godzina', text)
+        return text
+
     if tts_provider == 'cartesia':
-        logger.info(f"🎙️ Using Cartesia TTS (best PL quality mode)")
-        return CartesiaTTSService(
+        logger.info(f"🎙️ Using Cartesia TTS | voice: 575a5d29")
+        tts = CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",  # Polish
-            model_id="sonic-hd",  # zamiast sonic-2, lepsza naturalność
+            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",
+            model_id="sonic-hd",
             language="pl",
-            sample_rate=24000,
-            speed=1.0,   # normalna prędkość
-            pitch=0.0,   # neutralny ton
+            sample_rate=8000,
+            speed=1.0,
+            pitch=0.0,
         )
+        tts.add_text_transformer(expand_abbreviations)
+        return tts
+
     else:
         # ElevenLabs - użyj głosu z bazy lub domyślnego
         voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
@@ -396,87 +468,9 @@ def create_tts_service(tenant: dict):
             output_format="pcm_16000",
             stability=0.6,
             similarity_boost=0.75,
-            speed=1.1,   # lekko szybsza mowa
+            speed=1.1,
         )
-        
-        # 🔤 Text transform: zamień skróty i liczby na pełne słowa przed TTS
-        import re
-        
-        def number_to_polish(n: int) -> str:
-            """Konwertuje liczbę (0-9999) na polskie słowa."""
-            if n == 0:
-                return "zero"
-            ones = ["", "jeden", "dwa", "trzy", "cztery", "pięć", 
-                    "sześć", "siedem", "osiem", "dziewięć"]
-            teens = ["dziesięć", "jedenaście", "dwanaście", "trzynaście", 
-                     "czternaście", "piętnaście", "szesnaście", "siedemnaście",
-                     "osiemnaście", "dziewiętnaście"]
-            tens = ["", "dziesięć", "dwadzieścia", "trzydzieści", 
-                    "czterdzieści", "pięćdziesiąt", "sześćdziesiąt",
-                    "siedemdziesiąt", "osiemdziesiąt", "dziewięćdziesiąt"]
-            hundreds = ["", "sto", "dwieście", "trzysta", "czterysta", 
-                       "pięćset", "sześćset", "siedemset", "osiemset", "dziewięćset"]
-            parts = []
-            if n >= 1000:
-                t = n // 1000
-                if t == 1:
-                    parts.append("tysiąc")
-                elif t in [2, 3, 4]:
-                    parts.append(ones[t] + " tysiące")
-                else:
-                    parts.append(ones[t] + " tysięcy")
-                n %= 1000
-            if n >= 100:
-                parts.append(hundreds[n // 100])
-                n %= 100
-            if n >= 20:
-                parts.append(tens[n // 10])
-                n %= 10
-                if n > 0:
-                    parts.append(ones[n])
-            elif n >= 10:
-                parts.append(teens[n - 10])
-            elif n > 0:
-                parts.append(ones[n])
-            return " ".join(parts)
-        
-        def zloty_form(n: int) -> str:
-            """Prawidłowa polska odmiana: złoty/złote/złotych."""
-            if n == 1:
-                return "złoty"
-            last_digit = n % 10
-            last_two = n % 100
-            if last_digit == 1 and last_two != 11:
-                return "złoty"
-            if last_digit in [2, 3, 4] and last_two not in [12, 13, 14]:
-                return "złote"
-            return "złotych"
-        
-        def replace_number(match):
-            num = int(match.group(1))
-            if num > 9999:
-                return match.group(0)
-            return number_to_polish(num) + " " + zloty_form(num)
-        
-        async def expand_abbreviations(text: str, aggregation_type=None) -> str:
-            # 0. Fix chunkowania GPT: usuń resztkę "otych" z początku chunka
-            text = re.sub(r'^otych\b\s*', '', text)
-            # 0b. Fix sklejonych tokenów
-            text = text.replace('złotychotych', 'złotych')
-            text = text.replace('złotyotych', 'złoty')
-            text = text.replace('złoteotych', 'złote')
-            # 1. Ceny: "189 złotych" → "sto osiemdziesiąt dziewięć złotych"
-            text = re.sub(r'(\d+)\s*złotych\b', replace_number, text)
-            text = re.sub(r'(\d+)\s*zł\b', replace_number, text)
-            # 2. Skróty
-            text = re.sub(r'\bul\.', 'ulicy', text)
-            text = re.sub(r'\bnr\b', 'numer', text)
-            text = re.sub(r'\btel\.', 'telefon', text)
-            text = re.sub(r'\bgodz\.', 'godzina', text)
-            return text
-        
         tts.add_text_transformer(expand_abbreviations)
-        
         return tts
 
 # ==========================================
