@@ -39,6 +39,7 @@ from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.cerebras.llm import CerebrasLLMService
+from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
@@ -453,6 +454,16 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             speed=1.0,
             pitch=0.0,
+        )
+        tts.add_text_transformer(expand_abbreviations)
+        return tts
+    
+    if tts_provider == 'openai':
+        logger.info(f"🎙️ Using OpenAI TTS | voice: nova")
+        tts = OpenAITTSService(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model="tts-1",
+            voice="nova",
         )
         tts.add_text_transformer(expand_abbreviations)
         return tts
