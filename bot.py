@@ -25,6 +25,8 @@ from fastapi.responses import Response
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
+from pipecat.services.azure.tts import AzureTTSService
+from pipecat.transcriptions.language import Language
 
 # Pipecat transports
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
@@ -468,6 +470,22 @@ def create_tts_service(tenant: dict):
         )
         tts.add_text_transformer(expand_abbreviations)
         return tts
+    
+    if tts_provider == 'azure':
+        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-ZofiaNeural")
+        tts = AzureTTSService(
+            api_key=os.getenv("AZURE_SPEECH_KEY"),
+            region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
+            voice="pl-PL-ZofiaNeural",
+            sample_rate=8000,
+            params=AzureTTSService.InputParams(
+                language=Language.PL,
+                rate="1.05",
+            ),
+        )
+        tts.add_text_transformer(expand_abbreviations)
+        return tts
+
 
     else:
         # ElevenLabs - użyj głosu z bazy lub domyślnego

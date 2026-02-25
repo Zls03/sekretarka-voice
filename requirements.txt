@@ -11,6 +11,7 @@ aiohttp
 httpx
 # OpenAI
 openai
+pipecat-ai[azure]
 
 pydub==0.25.1
 
