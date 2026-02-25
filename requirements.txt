@@ -12,6 +12,7 @@ httpx
 # OpenAI
 openai
 pipecat-ai[azure]
+google-cloud-texttospeech
 
 pydub==0.25.1
 
