@@ -511,7 +511,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=GoogleTTSService.InputParams(
                 language=Language.PL_PL,
-                speaking_rate=1.2,
+                speaking_rate=1.3,
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
@@ -1007,9 +1007,6 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
 
-    # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
-    asyncio.create_task(warmup_stt(stt))
-
     # =========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
@@ -1055,6 +1052,33 @@ async def websocket_endpoint(websocket: WebSocket):
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
         asyncio.create_task(check_max_duration())
+
+        # 🔥 DEEPGRAM SILENCE PRIME - wysyła ciche audio żeby załadować nova-3
+        # zanim user skończy słuchać MP3 greeting i zacznie mówić
+        async def prime_deepgram():
+            await asyncio.sleep(0.2)  # poczekaj aż STT service zainicjalizuje WebSocket
+            try:
+                # 1200ms ciszy w kawałkach 100ms (PCM 16kHz = 3200 bytes/100ms)
+                silent_chunk = bytes(3200)
+                primed = False
+                for i in range(12):
+                    # Deepgram SDK trzyma connection w _connection
+                    conn = getattr(stt, '_connection', None)
+                    if conn is None:
+                        # Spróbuj alternatywnych atrybutów różnych wersji SDK
+                        conn = getattr(stt, '_client', None)
+                    if conn and hasattr(conn, 'send'):
+                        await conn.send(silent_chunk)
+                        primed = True
+                    await asyncio.sleep(0.1)
+                if primed:
+                    logger.info("🔥 Deepgram nova-3 primed with silence (1200ms)")
+                else:
+                    logger.warning("⚠️ Deepgram prime: connection not found, skipping")
+            except Exception as e:
+                logger.warning(f"⚠️ Deepgram prime failed (non-critical): {e}")
+
+        asyncio.create_task(prime_deepgram())
 
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
         
