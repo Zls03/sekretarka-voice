@@ -1,5 +1,5 @@
 # Pipecat framework
-pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq,cartesia]
+pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq,cartesia,google]
 pipecat-ai-flows
 # Server
 fastapi
@@ -13,7 +13,7 @@ httpx
 openai
 pipecat-ai[azure]
 google-cloud-texttospeech
-
+google-generativeai
 pydub==0.25.1
 
 dateparser
