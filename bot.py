@@ -985,7 +985,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
     asyncio.create_task(warmup_stt(stt))
-
+    asyncio.create_task(warmup_tts(task))
     # =========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
