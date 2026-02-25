@@ -507,11 +507,11 @@ def create_tts_service(tenant: dict):
         
         tts = GoogleTTSService(
             credentials_path=creds_file.name,
-            voice_id="pl-PL-Chirp3-HD-Zephyr",
+            voice_id="pl-PL-Chirp3-HD-Leda",
             sample_rate=8000,
             params=GoogleTTSService.InputParams(
                 language=Language.PL_PL,
-                speaking_rate=1.1,
+                speaking_rate=1.2,
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
