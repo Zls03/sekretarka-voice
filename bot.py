@@ -464,6 +464,7 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("OPENAI_API_KEY"),
             model="tts-1",
             voice="nova",
+            sample_rate=24000,
         )
         tts.add_text_transformer(expand_abbreviations)
         return tts
