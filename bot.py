@@ -476,7 +476,7 @@ def create_tts_service(tenant: dict):
         tts = AzureTTSService(
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
-            voice="pl-PL-ZofiaNeural",
+            voice="pl-PL-AgnieszkaNeural",
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
@@ -649,8 +649,8 @@ async def websocket_endpoint(websocket: WebSocket):
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
                     confidence=0.6,      # Wyższy próg (domyślnie 0.7)
-                    start_secs=0.25,      # Dłużej czekaj przed uznaniem za mowę
-                    stop_secs=1.0,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
+                    start_secs=0.2,      # Dłużej czekaj przed uznaniem za mowę
+                    stop_secs=0.7,       # ZWIĘKSZONE: dłużej czekaj na koniec wypowiedzi
                     min_volume=0.4,      # Minimalny poziom głośności
                 )
             ),
@@ -679,7 +679,7 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1200,
+            utterance_end_ms=800,
             endpointing=350,
             keyterm=tenant_keyterms,  # 🔥 Dynamiczne per firma!
         )
