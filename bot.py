@@ -679,8 +679,8 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1200,
-            endpointing=250,
+            utterance_end_ms=1000,
+            endpointing=350,
             keyterm=tenant_keyterms,  # 🔥 Dynamiczne per firma!
         )
     )
