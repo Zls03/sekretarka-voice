@@ -96,11 +96,20 @@ async def warmup_llm(llm):
         logger.warning(f"LLM warm-up failed (non-critical): {e}")
 
 
-async def warmup_tts(task):
-    logger.info("🔥 TTS warm-up start")
-    await task.queue_frame(TTSSpeakFrame("Dzień dobry."))
-    await asyncio.sleep(1.0)
-    logger.info("🔥 TTS warm-up done")
+async def warmup_tts(tts):
+    try:
+        logger.info("🔥 TTS warm-up start")
+        # Spróbuj różne metody zależnie od providera
+        if hasattr(tts, 'synthesize'):
+            await tts.synthesize(".")
+        elif hasattr(tts, '_synthesize'):
+            await tts._synthesize(".")
+        elif hasattr(tts, 'run_tts'):
+            async for _ in tts.run_tts("."):
+                break
+        logger.info("🔥 TTS warm-up done")
+    except Exception as e:
+        logger.warning(f"TTS warm-up failed (non-critical): {e}")
 
 
 async def warmup_stt(stt):
@@ -971,6 +980,7 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(prime_deepgram())
         asyncio.create_task(check_max_duration())
+        asyncio.create_task(warmup_tts(tts)) 
 
         # Inicjalizacja flow - tylko raz!
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
