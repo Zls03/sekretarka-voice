@@ -985,7 +985,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 🔥 REAL WARM-UP — leci równolegle z MP3 greeting
     asyncio.create_task(warmup_stt(stt))
-    asyncio.create_task(warmup_tts(task))
     # =========================================
     # PIPECAT FLOWS - State Machine
     # ==========================================
@@ -1030,6 +1029,7 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
+        asyncio.create_task(warmup_tts(task))  
         asyncio.create_task(check_max_duration())
 
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
