@@ -507,7 +507,7 @@ def create_tts_service(tenant: dict):
         
         tts = GoogleTTSService(
             credentials_path=creds_file.name,
-            voice_id="pl-PL-Chirp3-HD-Leda",
+            voice_id="pl-PL-Chirp3-HD-Kore",
             sample_rate=8000,
             params=GoogleTTSService.InputParams(
                 language=Language.PL_PL,
