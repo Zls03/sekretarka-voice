@@ -96,13 +96,10 @@ async def warmup_llm(llm):
 
 
 async def warmup_tts(task):
-    """Rozgrzewa TTS (ElevenLabs/Cartesia) - ładuje voice, otwiera połączenie."""
-    try:
-        logger.info("🔥 TTS warm-up start")
-        await task.queue_frame(TTSSpeakFrame(text=" "))
-        logger.info("🔥 TTS warm-up done")
-    except Exception as e:
-        logger.warning(f"TTS warm-up failed (non-critical): {e}")
+    logger.info("🔥 TTS warm-up start")
+    await task.queue_frame(TTSSpeakFrame("Dzień dobry."))
+    await asyncio.sleep(1.0)  # poczekaj aż Azure WebSocket się rozgrzeje
+    logger.info("🔥 TTS warm-up done")
 
 async def warmup_stt(stt):
     """Rozgrzewa Deepgram STT - otwiera WebSocket connection przed pierwszym pytaniem."""
@@ -489,7 +486,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.1",
+                rate="1.05",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
