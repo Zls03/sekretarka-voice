@@ -1044,6 +1044,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 error_message=str(e)
             )
     finally:
+        conversation_ended = True 
         logger.info("🏁 Pipeline finished")
         await save_call_log(flow_manager)
 
