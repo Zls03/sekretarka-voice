@@ -257,10 +257,11 @@ def create_collect_contact_name_node(tenant: dict) -> dict:
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient poda imię/nazwisko.
+            "content": """Klient poda imię lub nazwisko.
 
-Gdy powie → wywołaj set_contact_name
-Jeśli rezygnuje ("nie", "nieważne") → end_conversation"""
+Gdy powie jakiekolwiek imię/nazwisko → wywołaj set_contact_name
+Tylko gdy WYRAŹNIE rezygnuje ("nie chcę", "nieważne", "do widzenia") → end_conversation
+NIE interpretuj imienia jako pożegnania."""
         }],
         "functions": [
             set_contact_name_function(tenant),
@@ -315,7 +316,6 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
 # ============================================================================
 
 def create_collect_message_content_node(tenant: dict) -> dict:
-    """Zbierz treść wiadomości"""
     return {
         "name": "collect_message_content",
         "pre_actions": [
@@ -328,17 +328,16 @@ def create_collect_message_content_node(tenant: dict) -> dict:
         }],
         "task_messages": [{
             "role": "system",
-            "content": """Klient poda treść wiadomości.
+            "content": """Klient poda treść wiadomości dla właściciela.
 
-Gdy powie treść → wywołaj set_contact_message
-Jeśli rezygnuje → end_conversation"""
+ZAWSZE wywołaj set_contact_message z dokładnie tym co klient powiedział.
+Nawet jeśli wiadomość jest krótka lub dziwna - zapisz ją dosłownie.
+NIE oceniaj treści. NIE interpretuj jako pożegnanie."""
         }],
         "functions": [
             set_contact_message_function(tenant),
-            _get_end_conversation_function(),
         ]
     }
-
 
 def set_contact_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Zapisz treść wiadomości"""
