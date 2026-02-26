@@ -648,7 +648,7 @@ async def websocket_endpoint(websocket: WebSocket):
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
         live_options=LiveOptions(
-            model="nova-3",
+            model="nova-3-phonecall",
             language="pl",
             smart_format=True,
             punctuate=True,
