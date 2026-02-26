@@ -99,14 +99,13 @@ async def warmup_llm(llm):
 async def warmup_tts(tts):
     try:
         logger.info("🔥 TTS warm-up start")
-        # Spróbuj różne metody zależnie od providera
-        if hasattr(tts, 'synthesize'):
-            await tts.synthesize(".")
-        elif hasattr(tts, '_synthesize'):
-            await tts._synthesize(".")
-        elif hasattr(tts, 'run_tts'):
-            async for _ in tts.run_tts("."):
-                break
+        import aiohttp
+        key = os.getenv("AZURE_SPEECH_KEY")
+        region = os.getenv("AZURE_SPEECH_REGION", "westeurope")
+        url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers={"Ocp-Apim-Subscription-Key": key}) as resp:
+                await resp.text()
         logger.info("🔥 TTS warm-up done")
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
