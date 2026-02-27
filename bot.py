@@ -110,17 +110,6 @@ async def warmup_tts(tts):
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
 
-
-async def warmup_stt(stt):
-    """Rozgrzewa Deepgram STT - otwiera WebSocket connection przed pierwszym pytaniem."""
-    try:
-        logger.info("🔥 STT warm-up start")
-        await stt._connect()
-        logger.info("🔥 STT warm-up done")
-    except Exception as e:
-        logger.warning(f"STT warm-up failed (non-critical): {e}")
-
-
 # ==========================================
 # KEYTERMS BUILDER - dynamiczne słowa per firma
 # ==========================================
@@ -660,8 +649,8 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     # 🔥 Rozgrzej Deepgram natychmiast - mamy ~3-4s zanim user skończy słuchać MP3
-    asyncio.ensure_future(warmup_stt(stt))
     tts = create_tts_service(tenant)
+
 
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -941,31 +930,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
 
-    # ==========================================
-    # 🔥 WARM-UP: prime_deepgram
-    # WAŻNE: zdefiniowana PRZED on_client_connected!
-    # ==========================================
 
-    async def prime_deepgram():
-        await asyncio.sleep(0.5)
-        try:
-            conn = (
-                getattr(stt, '_connection', None) or
-                getattr(stt, '_socket', None) or
-                getattr(stt, 'client', None)
-            )
-            logger.info(f"🔥 Deepgram conn attrs: {[a for a in dir(stt) if 'conn' in a.lower() or 'socket' in a.lower() or 'client' in a.lower()]}")
-
-            if conn and hasattr(conn, 'send'):
-                silent_chunk = bytes(3200)
-                for i in range(15):
-                    await conn.send(silent_chunk)
-                    await asyncio.sleep(0.1)
-                logger.info("🔥 Deepgram primed successfully")
-            else:
-                logger.warning("⚠️ Deepgram prime: no connection found")
-        except Exception as e:
-            logger.warning(f"Deepgram prime failed: {e}")
 
     # ==========================================
     # EVENT HANDLERS
@@ -977,7 +942,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Równolegle: warm-up + monitoring
         asyncio.create_task(send_warm_prompt())
-        asyncio.create_task(prime_deepgram())
         asyncio.create_task(check_max_duration())
         asyncio.create_task(warmup_tts(tts)) 
 
