@@ -689,7 +689,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # 🎯 First response filler - tylko raz, po greeting
             if not _filler_state["done"] and greeting_played:
                 _filler_state["done"] = True
-                filler = random.choice(["Moment.", "Już sprawdzam.", "Sekundkę."])
+                filler = random.choice(["Moment.", "Chwileczkę", "Sekundkę."])
                 logger.info(f"🎯 First response filler: '{filler}'")
                 await task.queue_frame(TTSSpeakFrame(text=filler))
 
