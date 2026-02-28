@@ -482,7 +482,7 @@ def create_tts_service(tenant: dict):
         return tts
 
 class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
+    """Puszcza krótki filler TTS po pierwszej KOMPLETNEJ wypowiedzi usera po greeting."""
     
     FILLERS = [
         "Moment.",
@@ -493,14 +493,21 @@ class FirstResponseFiller(FrameProcessor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
+        self._got_speech = False
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         
+        from pipecat.frames.frames import UserStoppedSpeakingFrame
+        
+        # Zapamiętaj że user mówił
+        if isinstance(frame, TranscriptionFrame) and frame.text and len(frame.text.strip()) > 2:
+            self._got_speech = True
+        
+        # Odpal filler dopiero gdy user SKOŃCZYŁ mówić
         if (not self._first_done
-            and isinstance(frame, TranscriptionFrame)
-            and frame.text
-            and len(frame.text.strip()) > 2):
+            and self._got_speech
+            and isinstance(frame, UserStoppedSpeakingFrame)):
             
             self._first_done = True
             filler = random.choice(self.FILLERS)
