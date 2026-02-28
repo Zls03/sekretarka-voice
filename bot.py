@@ -950,6 +950,10 @@ async def websocket_endpoint(websocket: WebSocket):
     # 🔥 WARM-UP: send_warm_prompt
     # ==========================================
 
+    # ==========================================
+    # 🔥 WARM-UP: send_warm_prompt
+    # ==========================================
+
     async def send_warm_prompt():
         try:
             await llm._client.chat.completions.create(
@@ -961,9 +965,15 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
 
+    # ==========================================
+    # EVENT HANDLERS
+    # ==========================================
 
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        logger.info("🎤 Client connected - starting flow")
 
-    # Równolegle: warm-up + monitoring
+        # Równolegle: warm-up + monitoring
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
         asyncio.create_task(warmup_tts(task))
