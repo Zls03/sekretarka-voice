@@ -481,40 +481,7 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
-class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS po pierwszej KOMPLETNEJ wypowiedzi usera po greeting."""
-    
-    FILLERS = [
-        "Moment.",
-        "Już sprawdzam.",
-        "Sekundkę.",
-    ]
-    
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._first_done = False
-        self._got_speech = False
-    
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        
-        from pipecat.frames.frames import UserStoppedSpeakingFrame
-        
-        # Zapamiętaj że user mówił
-        if isinstance(frame, TranscriptionFrame) and frame.text and len(frame.text.strip()) > 2:
-            self._got_speech = True
-        
-        # Odpal filler dopiero gdy user SKOŃCZYŁ mówić
-        if (not self._first_done
-            and self._got_speech
-            and isinstance(frame, UserStoppedSpeakingFrame)):
-            
-            self._first_done = True
-            filler = random.choice(self.FILLERS)
-            logger.info(f"🎯 First response filler: '{filler}'")
-            await self.push_frame(TTSSpeakFrame(text=filler))
-        
-        await self.push_frame(frame, direction)
+
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -706,6 +673,8 @@ async def websocket_endpoint(websocket: WebSocket):
         "_tts_start_time": None,
     }
 
+    _filler_state = {"done": False}
+
     @stt.event_handler("on_transcript_complete")
     async def on_stt_complete(stt_service, transcript):
         text = ""
@@ -716,6 +685,13 @@ async def websocket_endpoint(websocket: WebSocket):
         if text and text.strip():
             timing_state["_stt_end_time"] = time.time()
             logger.info(f"⏱️ [STT DONE] '{text[:40]}...'")
+            
+            # 🎯 First response filler - tylko raz, po greeting
+            if not _filler_state["done"] and greeting_played:
+                _filler_state["done"] = True
+                filler = random.choice(["Moment.", "Już sprawdzam.", "Sekundkę."])
+                logger.info(f"🎯 First response filler: '{filler}'")
+                await task.queue_frame(TTSSpeakFrame(text=filler))
 
     @llm.event_handler("on_llm_started")
     async def on_llm_started(llm_service):
@@ -905,24 +881,16 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
-    first_filler = FirstResponseFiller() if greeting_played else None
-
-    pipeline_components = [
+    pipeline = Pipeline([
         transport.input(),
         stt,
-    ]
-    if first_filler:
-        pipeline_components.append(first_filler)
-    pipeline_components += [
         user_idle,
         context_aggregator.user(),
         llm,
         tts,
         transport.output(),
         context_aggregator.assistant(),
-    ]
-    
-    pipeline = Pipeline(pipeline_components)
+    ])
 
     task = PipelineTask(
         pipeline,
