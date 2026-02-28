@@ -96,16 +96,11 @@ async def warmup_llm(llm):
         logger.warning(f"LLM warm-up failed (non-critical): {e}")
 
 
-async def warmup_tts(tts):
+async def warmup_tts(task):
     try:
         logger.info("🔥 TTS warm-up start")
-        import aiohttp
-        key = os.getenv("AZURE_SPEECH_KEY")
-        region = os.getenv("AZURE_SPEECH_REGION", "westeurope")
-        url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers={"Ocp-Apim-Subscription-Key": key}) as resp:
-                await resp.text()
+        await task.queue_frame(TTSSpeakFrame(text="."))
+        await asyncio.sleep(0.5)
         logger.info("🔥 TTS warm-up done")
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
@@ -943,7 +938,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # Równolegle: warm-up + monitoring
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
-        asyncio.create_task(warmup_tts(tts)) 
+        asyncio.create_task(warmup_tts(task))
 
         # Inicjalizacja flow - tylko raz!
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
