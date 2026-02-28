@@ -719,6 +719,9 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
         logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
 
+    # Filler state - tylko 1sze pytanie
+    filler_sent = {"value": False}
+
     @stt.event_handler("on_transcript")
     async def on_transcript(stt_service, transcript):
         text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
@@ -728,6 +731,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
             else:
                 logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
+
+        # Filler na 1sze pytanie - odpala się tutaj bo handler jest już zarejestrowany
+        if (greeting_played
+                and is_final
+                and not filler_sent["value"]
+                and text.strip()
+                and len(text.strip()) > 1):
+            filler_sent["value"] = True
+            filler = random.choice(["Moment.", "Chwileczkę.", "Sekundkę."])
+            logger.info(f"🎯 First response filler: '{filler}'")
+            await task.queue_frame(TTSSpeakFrame(text=filler))
 
     # ==========================================
     # TIMEOUT HANDLING
