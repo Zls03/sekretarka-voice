@@ -104,10 +104,8 @@ async def warmup_tts(tts_service):
         
         text = "Rozgrzewam."
         
-        # run_tts zwraca async generator - musimy go skonsumować
-        # żeby request się faktycznie wykonał
-        async for chunk in tts_service.run_tts(text):
-            pass  # Wyrzucamy audio - chcemy tylko rozgrzać połączenie
+        async for chunk in tts_service.run_tts(text, context_id="warmup"):
+            pass
         
         logger.info("🔥 TTS warm-up done (direct)")
     except Exception as e:
