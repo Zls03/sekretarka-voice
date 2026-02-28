@@ -482,40 +482,32 @@ def create_tts_service(tenant: dict):
         return tts
 
 class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS po pierwszej KOMPLETNEJ wypowiedzi usera po greeting."""
+    """Puszcza krótki filler TTS po pierwszej wypowiedzi usera - TYLKO jeśli bot jeszcze nie odpowiada."""
     
-    FILLERS = [
-        "Moment.",
-        "Już sprawdzam.",
-        "Sekundkę.",
-    ]
+    FILLERS = ["Moment.", "Chwileczkę.", "Sekundkę."]
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
         self._got_speech = False
-        self._llm_generating = False
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         
-        from pipecat.frames.frames import UserStoppedSpeakingFrame, LLMFullResponseStartFrame
+        from pipecat.frames.frames import UserStoppedSpeakingFrame, BotSpeakingFrame
         
-        # Jeśli LLM już generuje - nie odpalaj fillera
-        if isinstance(frame, LLMFullResponseStartFrame):
-            self._llm_generating = True
-            if not self._first_done:
-                self._first_done = True  # Za późno na filler
-                logger.debug("🎯 Filler skipped - LLM already responding")
+        # Jeśli bot już mówi cokolwiek - za późno na filler
+        if isinstance(frame, BotSpeakingFrame) and not self._first_done:
+            self._first_done = True
+            logger.debug("🎯 Filler skipped - bot already speaking")
         
         # Zapamiętaj że user mówił
         if isinstance(frame, TranscriptionFrame) and frame.text and len(frame.text.strip()) > 2:
             self._got_speech = True
         
-        # Odpal filler dopiero gdy user SKOŃCZYŁ mówić i LLM jeszcze nie odpowiada
+        # Odpal filler TYLKO gdy: user skończył, bot jeszcze nie mówi
         if (not self._first_done
             and self._got_speech
-            and not self._llm_generating
             and isinstance(frame, UserStoppedSpeakingFrame)):
             
             self._first_done = True
