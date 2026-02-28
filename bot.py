@@ -438,7 +438,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.05",
+                rate="1.1",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
@@ -484,11 +484,8 @@ def create_tts_service(tenant: dict):
 class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
-    FILLERS = [
-        "Moment.",
-        "Już sprawdzam.",
-        "Sekundkę.",
-    ]
+    FILLERS = ["Oczywiście.", "Już sprawdzam.", "Chwileczkę."]
+    _filler_index = 0  # klasowa - wspólna dla wszystkich połączeń
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -503,7 +500,8 @@ class FirstResponseFiller(FrameProcessor):
             and len(frame.text.strip()) > 2):
             
             self._first_done = True
-            filler = random.choice(self.FILLERS)
+            filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
+            FirstResponseFiller._filler_index += 1
             logger.info(f"🎯 First response filler: '{filler}'")
             await self.push_frame(TTSSpeakFrame(text=filler))
         
