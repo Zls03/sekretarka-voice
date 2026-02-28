@@ -950,10 +950,6 @@ async def websocket_endpoint(websocket: WebSocket):
     # 🔥 WARM-UP: send_warm_prompt
     # ==========================================
 
-    # ==========================================
-    # 🔥 WARM-UP: send_warm_prompt
-    # ==========================================
-
     async def send_warm_prompt():
         try:
             await llm._client.chat.completions.create(
@@ -965,6 +961,8 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Warm prompt failed: {e}")
 
+
+
     # ==========================================
     # EVENT HANDLERS
     # ==========================================
@@ -974,13 +972,13 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("🎤 Client connected - starting flow")
 
         # Równolegle: warm-up + monitoring
+       # Równolegle: warm-up LLM + monitoring (TTS warm-up wyłączony - filler go zastępuje)
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
-        asyncio.create_task(warmup_tts(task))
 
         # Inicjalizacja flow - tylko raz!
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-        
+
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
