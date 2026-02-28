@@ -678,7 +678,7 @@ async def websocket_endpoint(websocket: WebSocket):
         model="gpt-4.1-mini",
         params=BaseOpenAILLMService.InputParams(
             temperature=0.3,
-            max_completion_tokens=150,
+            max_completion_tokens=120,
         ),
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
@@ -969,11 +969,11 @@ async def websocket_endpoint(websocket: WebSocket):
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
 
-        # Równolegle: warm-up LLM + monitoring (TTS warm-up wyłączony - filler go zastępuje)
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
 
-        # Inicjalizacja flow - tylko raz!
+        # Daj LLM 300ms head start zanim flow zainicjuje
+        await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played:
