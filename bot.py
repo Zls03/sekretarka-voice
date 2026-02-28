@@ -96,15 +96,22 @@ async def warmup_llm(llm):
         logger.warning(f"LLM warm-up failed (non-critical): {e}")
 
 
-async def warmup_tts(task):
+async def warmup_tts(tts_service):
+    """Rozgrzewa TTS service - wywołuje syntezę bezpośrednio na obiekcie,
+    bez wysyłania audio do usera. Rozgrzewa HTTP/gRPC/WebSocket clienta."""
     try:
-        logger.info("🔥 TTS warm-up start")
-        await task.queue_frame(TTSSpeakFrame(text="."))
-        await asyncio.sleep(0.5)
-        logger.info("🔥 TTS warm-up done")
+        logger.info("🔥 TTS warm-up start (direct)")
+        
+        text = "Rozgrzewam."
+        
+        # run_tts zwraca async generator - musimy go skonsumować
+        # żeby request się faktycznie wykonał
+        async for chunk in tts_service.run_tts(text):
+            pass  # Wyrzucamy audio - chcemy tylko rozgrzać połączenie
+        
+        logger.info("🔥 TTS warm-up done (direct)")
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
-
 # ==========================================
 # KEYTERMS BUILDER - dynamiczne słowa per firma
 # ==========================================
@@ -936,10 +943,25 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("🎤 Client connected - starting flow")
 
         # Równolegle: warm-up + monitoring
-        asyncio.create_task(send_warm_prompt())
+       # Warm-up LLM + TTS RÓWNOLEGLE (mamy ~3-4s podczas MP3 greeting)
+        async def run_warmups():
+            await asyncio.gather(
+                send_warm_prompt(),
+                warmup_tts(tts),
+                return_exceptions=True
+            )
+        
+        warmup_task = asyncio.create_task(run_warmups())
         asyncio.create_task(check_max_duration())
-        asyncio.create_task(warmup_tts(task))
-
+        
+        # Poczekaj na warm-up max 3s (MP3 greeting trwa ~3-4s)
+        if greeting_played:
+            try:
+                await asyncio.wait_for(asyncio.shield(warmup_task), timeout=3.0)
+                logger.info("🔥 Warm-ups completed before flow init")
+            except asyncio.TimeoutError:
+                logger.warning("🔥 Warm-up timeout after 3s - proceeding anyway")
+        
         # Inicjalizacja flow - tylko raz!
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
