@@ -484,7 +484,7 @@ def create_tts_service(tenant: dict):
 class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
-    FILLERS = ["Sekundkę", "Już sprawdzam.", "Chwileczkę.", "Już patrzę."]
+    FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0  # klasowa - wspólna dla wszystkich połączeń
     
     def __init__(self, **kwargs):
