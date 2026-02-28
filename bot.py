@@ -481,6 +481,33 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
+class FirstResponseFiller(FrameProcessor):
+    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
+    
+    FILLERS = [
+        "Moment.",
+        "Już sprawdzam.",
+        "Sekundkę.",
+    ]
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._first_done = False
+    
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        
+        if (not self._first_done
+            and isinstance(frame, TranscriptionFrame)
+            and frame.text
+            and len(frame.text.strip()) > 2):
+            
+            self._first_done = True
+            filler = random.choice(self.FILLERS)
+            logger.info(f"🎯 First response filler: '{filler}'")
+            await self.push_frame(TTSSpeakFrame(text=filler))
+        
+        await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -719,9 +746,6 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
         logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
 
-    # Filler state - tylko 1sze pytanie
-    filler_sent = {"value": False}
-
     @stt.event_handler("on_transcript")
     async def on_transcript(stt_service, transcript):
         text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
@@ -731,17 +755,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
             else:
                 logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
-
-        # Filler na 1sze pytanie - odpala się tutaj bo handler jest już zarejestrowany
-        if (greeting_played
-                and is_final
-                and not filler_sent["value"]
-                and text.strip()
-                and len(text.strip()) > 1):
-            filler_sent["value"] = True
-            filler = random.choice(["Moment.", "Chwileczkę.", "Sekundkę."])
-            logger.info(f"🎯 First response filler: '{filler}'")
-            await task.queue_frame(TTSSpeakFrame(text=filler))
 
     # ==========================================
     # TIMEOUT HANDLING
@@ -885,9 +898,15 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
+    first_filler = FirstResponseFiller() if greeting_played else None
+
     pipeline_components = [
         transport.input(),
         stt,
+    ]
+    if first_filler:
+        pipeline_components.append(first_filler)
+    pipeline_components += [
         user_idle,
         context_aggregator.user(),
         llm,
@@ -952,22 +971,7 @@ async def websocket_endpoint(websocket: WebSocket):
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
 
-        # Filler tylko na 1sze pytanie (system się rozgrzewa)
-        if greeting_played:
-            filler_state = {"sent": False}
-
-            @stt.event_handler("on_transcript")
-            async def on_first_transcript(stt_service, transcript):
-                if filler_state["sent"]:
-                    return
-                text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
-                is_final = transcript.get("is_final", True) if isinstance(transcript, dict) else True
-                if is_final and text.strip() and len(text.strip()) > 1:
-                    filler_state["sent"] = True
-                    filler = random.choice(["Moment.", "Chwileczkę.", "Sekundkę."])
-                    logger.info(f"🎯 First response filler: '{filler}'")
-                    await task.queue_frame(TTSSpeakFrame(text=filler))
-
+        # Równolegle: warm-up LLM + monitoring (TTS warm-up wyłączony - filler go zastępuje)
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
 
