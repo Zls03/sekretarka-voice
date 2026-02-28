@@ -10,6 +10,9 @@ import sys
 import json
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 import asyncio
+import random
+from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.frames.frames import TranscriptionFrame
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
@@ -96,18 +99,12 @@ async def warmup_llm(llm):
         logger.warning(f"LLM warm-up failed (non-critical): {e}")
 
 
-async def warmup_tts(tts_service):
-    """Rozgrzewa TTS service - wywołuje syntezę bezpośrednio na obiekcie,
-    bez wysyłania audio do usera. Rozgrzewa HTTP/gRPC/WebSocket clienta."""
+async def warmup_tts(task):
     try:
-        logger.info("🔥 TTS warm-up start (direct)")
-        
-        text = "Rozgrzewam."
-        
-        async for chunk in tts_service.run_tts(text, context_id="warmup"):
-            pass
-        
-        logger.info("🔥 TTS warm-up done (direct)")
+        logger.info("🔥 TTS warm-up start")
+        await task.queue_frame(TTSSpeakFrame(text="."))
+        await asyncio.sleep(0.5)
+        logger.info("🔥 TTS warm-up done")
     except Exception as e:
         logger.warning(f"TTS warm-up failed (non-critical): {e}")
 # ==========================================
@@ -484,7 +481,33 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
-
+class FirstResponseFiller(FrameProcessor):
+    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
+    
+    FILLERS = [
+        "Moment.",
+        "Już sprawdzam.",
+        "Sekundkę.",
+    ]
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._first_done = False
+    
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        
+        if (not self._first_done
+            and isinstance(frame, TranscriptionFrame)
+            and frame.text
+            and len(frame.text.strip()) > 2):
+            
+            self._first_done = True
+            filler = random.choice(self.FILLERS)
+            logger.info(f"🎯 First response filler: '{filler}'")
+            await self.push_frame(TTSSpeakFrame(text=filler))
+        
+        await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -875,16 +898,24 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
-    pipeline = Pipeline([
+    first_filler = FirstResponseFiller() if greeting_played else None
+
+    pipeline_components = [
         transport.input(),
         stt,
+    ]
+    if first_filler:
+        pipeline_components.append(first_filler)
+    pipeline_components += [
         user_idle,
         context_aggregator.user(),
         llm,
         tts,
         transport.output(),
         context_aggregator.assistant(),
-    ])
+    ]
+    
+    pipeline = Pipeline(pipeline_components)
 
     task = PipelineTask(
         pipeline,
@@ -932,37 +963,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 
-    # ==========================================
-    # EVENT HANDLERS
-    # ==========================================
-
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
-        logger.info("🎤 Client connected - starting flow")
-
-        # Równolegle: warm-up + monitoring
-       # Warm-up LLM + TTS RÓWNOLEGLE (mamy ~3-4s podczas MP3 greeting)
-        async def run_warmups():
-            await asyncio.gather(
-                send_warm_prompt(),
-                warmup_tts(tts),
-                return_exceptions=True
-            )
-        
-        warmup_task = asyncio.create_task(run_warmups())
+    # Równolegle: warm-up + monitoring
+        asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
-        
-        # Poczekaj na warm-up max 3s (MP3 greeting trwa ~3-4s)
-        if greeting_played:
-            try:
-                await asyncio.wait_for(asyncio.shield(warmup_task), timeout=3.0)
-                logger.info("🔥 Warm-ups completed before flow init")
-            except asyncio.TimeoutError:
-                logger.warning("🔥 Warm-up timeout after 3s - proceeding anyway")
-        
+        asyncio.create_task(warmup_tts(task))
+
         # Inicjalizacja flow - tylko raz!
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-
+        
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
