@@ -735,11 +735,7 @@ def build_business_context(tenant: dict) -> str:
 
 from difflib import SequenceMatcher
 
-def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> dict | None:
-    """
-    Dopasuj usługę z tolerancją na literówki.
-    Uniwersalne - działa dla każdej branży (fryzjer, kosmetyczka, mechanik...).
-    """
+def fuzzy_match_service(query: str, services: list, threshold: float = 0.6) -> dict | None:
     if not query or not services:
         return None
     
@@ -750,34 +746,20 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
     best_score = 0
     
     for service in services:
-        name = service["name"].lower()
+        name = service["name"].lower().strip()
         
         # 1. Exact match
         if query == name:
             return service
         
-        # 2. Zawieranie tylko gdy pokrycie > 70% długości
-        if query == name:
-            return service
+        # 2. Query jest prawie całą nazwą usługi (lub odwrotnie) - min 80% pokrycia
         if query in name and len(query) >= len(name) * 0.8:
             return service
         if name in query and len(name) >= len(query) * 0.8:
             return service
         
-        # 3. Początek słowa (np. "strzy" → "strzyżenie")
-        min_len = min(len(query), 4)
-        if len(query) >= 3 and name.startswith(query[:min_len]):
-            return service
-        
-        # 4. Fuzzy match dla literówek
+        # 3. Fuzzy score
         score = SequenceMatcher(None, query, name).ratio()
-        
-        # Bonus za podobny początek
-        if len(query) >= 3 and len(name) >= 3:
-            if query[:3] == name[:3]:
-                score += 0.15
-            elif query[:2] == name[:2]:
-                score += 0.1
         
         if score > best_score and score >= threshold:
             best_score = score

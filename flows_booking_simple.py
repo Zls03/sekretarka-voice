@@ -236,31 +236,33 @@ async def validate_slot_available(
 # ============================================================================
 
 def book_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
-    """
-    JEDNA funkcja do rezerwacji.
-    GPT MUSI wypełnić pola - kod robi resztę.
-    """
+    services = tenant.get("services", [])
+    staff_list = tenant.get("staff", [])
+    
+    service_names = [s["name"] for s in services]
+    staff_names = [s["name"] for s in staff_list] + ["dowolny"]
+    
     return FlowsFunctionSchema(
         name="book_appointment",
-        description="""Umów wizytę. Zbierz dane od klienta i przekaż.
-Wywołuj przy KAŻDEJ odpowiedzi klienta dotyczącej rezerwacji.
-Przekazuj DOKŁADNIE co klient powiedział - nie interpretuj.""",
+        description="""Umów wizytę. Wywołuj przy KAŻDEJ odpowiedzi klienta dotyczącej rezerwacji.""",
         properties={
             "service": {
                 "type": "string",
-                "description": "Nazwa usługi którą klient chce (np. 'strzyżenie', 'farbowanie') lub null jeśli nie podał"
+                "enum": service_names,
+                "description": "Wybierz usługę z listy która najbardziej pasuje do słów klienta"
             },
             "staff": {
                 "type": "string",
-                "description": "Imię pracownika (np. 'Ania', 'do Ani') lub 'dowolny' jeśli obojętnie, lub null"
+                "enum": staff_names,
+                "description": "Wybierz pracownika z listy lub 'dowolny'"
             },
             "date_text": {
                 "type": "string",
-                "description": "Data DOKŁADNIE jak klient powiedział (np. 'jutro', 'w piątek', 'na 15 lutego') lub null"
+                "description": "Data DOKŁADNIE jak klient powiedział (np. 'jutro', 'w piątek') lub null"
             },
             "time_text": {
                 "type": "string",
-                "description": "Godzina DOKŁADNIE jak klient powiedział (np. 'na trzynastą', 'o 14:30') lub null"
+                "description": "Godzina DOKŁADNIE jak klient powiedział (np. 'na trzynastą', '14:30') lub null"
             },
             "customer_name": {
                 "type": "string",
@@ -269,11 +271,11 @@ Przekazuj DOKŁADNIE co klient powiedział - nie interpretuj.""",
             "confirmation": {
                 "type": "string",
                 "enum": ["yes", "no", "change", "none"],
-                "description": "Czy klient potwierdza: 'yes' (tak/dobrze), 'no' (nie/anuluj), 'change' (chce zmienić), 'none' (nie dotyczy)"
+                "description": "yes=potwierdza, no=anuluje, change=chce zmienić coś, none=nic z tych"
             },
             "question": {
                 "type": "string",
-                "description": "Jeśli klient pyta o coś (cena, dostępność, godziny, kiedy wolne) - wpisz pytanie. Null jeśli kontynuuje rezerwację."
+                "description": "Jeśli klient pyta o coś - wpisz pytanie. Null jeśli kontynuuje rezerwację."
             }
         },
         required=["confirmation"],
@@ -379,13 +381,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 1. WALIDACJA USŁUGI ===
     if service_text and "service" not in state:
-        found = fuzzy_match_service(service_text, services)
+        found = next((s for s in services if s["name"] == service_text), None)
         if found:
             state["service"] = found
             logger.info(f"✅ Service: {found['name']}")
         else:
             names = ", ".join(s["name"] for s in services)
-            return await _respond(f"Nie mamy usługi '{service_text}'. Dostępne: {names}.",
+            return await _respond(f"Nie rozpoznałam usługi. Dostępne: {names}.",
                                  flow_manager, tenant, state=state)
     
     if "service" not in state:
@@ -395,15 +397,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 2. WALIDACJA PRACOWNIKA ===
     if staff_text and "staff" not in state:
-        # 🔥 FIX: Ignoruj przyimki jako imię (STT czasem rozpoznaje "do" osobno)
-        if staff_text.lower().strip() in ["do", "na", "u", "od", "dla", "z"]:
-            available = [s for s in staff_list if staff_can_do_service(s, state.get("service", {}))]
-            names = natural_list([s["name"] for s in available])
-            return await _respond(
-                f"Do kogo chce się Pan umówić? Dostępni są {names}.",
-                flow_manager, tenant, state=state)
-        
-        if staff_text.lower() in ["dowolny", "obojętnie", "ktokolwiek", "wszystko jedno"]:
+        if staff_text == "dowolny":
             available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
             if available:
                 state["staff"] = available[0]
@@ -413,7 +407,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     f"Dobrze, zapiszę do {staff_name}. Na jaki dzień?",
                     flow_manager, tenant, state=state)
         else:
-            found = fuzzy_match_staff(staff_text, staff_list)
+            found = next((s for s in staff_list if s["name"] == staff_text), None)
             if found:
                 if staff_can_do_service(found, state["service"]):
                     state["staff"] = found
@@ -427,7 +421,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                         flow_manager, tenant, state=state)
             else:
                 names = ", ".join(s["name"] for s in staff_list)
-                return await _respond(f"Nie mamy pracownika '{staff_text}'. Dostępni: {names}.",
+                return await _respond(f"Nie rozpoznałam pracownika. Dostępni: {names}.",
                                     flow_manager, tenant, state=state)
         
     if "staff" not in state:
@@ -1001,20 +995,22 @@ ZASADY:
         
         "task_messages": [{
             "role": "system",
-            "content": """ZAWSZE wywołuj book_appointment z tym co klient powiedział.
+            "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 
-Przykłady:
-- "na strzyżenie do Ani" → book_appointment(service="strzyżenie", staff="Ania")
-- "jutro" → book_appointment(date_text="jutro")
-- "na trzynastą" → book_appointment(time_text="na trzynastą")
-- "po południu" → book_appointment(time_text="po południu")
-- "rano" → book_appointment(time_text="rano")
-- "przed południem" → book_appointment(time_text="rano")
-- "coś popołudniowego" → book_appointment(time_text="po południu")
-- "tak, potwierdzam" → book_appointment(confirmation="yes")
-- "nie, dziękuję" → book_appointment(confirmation="no")
-- "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
-- "na jaki dzień jest wolne?" → book_appointment(question="na jaki dzień jest wolne?")"""
+USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
+PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
+
+Przykłady dopasowania:
+- "strzyżenie plus broda" → service="Strzyżenie plus broda"
+- "strzyżenie z brodą" → service="Strzyżenie plus broda"  
+- "do Ani" → staff="Ania"
+- "do Anny" → staff="Ania"
+- "jutro" → date_text="jutro"
+- "na trzynastą" → time_text="na trzynastą"
+- "tak, potwierdzam" → confirmation="yes"
+- "nie, dziękuję" → confirmation="no"
+- "chcę zmienić" → confirmation="change"
+- "kiedy macie wolne?" → question="kiedy macie wolne?" """
         }],
         
         "functions": [
