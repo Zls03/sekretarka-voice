@@ -24,7 +24,8 @@ from flows_helpers import (
     staff_can_do_service, send_booking_sms,
     increment_sms_count, get_opening_hours,
     POLISH_DAYS, build_business_context,
-    get_available_slots_from_api,  # Direct API call (no cache)
+    get_available_slots_from_api,
+    validate_date_constraints,
 )
 
 # Import funkcji odmiany i formatowania
@@ -71,6 +72,11 @@ async def get_next_available_days(
         # Pomiń jeśli zamknięte
         weekday = check_date.weekday()
         if get_opening_hours(tenant, weekday) is None:
+            continue
+        
+        # Pomiń jeśli poza min/max ograniczeniami pracownika
+        is_valid, _ = validate_date_constraints(check_date, tenant, staff)
+        if not is_valid:
             continue
         
         # Pobierz sloty (używamy API, nie cache)
@@ -343,7 +349,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 pass
             
             available_days = await get_next_available_days(
-                tenant, state["staff"], state["service"], max_days=14, limit=3
+                tenant, state["staff"], state["service"], 
+                max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
             )
             
             if available_days:
@@ -467,6 +474,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Proszę wybrać inny dzień.",
                     flow_manager, tenant, state=state)
             
+            # 🔥 WALIDACJA min/max ograniczeń pracownika
+            is_valid, constraint_msg = validate_date_constraints(parsed_date, tenant, state["staff"])
+            if not is_valid:
+                return await _respond(constraint_msg, flow_manager, tenant, state=state)
+            
             # 🔥 WALIDACJA SLOTÓW - świeże dane!
             try:
                 from flows import play_snippet
@@ -483,7 +495,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             if not slots:
                 # Zaproponuj inne dni
                 available_days = await get_next_available_days(
-                    tenant, state["staff"], state["service"], max_days=14, limit=3
+                    tenant, state["staff"], state["service"], 
+                    max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
                 )
                 
                 staff_name = odmien_imie(state['staff']['name'])
@@ -514,9 +527,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         
         # 🔥 PROPONUJ TERMINY od razu!
         available_days = await get_next_available_days(
-            tenant, state["staff"], state["service"], max_days=14, limit=3
+            tenant, state["staff"], state["service"], 
+            max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
         )
-        
+                
         if available_days:
             first_day = available_days[0]
             first_date_str = format_date_polish(first_day["date"])
@@ -602,7 +616,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     # Cały dzień zajęty
                     state.pop("date", None)
                     available_days = await get_next_available_days(
-                        tenant, state["staff"], state["service"], max_days=14, limit=3
+                        tenant, state["staff"], state["service"],
+                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
                     )
                     if available_days:
                         suggestion = format_availability_message(available_days)
@@ -794,9 +809,9 @@ async def _answer_and_continue(
     import openai
     
     try:
-        client = openai.OpenAI()
+        client = openai.AsyncOpenAI()
         
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.

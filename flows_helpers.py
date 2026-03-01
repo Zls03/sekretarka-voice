@@ -402,12 +402,23 @@ async def get_available_slots_from_working_hours(
         current_minutes += 30  # Co 30 minut
     
     # Filtruj przeszłe sloty jeśli dziś
+    # Filtruj przeszłe sloty i respektuj min_booking_hours
     now = datetime.now()
-    if date.date() == now.date():
-        min_minutes = (now.hour * 60) + now.minute + 60  # +1h zapas
-        slots = [s for s in slots if _slot_to_minutes(s) >= min_minutes]
+    try:
+        min_advance_hours = int(staff.get("min_booking_hours") or staff.get("min_advance_hours") or 1)
+    except (ValueError, TypeError):
+        min_advance_hours = 1
     
-    logger.info(f"📅 Generated {len(slots)} slots from working hours")
+    min_time = now + timedelta(hours=min_advance_hours)
+    min_minutes_from_midnight = min_time.hour * 60 + min_time.minute
+    
+    if date.date() == now.date():
+        slots = [s for s in slots if _slot_to_minutes(s) >= min_minutes_from_midnight]
+    elif date.date() == (now + timedelta(hours=min_advance_hours)).date():
+        # min_booking_hours przekracza północ - filtruj też następny dzień
+        slots = [s for s in slots if _slot_to_minutes(s) >= min_minutes_from_midnight]
+    
+    logger.info(f"📅 Generated {len(slots)} slots from working hours (min_advance={min_advance_hours}h)")
     return slots
 
 
