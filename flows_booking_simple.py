@@ -106,13 +106,13 @@ def _slots_summary(slots: List[str]) -> str:
     if len(slots) == 1:
         return format_hour_polish(slots[0])
     if len(slots) == 2:
-        return f"{format_hour_polish(slots[0])} i {format_hour_polish(slots[1])}"
+        return f"{format_hour_polish(slots[0])} lub {format_hour_polish(slots[1])}"
     
     # Weź 2: początek i środek (rozłożone w czasie)
     first = slots[0]
     mid = slots[len(slots) // 2]
     
-    return f"{format_hour_polish(first)} i {format_hour_polish(mid)} i inne"
+    return f"{format_hour_polish(first)}, {format_hour_polish(mid)} i inne"
 
 def format_availability_message(available_days: List[Dict]) -> str:
     """Formatuje wiadomość o dostępnych terminach - KRÓTKO (voice-friendly)"""
@@ -381,7 +381,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === 1. WALIDACJA USŁUGI ===
     if service_text and "service" not in state:
-        found = next((s for s in services if s["name"] == service_text), None)
+        found = next((s for s in services if s["name"].strip().lower() == service_text.strip().lower()), None)
         if found:
             state["service"] = found
             logger.info(f"✅ Service: {found['name']}")
@@ -744,6 +744,8 @@ def _parse_time(text: str) -> Optional[str]:
     
     
     # Słowne godziny
+    has_thirty = any(x in text for x in ["trzydzieści", "trzydziesci", "30", ":30"])
+    
     word_to_hour = {
         "dziewiąt": 9, "dziesiąt": 10, "jedenast": 11, "dwunast": 12,
         "trzynast": 13, "czternast": 14, "piętnast": 15, "szesnast": 16,
@@ -753,7 +755,8 @@ def _parse_time(text: str) -> Optional[str]:
     
     for word, hour in word_to_hour.items():
         if word in text:
-            return f"{hour}:00"
+            minutes = "30" if has_thirty else "00"
+            return f"{hour}:{minutes}"
     
     import re
     
