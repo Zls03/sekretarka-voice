@@ -430,11 +430,11 @@ def create_tts_service(tenant: dict):
         return tts
 
     if tts_provider == 'azure':
-        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-AgnieszkaNeural")
+        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-IgaNeural")
         tts = AzureTTSService(
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
-            voice="pl-PL-AgnieszkaNeural",
+            voice="pl-PL-IgaNeural",
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
