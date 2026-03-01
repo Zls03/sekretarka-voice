@@ -756,8 +756,12 @@ def fuzzy_match_service(query: str, services: list, threshold: float = 0.5) -> d
         if query == name:
             return service
         
-        # 2. Zawieranie (query w name lub name w query)
-        if query in name or name in query:
+        # 2. Zawieranie tylko gdy pokrycie > 70% długości
+        if query == name:
+            return service
+        if query in name and len(query) >= len(name) * 0.8:
+            return service
+        if name in query and len(name) >= len(query) * 0.8:
             return service
         
         # 3. Początek słowa (np. "strzy" → "strzyżenie")
