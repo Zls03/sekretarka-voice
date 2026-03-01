@@ -806,7 +806,7 @@ async def _answer_and_continue(
         client = openai.AsyncOpenAI()
         
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
 
