@@ -262,7 +262,7 @@ def book_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
             },
             "time_text": {
                 "type": "string",
-                "description": "Godzina DOKŁADNIE jak klient powiedział (np. 'na trzynastą', '14:30') lub null"
+                "description": "Godzina w formacie HH:MM (np. '11:30', '14:00'). Zamień słowa klienta na cyfry: 'na trzynastą' → '13:00', 'wpół do dwunastej' → '11:30', 'jedenasta trzydzieści' → '11:30', 'czternasta zero' → '14:00'"
             },
             "customer_name": {
                 "type": "string",
@@ -1009,7 +1009,11 @@ Przykłady dopasowania:
 - "do Ani" → staff="Ania"
 - "do Anny" → staff="Ania"
 - "jutro" → date_text="jutro"
-- "na trzynastą" → time_text="na trzynastą"
+- "na trzynastą" → time_text="13:00"
+- "na jedenastą trzydzieści" → time_text="11:30"
+- "wpół do dwunastej" → time_text="11:30"
+- "czternasta zero" → time_text="14:00"
+- "o piętnastej trzydzieści" → time_text="15:30"
 - "tak, potwierdzam" → confirmation="yes"
 - "nie, dziękuję" → confirmation="no"
 - "chcę zmienić" → confirmation="change"
