@@ -273,6 +273,11 @@ def book_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
                 "enum": ["yes", "no", "change", "none"],
                 "description": "yes=potwierdza, no=anuluje, change=chce zmienić coś, none=nic z tych"
             },
+            "change_field": {
+                "type": "string",
+                "enum": ["service", "staff", "date", "time", "name"],
+                "description": "Co klient chce zmienić gdy confirmation='change'. Np. 'chcę inną godzinę' → change_field='time', 'zmień datę' → change_field='date'"
+            },
             "question": {
                 "type": "string",
                 "description": "Jeśli klient pyta o coś - wpisz pytanie. Null jeśli kontynuuje rezerwację."
@@ -322,10 +327,25 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     # === OBSŁUGA ZMIANY ===
     if confirmation == "change":
-        state = {}
-        flow_manager.state["booking"] = state
-        return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę chce się Pan umówić?",
-                             flow_manager, tenant)
+        change_field = args.get("change_field")
+        field_names = {
+            "service": "usługę", "staff": "pracownika",
+            "date": "datę", "time": "godzinę", "name": "imię"
+        }
+        if change_field and change_field in field_names:
+            state.pop(change_field, None)
+            if change_field == "date":
+                state.pop("time", None)
+                state.pop("available_slots", None)
+            flow_manager.state["booking"] = state
+            return await _respond(
+                f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
+                flow_manager, tenant, state=state)
+        else:
+            state = {}
+            flow_manager.state["booking"] = state
+            return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę chce się Pan umówić?",
+                                 flow_manager, tenant)
     
     # === OBSŁUGA PYTANIA O DOSTĘPNOŚĆ ===
     if question:
