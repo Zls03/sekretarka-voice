@@ -539,6 +539,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     if "date" not in state:
         staff_name = odmien_imie(state['staff']['name'])
         
+        try:
+            from flows import play_snippet
+            await play_snippet(flow_manager, "checking")
+        except:
+            pass
+        
         # 🔥 PROPONUJ TERMINY od razu!
         available_days = await get_next_available_days(
             tenant, state["staff"], state["service"], 
