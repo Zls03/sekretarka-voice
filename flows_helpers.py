@@ -383,11 +383,9 @@ async def get_available_slots_from_working_hours(
     if staff_hours:
         open_hour, close_hour = staff_hours
     else:
-        # Fallback do godzin firmy
-        opening_hours = get_opening_hours(tenant, weekday)
-        if not opening_hours:
-            return []
-        open_hour, close_hour = opening_hours
+        # Brak godzin pracownika = brak terminów, nie fallback na salon
+        logger.info(f"ℹ️ Staff {staff.get('name')} has no hours for weekday {weekday} - no slots")
+        return []
     
     service_duration = service.get("duration_minutes", 60)
     

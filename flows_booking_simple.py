@@ -69,11 +69,6 @@ async def get_next_available_days(
     for day_offset in range(max_days):
         check_date = today + timedelta(days=day_offset)
         
-        # Pomiń jeśli zamknięte
-        weekday = check_date.weekday()
-        if get_opening_hours(tenant, weekday) is None:
-            continue
-        
         # Pomiń jeśli poza min/max ograniczeniami pracownika
         is_valid, _ = validate_date_constraints(check_date, tenant, staff)
         if not is_valid:
@@ -380,8 +375,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 return await _respond(message, flow_manager, tenant, state=state)
             else:
                 return await _respond(
-                    "Niestety, w najbliższych dwóch tygodniach nie ma wolnych terminów. "
-                    "Czy chce Pan zostawić kontakt, a oddzwonimy gdy się coś zwolni?",
+                    f"Niestety, w najbliższych {int(state['staff'].get('max_booking_days') or 14)} dniach "
+                    f"nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
                     flow_manager, tenant, state=state)
         
         elif is_availability_question and "service" not in state:
@@ -527,9 +522,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                         f"{suggestion}",
                         flow_manager, tenant, state=state)
                 else:
+                    max_days = int(state["staff"].get("max_booking_days") or 14)
                     return await _respond(
                         f"Na {format_date_polish(parsed_date)} u {staff_name} nie ma wolnych terminów "
-                        f"i w najbliższych dniach też jest pełny grafik. Przepraszam.",
+                        f"i w najbliższych {max_days} dniach grafik jest pełny. "
+                        f"Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
                         flow_manager, tenant, state=state)
             
             state["date"] = parsed_date
@@ -572,9 +569,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     f"U {staff_name} najbliższy termin to {first_date_str}: {first_slots}. Pasuje?",
                     flow_manager, tenant, state=state)
         else:
+            max_days = int(state["staff"].get("max_booking_days") or 14)
             return await _respond(
-                f"U {staff_name} w najbliższych dwóch tygodniach nie ma wolnych terminów. "
-                f"Przepraszam.",
+                f"U {staff_name} w najbliższych {max_days} dniach nie ma wolnych terminów. "
+                f"Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
                 flow_manager, tenant, state=state)
     
     # === 4. WALIDACJA GODZINY ===

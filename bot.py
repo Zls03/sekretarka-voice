@@ -640,7 +640,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     confidence=0.6,
                     start_secs=0.2,
                     stop_secs=0.4,
-                    min_volume=0.4,
+                    min_volume=0.3,
                 )
             ),
             serializer=TwilioFrameSerializer(
