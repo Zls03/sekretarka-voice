@@ -400,7 +400,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     
     # === 1. WALIDACJA USŁUGI ===
-    if service_text and "service" not in state:
+    if service_text and ("service" not in state or service_text != state.get("service", {}).get("name")):
+        state.pop("service", None)
         found = next((s for s in services if s["name"].strip().lower() == service_text.strip().lower()), None)
         if found:
             state["service"] = found
@@ -461,9 +462,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 f"Dostępni są {names}. Może być też dowolna osoba.",
                 flow_manager, tenant, state=state)
     
-    # === 3. WALIDACJA DATY (dateparser!) ===
-    if date_text and "date" not in state:
-        # 🔥 PREPROCESSING - usuń "na ", "w " itp.
+        # === 3. WALIDACJA DATY ===
+    if date_text and ("date" not in state or date_text != state.get("_last_date_text")):
+        state["_last_date_text"] = date_text
+        state.pop("date", None)
+        state.pop("time", None)
+        state.pop("available_slots", None)
+
         date_text_clean = preprocess_date_text(date_text)
         logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}'")
         
@@ -573,7 +578,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 flow_manager, tenant, state=state)
     
     # === 4. WALIDACJA GODZINY ===
-    if time_text and "time" not in state:
+    if time_text and ("time" not in state or time_text != state.get("time")):
+        state.pop("time", None)  # Reset jeśli nowa godzina
         # 🔥 NOWE: Obsługa pory dnia ("po południu", "rano")
         time_lower = time_text.lower().strip()
         

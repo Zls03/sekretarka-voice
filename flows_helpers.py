@@ -724,8 +724,9 @@ def build_business_context(tenant: dict) -> str:
     parts.append("""⚠️ WAŻNE ZASADY:
 - Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji
 - NIGDY NIE WYMYŚLAJ cen, godzin ani innych faktów
-- Podawaj ceny DOKŁADNIE tak jak są napisane powyżej""")
-    
+- Podawaj ceny DOKŁADNIE tak jak są napisane powyżej
+- NIE mów że można rezerwować online - rezerwacje TYLKO telefonicznie przez ten numer""")
+ 
     return "\n\n".join(parts)
 
 
