@@ -188,6 +188,10 @@ def manage_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
                 "type": "string",
                 "description": "Nowa godzina w formacie HH:MM lub null"
             },
+            "new_staff": {
+                "type": "string",
+                "description": "Nowy pracownik jeśli klient chce zmienić pracownika, null jeśli ten sam"
+            },
             "confirmation": {
                 "type": "string",
                 "enum": ["yes", "no", "none"],
@@ -246,11 +250,28 @@ async def handle_manage_appointment(
 
         # 1b. Klient podał kod
         if not booking and booking_code:
-            booking = await find_booking_by_code(tenant, booking_code.strip())
-            if booking:
-                logger.info(f"✅ Found booking by code: {booking_code}")
+            code_attempts = state.get("code_attempts", 0)
+            if code_attempts >= 3:
+                logger.warning("⚠️ Too many code attempts - fallback")
+                return await _fallback_no_booking(flow_manager, tenant, state)
 
-        # 1c. Nie znaleziono — zapytaj o kod
+            booking = await find_booking_by_code(tenant, booking_code.strip())
+            if not booking:
+                state["code_attempts"] = code_attempts + 1
+                remaining = 3 - state["code_attempts"]
+                if remaining > 0:
+                    return await _respond_manage(
+                        f"Nie znalazłam wizyty o kodzie {booking_code}. "
+                        f"Proszę spróbować jeszcze raz.",
+                        flow_manager, tenant, state
+                    )
+                else:
+                    return await _fallback_no_booking(flow_manager, tenant, state)
+            else:
+                logger.info(f"✅ Found booking by code: {booking_code}")
+                state["code_attempts"] = 0  # reset po sukcesie
+
+        # 1c. Nie znaleziono po telefonie i brak kodu — zapytaj o kod
         if not booking and not booking_code:
             return await _respond_manage(
                 "Nie znalazłam rezerwacji przypisanej do tego numeru telefonu. "
@@ -263,6 +284,22 @@ async def handle_manage_appointment(
             return await _fallback_no_booking(flow_manager, tenant, state)
 
         state["booking"] = booking
+        # Sprawdź min czas do anulowania
+        booking_dt = datetime.strptime(
+            f"{booking['booking_date']} {booking['booking_time']}", 
+            "%Y-%m-%d %H:%M"
+        )
+        min_cancel_hours = int(tenant.get("min_cancel_hours") or 24)
+        min_cancel_time = datetime.now() + timedelta(hours=min_cancel_hours)
+
+        if booking_dt < min_cancel_time:
+            hours_left = int((booking_dt - datetime.now()).total_seconds() / 3600)
+            return await _respond_manage(
+                f"Przepraszam, wizytę można zmienić lub anulować minimum {min_cancel_hours} godziny przed terminem. "
+                f"Do wizyty pozostało tylko {hours_left} godzin. "
+                f"Proszę skontaktować się z salonem bezpośrednio.",
+                flow_manager, tenant, state
+            )
         flow_manager.state["manage"] = state
 
         # Przedstaw wizytę
@@ -308,7 +345,23 @@ async def handle_manage_appointment(
     booking = state["booking"]
 
     # === KROK 2: Anulowanie ===
+    # === KROK 2: Anulowanie ===
     if action == "cancel":
+
+        # NAJPIERW: Jeśli to anulowanie po ostrzeżeniu o zmianie pracownika
+        if state.get("new_staff_warned") and confirmation == "yes":
+            booking_id = booking.get("id") or booking.get("bookingId")
+            success = await cancel_booking_api(tenant, booking_id)
+            if success:
+                await _notify_owner_cancel(tenant, booking, caller_phone)
+                flow_manager.state["manage"] = {}
+                from flows_booking_simple import create_booking_node
+                await flow_manager.task.queue_frame(TTSSpeakFrame(
+                    text="Wizyta anulowana. Zaczynam nową rezerwację. Na jaką usługę?"
+                ))
+                return (None, create_booking_node(tenant))
+
+        # POTEM: Normalne anulowanie
         if "cancel_confirmed" not in state:
             if confirmation == "yes":
                 state["cancel_confirmed"] = True
@@ -319,10 +372,8 @@ async def handle_manage_appointment(
                     flow_manager, tenant, state
                 )
 
-        # Wykonaj anulowanie
         booking_id = booking.get("id") or booking.get("bookingId")
         success = await cancel_booking_api(tenant, booking_id)
-
         if success:
             await _notify_owner_cancel(tenant, booking, caller_phone)
             flow_manager.state["manage"] = {}

@@ -227,7 +227,32 @@ async def twilio_incoming(request: Request):
             content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml"
         )
-    
+
+    # === RATE LIMIT - max 3 połączenia z jednego numeru na godzinę ===
+    if caller and caller != "unknown":
+        try:
+            recent = await db.execute(
+                """SELECT COUNT(*) as cnt FROM call_logs 
+                   WHERE caller_phone = ? 
+                   AND created_at > datetime('now', '-1 hour')""",
+                [caller]
+            )
+            call_count = recent[0]["cnt"] if recent else 0
+
+            if call_count >= 3:
+                logger.warning(f"🚫 Rate limit: {caller} ({call_count} calls/hour)")
+                return Response(
+                    content='''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">
+        Przepraszamy, zbyt wiele połączeń z tego numeru. Proszę spróbować za godzinę.
+    </Say>
+    <Hangup/>
+</Response>''',
+                    media_type="application/xml"
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ Rate limit check failed (non-critical): {e}")
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     host = request.headers.get("host", "localhost")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
