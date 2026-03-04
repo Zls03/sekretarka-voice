@@ -138,8 +138,8 @@ def format_booking_summary(booking: Dict) -> str:
     """Formatuje wizytę do wypowiedzi TTS"""
     service = booking.get("service_name", "wizyta")
     staff = booking.get("staff_name", "")
-    date_str = booking.get("date", "")
-    time_str = booking.get("time", "")
+    date_str = booking.get("booking_date") or booking.get("date", "")
+    time_str = booking.get("booking_time") or booking.get("time", "")
     code = booking.get("visit_code") or booking.get("booking_code", "")
 
     # Formatuj datę
@@ -191,6 +191,10 @@ def manage_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
             "new_staff": {
                 "type": "string",
                 "description": "Nowy pracownik jeśli klient chce zmienić pracownika, null jeśli ten sam"
+            },
+            "spoken_choice": {
+                "type": "string",
+                "description": "Gdy klient wybiera wizytę z listy: 'pierwsza', 'druga', 'ostatnia', 'trzecia', '1', '2', '3' lub null"
             },
             "confirmation": {
                 "type": "string",
@@ -313,19 +317,23 @@ async def handle_manage_appointment(
     # === Wybór z listy wielu wizyt ===
     if "bookings_list" in state and "booking" not in state:
         bookings = state["bookings_list"]
-        # Spróbuj dopasować po numerze porządkowym lub dacie
-        # Uproszczenie: jeśli klient powiedział "pierwsza" lub "1" itp.
         selected = None
-        for kw, idx in [
-            ("pierwsz", 0), ("jedna", 0), ("1", 0),
-            ("drug", 1), ("dwie", 1), ("2", 1),
-            ("trzec", 2), ("trzy", 2), ("3", 2),
-        ]:
-            spoken = (date_text or "") + (time_text or "") + (booking_code or "")
-            if kw in spoken.lower():
-                if idx < len(bookings):
-                    selected = bookings[idx]
-                break
+        spoken_choice = args.get("spoken_choice", "")
+        spoken = (spoken_choice or "") + (date_text or "") + (time_text or "") + (booking_code or "")
+
+        # Obsłuż "ostatnia/ostatni"
+        if any(kw in spoken.lower() for kw in ["ostatni", "ostatnia", "ostatnie", "końcow"]):
+            selected = bookings[-1]
+        else:
+            for kw, idx in [
+                ("pierwsz", 0), ("jedna", 0), ("1", 0),
+                ("drug", 1), ("dwie", 1), ("2", 1),
+                ("trzec", 2), ("trzy", 2), ("3", 2),
+            ]:
+                if kw in spoken.lower():
+                    if idx < len(bookings):
+                        selected = bookings[idx]
+                    break
 
         if selected:
             state["booking"] = selected
@@ -713,6 +721,9 @@ Przykłady:
 - "tak" → confirmation="yes"
 - "nie" → confirmation="no"
 - "nie, dziękuję" → confirmation="no"
+- "o tej pierwszej" → action="none", spoken_choice="pierwsza", confirmation="none"
+- "tę drugą" → action="none", spoken_choice="druga", confirmation="none"
+- "o tej ostatniej" → action="none", spoken_choice="ostatnia", confirmation="none"
 """
         }],
 
