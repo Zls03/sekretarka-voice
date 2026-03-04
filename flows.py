@@ -179,10 +179,12 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         services = tenant.get("services", [])
         if services:
             svc_parts = []
+
             for s in services:
                 info = s["name"]
                 price = s.get("price")
                 duration = s.get("duration_minutes")
+                description = s.get("description", "").strip()
                 if price:
                     info += f" ({price} zł"
                     if duration:
@@ -190,13 +192,27 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
                     info += ")"
                 elif duration:
                     info += f" ({duration} min)"
+                if description:
+                    info += f". Opis: {description}"
                 svc_parts.append(info)
             services_list = ", ".join(svc_parts)
         else:
             services_list = "brak usług"
     else:
         info_services = tenant.get("info_services", [])
-        services_list = ", ".join([s["name"] + (f" - {s['price']}" if s.get('price') else "") for s in info_services]) if info_services else "brak usług"
+
+        if info_services:
+            parts = []
+            for s in info_services:
+                item = s["name"]
+                if s.get("price"):
+                    item += f" - {s['price']}"
+                if s.get("description", "").strip():
+                    item += f". Opis: {s['description'].strip()}"
+                parts.append(item)
+            services_list = ", ".join(parts)
+        else:
+            services_list = "brak usług"
     
     staff = tenant.get("staff", [])
     # Pokaż kto robi jakie usługi

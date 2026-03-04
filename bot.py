@@ -593,10 +593,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             for s in staff:
                                 staff_dict = dict(s)
                                 staff_services = await db.execute(
-                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
-                                       FROM services srv
-                                       JOIN staff_services ss ON srv.id = ss.service_id
-                                       WHERE ss.staff_id = ?""",
+                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price, srv.description
+                                    FROM services srv
+                                    JOIN staff_services ss ON srv.id = ss.service_id
+                                    WHERE ss.staff_id = ?""",
                                     [s["id"]]
                                 )
                                 staff_dict["services"] = [dict(svc) for svc in staff_services]
