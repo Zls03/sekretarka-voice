@@ -188,16 +188,19 @@ def create_contact_choice_node(tenant: dict) -> dict:
         "task_messages": [{
             "role": "system",
             "content": """Klient odpowiada na pytanie: wiadomość czy połączenie.
-
 Wywołaj JEDNĄ z funkcji:
-- do_transfer → gdy klient chce POŁĄCZENIE ("połączyć", "bezpośrednio", "tak", "proszę")
-- do_message → gdy klient chce WIADOMOŚĆ ("wiadomość", "zostawić", "niech oddzwoni", "nie")
+- do_transfer → gdy klient chce POŁĄCZENIE
+- do_message → gdy klient chce WIADOMOŚĆ
+- start_booking → gdy klient zmienił zdanie i WYRAŹNIE chce się umówić przez bota
+- end_conversation → gdy klient się ŻEGNA
 
-⛔ NIGDY nie odpowiadaj tekstem - ZAWSZE wywołaj funkcję!"""
+Na inne pytania (cennik, godziny) → odpowiedz krótko tekstem i ponów pytanie o wybór."""
         }],
         "functions": [
             do_transfer_function(tenant),
             do_message_function(tenant),
+            _get_start_booking_function(),
+            _get_end_conversation_function(),
         ]
     }
 
@@ -265,6 +268,7 @@ NIE interpretuj imienia jako pożegnania."""
         }],
         "functions": [
             set_contact_name_function(tenant),
+            _get_start_booking_function(),
             _get_end_conversation_function(),
         ]
     }
@@ -336,6 +340,8 @@ NIE oceniaj treści. NIE interpretuj jako pożegnanie."""
         }],
         "functions": [
             set_contact_message_function(tenant),
+            _get_start_booking_function(),
+            _get_end_conversation_function(),
         ]
     }
 
@@ -409,7 +415,7 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     asyncio.create_task(auto_hangup_after_message())
     
-    return (f"Wiadomość przekazana. Pracownik oddzwoni.",
+    return (f"Wiadomość przekazana. Salon oddzwoni.",
         create_end_node(message_saved=True))
 # ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
@@ -508,6 +514,9 @@ def _get_end_conversation_function():
     from flows import end_conversation_function
     return end_conversation_function()
 
+def _get_start_booking_function():
+    from flows_booking_simple import start_booking_function_simple
+    return start_booking_function_simple()
 
 __all__ = [
     "contact_owner_function",
