@@ -33,7 +33,6 @@ async def play_snippet(flow_manager, category: str):
 
 # Import helperów
 from flows_booking_simple import start_booking_function_simple as start_booking_function
-from flows_manage import start_manage_function
 from flows_contact import contact_owner_function
 from helpers import db
 from flows_helpers import (
@@ -342,8 +341,24 @@ ZASADY:
 
 
 def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
-    from flows_manage import manage_appointment_function
-    return manage_appointment_function(tenant)
+    return FlowsFunctionSchema(
+        name="manage_booking",
+        description=(
+            "Klient chce PRZEŁOŻYĆ, ODWOŁAĆ lub ANULOWAĆ istniejącą wizytę. "
+            "Użyj gdy: 'chcę odwołać', 'chcę przełożyć', 'anuluj wizytę', 'zmień termin'."
+        ),
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_manage_booking(args, fm, tenant),
+    )
+
+async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
+    from flows_contact import handle_contact_owner
+    return await handle_contact_owner(
+        {"reason": "zmiana lub anulowanie wizyty"},
+        flow_manager,
+        tenant
+    )
 
 # ==========================================
 # NODE: Czy coś jeszcze?
