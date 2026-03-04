@@ -184,7 +184,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
                 info = s["name"]
                 price = s.get("price")
                 duration = s.get("duration_minutes")
-                description = s.get("description", "").strip()
+                description = s.get("description", "").strip() if s.get("description") else ""
                 if price:
                     info += f" ({price} zł"
                     if duration:

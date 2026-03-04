@@ -99,7 +99,7 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
     
     # Usługi
     services = await db.execute(
-        "SELECT id, name, duration_minutes, price FROM services WHERE tenant_id = ? AND is_active = 1",
+        "SELECT id, name, duration_minutes, price, description FROM services WHERE tenant_id = ? AND is_active = 1",
         [tenant_id]
     )
     
