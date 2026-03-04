@@ -506,11 +506,13 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
+from pipecat.frames.frames import UserStoppedSpeakingFrame
+
 class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
-    _filler_index = 0  # klasowa - wspólna dla wszystkich połączeń
+    _filler_index = 0
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -520,9 +522,7 @@ class FirstResponseFiller(FrameProcessor):
         await super().process_frame(frame, direction)
         
         if (not self._first_done
-            and isinstance(frame, TranscriptionFrame)
-            and frame.text
-            and len(frame.text.strip()) > 2):
+            and isinstance(frame, UserStoppedSpeakingFrame)):
             
             self._first_done = True
             filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
@@ -689,7 +689,7 @@ async def websocket_endpoint(websocket: WebSocket):
             numerals=True,
             interim_results=True,
             utterance_end_ms=1200,
-            endpointing=600,
+            endpointing=500,
             keyterm=tenant_keyterms,
         )
     )
