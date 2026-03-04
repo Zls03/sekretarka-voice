@@ -635,7 +635,7 @@ def create_end_node(message_saved: bool = False) -> dict:
             "name": "end",
             "respond_immediately": False,
             "pre_actions": [
-                {"type": "tts_say", "text": "Wiadomość została przekazana do właściciela. Dziękuję za kontakt, miłego dnia!"}
+                {"type": "tts_say", "text": "Dziękuję za kontakt, do widzenia!"}
             ],
             "post_actions": [
                 {"type": "end_conversation"}

@@ -409,8 +409,8 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     asyncio.create_task(auto_hangup_after_message())
     
-    return (f"Dziękuję {name}. Przekazałam wiadomość do właściciela, który oddzwoni. Do widzenia!",
-            create_end_node(message_saved=True))
+    return (f"Wiadomość przekazana. Pracownik oddzwoni.",
+        create_end_node(message_saved=True))
 # ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     """Wykonaj transfer rozmowy do właściciela"""
