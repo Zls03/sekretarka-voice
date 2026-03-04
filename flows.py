@@ -33,6 +33,7 @@ async def play_snippet(flow_manager, category: str):
 
 # Import helperów
 from flows_booking_simple import start_booking_function_simple as start_booking_function
+from flows_manage import start_manage_function
 from flows_contact import contact_owner_function
 from helpers import db
 from flows_helpers import (
@@ -155,8 +156,9 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=message))
         return (None, create_initial_node(tenant, greeting_played=True))
     else:
+        max_days = int(staff.get("max_booking_days") or 14)
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text=f"Niestety u {staff_name_declined} w najbliższych dwóch tygodniach nie ma wolnych terminów.")
+            TTSSpeakFrame(text=f"Niestety u {staff_name_declined} w najbliższych {max_days} dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.")
         )
         return (None, create_initial_node(tenant, greeting_played=True))
 # ==========================================
@@ -339,59 +341,9 @@ ZASADY:
     }
 
 
-# ==========================================
-# FUNKCJA: Zarządzanie wizytą (przełóż/odwołaj) - FALLBACK
-# ==========================================
-
 def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
-    """Klient chce przełożyć lub odwołać wizytę - fallback do właściciela"""
-    return FlowsFunctionSchema(
-        name="manage_booking",
-        description="""Klient chce PRZEŁOŻYĆ lub ODWOŁAĆ istniejącą wizytę.
-Użyj gdy klient mówi: "chcę przełożyć wizytę", "muszę odwołać", "zmienić termin", "anulować rezerwację".""",
-        properties={
-            "action": {
-                "type": "string",
-                "enum": ["przełożyć", "odwołać"],
-                "description": "Czy klient chce przełożyć czy odwołać wizytę"
-            },
-            "booking_code": {
-                "type": "string",
-                "description": "Kod wizyty jeśli klient podał (4 cyfry)"
-            },
-        },
-        required=["action"],
-        handler=lambda args, fm: handle_manage_booking(args, fm, tenant),
-    )
-
-
-async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
-    """Obsługa przełożenia/odwołania - przekieruj do contact_owner"""
-    from flows_contact import create_contact_choice_node, create_collect_contact_name_node
-    
-    action = args.get("action", "przełożyć")
-    booking_code = args.get("booking_code", "")
-    
-    logger.info(f"📅 Manage booking request: {action}, code: {booking_code}")
-    
-    # Zapisz kontekst
-    flow_manager.state["manage_action"] = action
-    flow_manager.state["manage_booking_code"] = booking_code
-    
-    action_text = "przełożenie" if action == "przełożyć" else "odwołanie"
-    
-    # Sprawdź czy transfer dostępny
-    transfer_enabled = tenant.get("transfer_enabled", 0) == 1
-    transfer_number = tenant.get("transfer_number", "")
-    
-    if transfer_enabled and transfer_number:
-        # Daj wybór: wiadomość lub połączenie
-        return (f"Rozumiem, chce Pan {action_text} wizyty. Mogę przekazać wiadomość lub połączyć z właścicielem. Co Pan woli?",
-                create_contact_choice_node(tenant))
-    else:
-        # Tylko wiadomość
-        return (f"Rozumiem, chce Pan {action_text} wizyty. Przekażę wiadomość do właściciela.",
-                create_collect_contact_name_node(tenant))
+    from flows_manage import manage_appointment_function
+    return manage_appointment_function(tenant)
 
 # ==========================================
 # NODE: Czy coś jeszcze?
