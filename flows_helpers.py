@@ -632,7 +632,11 @@ def build_business_context(tenant: dict) -> str:
             for s in services:
                 price = s.get('price', 'cena do uzgodnienia')
                 duration = s.get('duration_minutes', 30)
-                svc_lines.append(f"• {s['name']} = {price} zł ({duration} min)")
+                description = s.get("description", "").strip() if s.get("description") else ""
+                line = f"• {s['name']} = {price} zł ({duration} min)"
+                if description:
+                    line += f". Opis: {description}"
+                svc_lines.append(line)
             cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
             parts.append(cennik_text)
     else:
