@@ -949,31 +949,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.error(f"End call error: {e}")
                     await task.cancel()
                 break
-
-    # ==========================================
-    # PIPELINE
-    # ==========================================
-
-    if greeting_played:
-        greeting_duration = float(tenant.get("greeting_duration") or 4.6)
-        if play_started_at > 0:
-            elapsed = time.time() - play_started_at
-            remaining = max(0.3, greeting_duration - elapsed)
-            logger.info(f"🔇 MP3 started {elapsed:.1f}s ago, {remaining:.1f}s remaining")
-        else:
-            remaining = greeting_duration
-        stt_ready_time = time.time() + remaining
-        first_filler = FirstResponseFiller(stt_ready_time=stt_ready_time, buffer_window=1.5)
-    else:
-        first_filler = None
+    first_filler = FirstResponseFiller(stt_ready_time=0)
 
     pipeline_components = [
         transport.input(),
         stt,
-    ]
-    if first_filler:
-        pipeline_components.append(first_filler)
-    pipeline_components += [
+        first_filler,
         user_idle,
         context_aggregator.user(),
         llm,
@@ -981,9 +962,8 @@ async def websocket_endpoint(websocket: WebSocket):
         transport.output(),
         context_aggregator.assistant(),
     ]
-    
-    pipeline = Pipeline(pipeline_components)
 
+    pipeline = Pipeline(pipeline_components)
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
@@ -993,7 +973,6 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_sample_rate=8000,
         )
     )
-
     # ==========================================
     # PIPECAT FLOWS
     # ==========================================
