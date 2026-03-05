@@ -268,6 +268,7 @@ async def twilio_incoming(request: Request):
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     {greeting_twiml}
+    <Mark name="greeting_end"/>
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
@@ -509,27 +510,28 @@ def create_tts_service(tenant: dict):
 from pipecat.frames.frames import UserStoppedSpeakingFrame
 
 class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
-    
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
+        self._enabled = False  # wyłączony dopóki MP3 nie skończy
+    
+    def enable(self):
+        self._enabled = True
+        logger.info("✅ FirstResponseFiller enabled")
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        
-        if (not self._first_done
+        if (self._enabled
+            and not self._first_done
             and isinstance(frame, UserStoppedSpeakingFrame)):
-            
             self._first_done = True
             filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
             FirstResponseFiller._filler_index += 1
             logger.info(f"🎯 First response filler: '{filler}'")
             await self.push_frame(TTSSpeakFrame(text=filler))
-        
         await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
@@ -689,9 +691,8 @@ async def websocket_endpoint(websocket: WebSocket):
             numerals=True,
             interim_results=True,
             utterance_end_ms=1200,
-            endpointing=False,
+            endpointing=500,
             keyterm=tenant_keyterms,
-            no_delay=True
         )
     )
 
