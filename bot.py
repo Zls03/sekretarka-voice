@@ -999,15 +999,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
-        logger.info(f"🔍 STT methods: {[m for m in dir(stt) if 'audio' in m.lower() or 'enable' in m.lower() or 'mute' in m.lower()]}")
-        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
         if greeting_played:
             stt._muted = True
+            logger.info("🔇 STT muted - waiting for MP3 to finish")
             async def enable_stt_after_greeting():
                 await asyncio.sleep(4.0)
                 stt._muted = False
                 logger.info("🎤 STT unmuted after greeting MP3")
             asyncio.create_task(enable_stt_after_greeting())
+        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played:
             async def greeting_silence_watchdog():
