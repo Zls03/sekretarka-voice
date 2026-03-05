@@ -258,12 +258,17 @@ async def twilio_incoming(request: Request):
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
     
     if tenant.get("greeting_audio"):
+        import base64
+        audio_bytes = base64.b64decode(tenant["greeting_audio"])
+        greeting_duration = len(audio_bytes) / 16000
+        greeting_duration = max(2.0, min(greeting_duration, 10.0))
         cache_buster = int(time.time())
         greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
-        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
+        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting ({greeting_duration:.1f}s)")
     else:
+        greeting_duration = max(2.0, min(len(first_message) / 15.0, 8.0))
         greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
-        logger.info(f"🔊 Using Twilio Say for instant greeting")
+        logger.info(f"🔊 Using Twilio Say for instant greeting ({greeting_duration:.1f}s)")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -274,6 +279,7 @@ async def twilio_incoming(request: Request):
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
             <Parameter name="greetingPlayed" value="true" />
+            <Parameter name="greetingDuration" value="{greeting_duration:.1f}" />
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
@@ -571,6 +577,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = custom_params.get("greetingPlayed", "false") == "true"
+                greeting_duration = float(custom_params.get("greetingDuration", "3.0"))
                 caller_phone = custom_params.get("callerPhone", "nieznany")
 
                 logger.info(f"📋 Stream started: {stream_sid}")
@@ -1004,26 +1011,11 @@ async def websocket_endpoint(websocket: WebSocket):
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played and first_filler:
-            async def wait_for_mark():
-                try:
-                    while True:
-                        message = await asyncio.wait_for(
-                            websocket.receive_text(), timeout=10.0
-                        )
-                        data = json.loads(message)
-                        if data.get("event") == "mark":
-                            mark_name = data.get("mark", {}).get("name", "")
-                            logger.info(f"🎵 Mark: {mark_name}")
-                            if mark_name == "greeting_end":
-                                first_filler.enable()
-                                break
-                except asyncio.TimeoutError:
-                    logger.warning("⚠️ Mark timeout - enabling filler anyway")
-                    first_filler.enable()
-                except Exception as e:
-                    logger.warning(f"⚠️ Mark error: {e} - enabling filler anyway")
-                    first_filler.enable()
-            asyncio.create_task(wait_for_mark())
+            async def enable_after_greeting():
+                await asyncio.sleep(greeting_duration)
+                first_filler.enable()
+                logger.info(f"✅ Filler enabled after {greeting_duration:.1f}s")
+            asyncio.create_task(enable_after_greeting())
 
         if greeting_played:
             async def greeting_silence_watchdog():
