@@ -1025,20 +1025,17 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
-
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
 
-        # Daj LLM 300ms head start zanim flow zainicjuje
-        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-
-        # Wstrzyknij system prompt bezpośrednio do kontekstu LLM
-        from pipecat.frames.frames import LLMMessagesAppendFrame
+        # ✅ System prompt SYNCHRONICZNIE przed wszystkim
         initial_node = create_initial_node(tenant, greeting_played)
         system_messages = initial_node.get("role_messages", []) + initial_node.get("task_messages", [])
         if system_messages:
-            await task.queue_frame(LLMMessagesAppendFrame(messages=system_messages))
-            logger.info(f"✅ System prompt injected: {len(system_messages)} messages")
+            context.set_messages(system_messages)
+            logger.info(f"✅ System prompt set in context: {len(system_messages)} messages")
+
+        await flow_manager.initialize(initial_node)
 
         if greeting_played:
             async def greeting_silence_watchdog():
