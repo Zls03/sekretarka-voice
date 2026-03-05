@@ -719,6 +719,18 @@ async def websocket_endpoint(websocket: WebSocket):
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
 
+    filler_done = False
+
+    @llm.event_handler("on_llm_started")
+    async def on_llm_started(llm_service):
+        nonlocal filler_done
+        if not filler_done:
+            filler_done = True
+            fillers = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
+            filler = fillers[int(time.time()) % len(fillers)]
+            logger.info(f"🎯 LLM filler: '{filler}'")
+            await task.queue_frame(TTSSpeakFrame(text=filler))
+
     # ==========================================
     # ⏱️ TIMING STATE
     # ==========================================
@@ -929,15 +941,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
-    first_filler = FirstResponseFiller() if greeting_played else None
-
     pipeline_components = [
         transport.input(),
         stt,
-    ]
-    if first_filler:
-        pipeline_components.append(first_filler)
-    pipeline_components += [
         user_idle,
         context_aggregator.user(),
         llm,
@@ -1008,13 +1014,6 @@ async def websocket_endpoint(websocket: WebSocket):
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-
-        if greeting_played and first_filler:
-            async def enable_after_greeting():
-                await asyncio.sleep(greeting_duration)
-                first_filler.enable()
-                logger.info(f"✅ Filler enabled after {greeting_duration:.1f}s")
-            asyncio.create_task(enable_after_greeting())
 
         if greeting_played:
             async def greeting_silence_watchdog():
