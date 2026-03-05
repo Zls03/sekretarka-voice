@@ -718,6 +718,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
+    filler = FirstResponseFiller()
     # ==========================================
     # ⏱️ TIMING STATE
     # ==========================================
@@ -934,6 +935,7 @@ async def websocket_endpoint(websocket: WebSocket):
         transport.input(),
         stt,
         user_idle,
+        filler,                        # ← DODANE
         context_aggregator.user(),
         llm,
         tts,
@@ -1003,7 +1005,17 @@ async def websocket_endpoint(websocket: WebSocket):
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-
+        if greeting_played:
+            # Greeting już odtworzony przez Twilio — filler może działać od razu
+            filler.enable()
+            logger.info("✅ Filler enabled (greeting was pre-played)")
+        else:
+            # Poczekaj aż bot skończy mówić swoje powitanie
+            async def enable_filler_after_greeting():
+                await asyncio.sleep(5.0)  # bezpieczny margines po TTS powitania
+                filler.enable()
+                logger.info("✅ Filler enabled (after greeting TTS)")
+            asyncio.create_task(enable_filler_after_greeting())
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
