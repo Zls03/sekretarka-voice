@@ -520,22 +520,18 @@ class FirstResponseFiller(FrameProcessor):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._first_done = False
-        self._enabled = False  # wyłączony dopóki MP3 nie skończy
+        self._enabled = False
     
     def enable(self):
         self._enabled = True
         logger.info("✅ FirstResponseFiller enabled")
     
     async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
         if (self._enabled
-            and not self._first_done
-            and isinstance(frame, UserStoppedSpeakingFrame)):
-            self._first_done = True
+                and isinstance(frame, UserStoppedSpeakingFrame)):
             filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
             FirstResponseFiller._filler_index += 1
-            logger.info(f"🎯 First response filler: '{filler}'")
+            logger.info(f"🎯 Filler: '{filler}'")
             await self.push_frame(TTSSpeakFrame(text=filler))
         await self.push_frame(frame, direction)
 # ==========================================
