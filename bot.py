@@ -688,7 +688,7 @@ async def websocket_endpoint(websocket: WebSocket):
             numerals=True,
             interim_results=True,
             utterance_end_ms=1200,
-            endpointing=500,
+            endpointing=700,
             keyterm=tenant_keyterms,
             no_delay=True
         )
