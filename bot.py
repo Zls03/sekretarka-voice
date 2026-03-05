@@ -502,7 +502,7 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
-from pipecat.frames.frames import UserStoppedSpeakingFrame, TranscriptionFrame
+from pipecat.frames.frames import UserStoppedSpeakingFrame, TranscriptionFrame, BotStoppedSpeakingFrame
 
 class FirstResponseFiller(FrameProcessor):
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
@@ -537,7 +537,12 @@ class FirstResponseFiller(FrameProcessor):
         await super().process_frame(frame, direction)
         now = time.time()
 
-        if isinstance(frame, UserStoppedSpeakingFrame):
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            if not self._first_done:
+                self.set_stt_ready()
+                logger.info("🔊 Greeting finished - STT now active")
+
+        elif isinstance(frame, UserStoppedSpeakingFrame):
             if now < self._stt_ready_time:
                 self._pending_stop_frame = (frame, direction)
                 return
@@ -1063,11 +1068,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
             asyncio.create_task(greeting_silence_watchdog())
             logger.info("⏰ Greeting silence watchdog started (10s)")
-    @transport.event_handler("on_bot_stopped_speaking")
-    async def on_bot_stopped_speaking(transport):
-        if not first_filler._first_done:
-            first_filler.set_stt_ready()
-            logger.info("🔊 Greeting finished - STT now active")
             
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
