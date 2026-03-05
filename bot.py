@@ -1000,10 +1000,13 @@ async def websocket_endpoint(websocket: WebSocket):
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
         if greeting_played:
+            greeting_duration = float(tenant.get("greeting_duration") or 3.0)
+            stream_delay = 2.0
+            mute_duration = max(1.0, greeting_duration - stream_delay)
+            logger.info(f"🔇 STT muted - mute duration: {mute_duration:.1f}s (greeting={greeting_duration}s)")
             stt._muted = True
-            logger.info("🔇 STT muted - waiting for MP3 to finish")
             async def enable_stt_after_greeting():
-                await asyncio.sleep(4.0)
+                await asyncio.sleep(mute_duration)
                 stt._muted = False
                 logger.info("🎤 STT unmuted after greeting MP3")
             asyncio.create_task(enable_stt_after_greeting())
