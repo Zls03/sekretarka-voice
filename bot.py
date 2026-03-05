@@ -273,7 +273,6 @@ async def twilio_incoming(request: Request):
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     {greeting_twiml}
-    <Mark name="greeting_end"/>
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
