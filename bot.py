@@ -718,19 +718,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
-
-    filler_done = False
-
-    @llm.event_handler("on_llm_started")
-    async def on_llm_started(llm_service):
-        nonlocal filler_done
-        if not filler_done:
-            filler_done = True
-            fillers = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
-            filler = fillers[int(time.time()) % len(fillers)]
-            logger.info(f"🎯 LLM filler: '{filler}'")
-            await task.queue_frame(TTSSpeakFrame(text=filler))
-
     # ==========================================
     # ⏱️ TIMING STATE
     # ==========================================
@@ -753,12 +740,24 @@ async def websocket_endpoint(websocket: WebSocket):
             timing_state["_stt_end_time"] = time.time()
             logger.info(f"⏱️ [STT DONE] '{text[:40]}...'")
 
+    filler_done = False
+
     @llm.event_handler("on_llm_started")
     async def on_llm_started(llm_service):
+        nonlocal filler_done
         stt_end = timing_state.get("_stt_end_time") or time.time()
         wait_ms = (time.time() - stt_end) * 1000
         timing_state["_llm_start_time"] = time.time()
         logger.info(f"⏱️ [LLM START] Wait from STT: {wait_ms:.0f}ms")
+        if not filler_done:
+            filler_done = True
+            fillers = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
+            filler = fillers[int(time.time()) % len(fillers)]
+            logger.info(f"🎯 LLM filler: '{filler}'")
+            try:
+                await task.queue_frame(TTSSpeakFrame(text=filler))
+            except Exception as e:
+                logger.warning(f"Filler error: {e}")
 
     @llm.event_handler("on_llm_first_token")
     async def on_llm_first_token(llm_service):
