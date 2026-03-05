@@ -261,12 +261,12 @@ async def twilio_incoming(request: Request):
         import base64
         audio_bytes = base64.b64decode(tenant["greeting_audio"])
         greeting_duration = len(audio_bytes) / 16000
-        greeting_duration = max(2.0, min(greeting_duration, 10.0))
+        greeting_duration = max(1.0, min(greeting_duration - 1.5, 10.0))
         cache_buster = int(time.time())
         greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
         logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting ({greeting_duration:.1f}s)")
     else:
-        greeting_duration = max(2.0, min(len(first_message) / 15.0, 8.0))
+        greeting_duration = max(1.0, min(len(first_message) / 15.0 - 1.0, 8.0))
         greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
         logger.info(f"🔊 Using Twilio Say for instant greeting ({greeting_duration:.1f}s)")
     
