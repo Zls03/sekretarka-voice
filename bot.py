@@ -227,38 +227,18 @@ async def twilio_incoming(request: Request):
             content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml"
         )
-
-    # === RATE LIMIT - max 3 połączenia z jednego numeru na godzinę ===
-    if caller and caller != "unknown":
-        try:
-            recent = await db.execute(
-                """SELECT COUNT(*) as cnt FROM call_logs 
-                   WHERE caller_phone = ? 
-                   AND created_at > datetime('now', '-1 hour')""",
-                [caller]
-            )
-            call_count = recent[0]["cnt"] if recent else 0
-
-            if call_count >= 3:
-                logger.warning(f"🚫 Rate limit: {caller} ({call_count} calls/hour)")
-                return Response(
-                    content='''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="pl-PL" voice="Google.pl-PL-Standard-E">
-        Przepraszamy, zbyt wiele połączeń z tego numeru. Proszę spróbować za godzinę.
-    </Say>
-    <Hangup/>
-</Response>''',
-                    media_type="application/xml"
-                )
-        except Exception as e:
-            logger.warning(f"⚠️ Rate limit check failed (non-critical): {e}")
+    
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     host = request.headers.get("host", "localhost")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
     
-    greeting_twiml = ""
-    logger.info(f"🔊 Bot will greet via TTS after WebSocket")
+    if tenant.get("greeting_audio"):
+        cache_buster = int(time.time())
+        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
+        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
+    else:
+        greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
+        logger.info(f"🔊 Using Twilio Say for instant greeting")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -267,9 +247,8 @@ async def twilio_incoming(request: Request):
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
-            <Parameter name="greetingPlayed" value="false" />
+            <Parameter name="greetingPlayed" value="true" />
             <Parameter name="callerPhone" value="{caller}" />
-            <Parameter name="playStartedAt" value="{int(time.time() * 1000)}" />
         </Stream>
     </Connect>
     <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Do widzenia.</Say>
@@ -459,7 +438,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.1",
+                rate="1.05",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
@@ -502,74 +481,32 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
-from pipecat.frames.frames import UserStoppedSpeakingFrame, TranscriptionFrame, BotStoppedSpeakingFrame
-
 class FirstResponseFiller(FrameProcessor):
-    FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
-    _filler_index = 0
+    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
-    def __init__(self, stt_ready_time=0, buffer_window=1.5, **kwargs):
+    FILLERS = [
+        "Moment.",
+        "Już sprawdzam.",
+        "Sekundkę.",
+    ]
+    
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
-        self._stt_ready_time = stt_ready_time
-        self._buffer_window = buffer_window
-        self._buffered_frames = []
-        self._pending_stop_frame = None
-        self._flushed = False
-        self._has_transcript = False
-
-    def set_stt_ready(self):
-        self._stt_ready_time = 0
-        logger.info("🎤 STT unlocked after greeting")
-
-    async def _flush_buffer(self):
-        if self._flushed:
-            return
-        self._flushed = True
-        for bf, bd in self._buffered_frames:
-            await self.push_frame(bf, bd)
-        self._buffered_frames.clear()
-        if self._pending_stop_frame:
-            await self.push_frame(self._pending_stop_frame[0], self._pending_stop_frame[1])
-            self._pending_stop_frame = None
-
+    
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        now = time.time()
-
-        if isinstance(frame, BotStoppedSpeakingFrame):
-            if not self._first_done:
-                self.set_stt_ready()
-                logger.info("🔊 Greeting finished - STT now active")
-
-        elif isinstance(frame, UserStoppedSpeakingFrame):
-            if now < self._stt_ready_time:
-                self._pending_stop_frame = (frame, direction)
-                return
-            await self._flush_buffer()
-            if not self._first_done:
-                self._first_done = True
-                filler = FirstResponseFiller.FILLERS[
-                    FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)
-                ]
-                FirstResponseFiller._filler_index += 1
-                logger.info(f"🎯 Filler: '{filler}'")
-                await self.push_frame(TTSSpeakFrame(text=filler))
-
-        elif isinstance(frame, TranscriptionFrame):
-            if now < self._stt_ready_time:
-                time_until_ready = self._stt_ready_time - now
-                if time_until_ready > self._buffer_window:
-                    logger.info(f"🔇 Dropping echo: '{frame.text}'")
-                    return
-                else:
-                    logger.info(f"🔄 Buffering: '{frame.text}'")
-                    self._buffered_frames.append((frame, direction))
-                    return
-            await self._flush_buffer()
-            if frame.text and frame.text.strip():
-                self._has_transcript = True
-
+        
+        if (not self._first_done
+            and isinstance(frame, TranscriptionFrame)
+            and frame.text
+            and len(frame.text.strip()) > 2):
+            
+            self._first_done = True
+            filler = random.choice(self.FILLERS)
+            logger.info(f"🎯 First response filler: '{filler}'")
+            await self.push_frame(TTSSpeakFrame(text=filler))
+        
         await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
@@ -610,7 +547,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = custom_params.get("greetingPlayed", "false") == "true"
                 caller_phone = custom_params.get("callerPhone", "nieznany")
-                play_started_at = int(custom_params.get("playStartedAt", 0)) / 1000
 
                 logger.info(f"📋 Stream started: {stream_sid}")
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
@@ -634,10 +570,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             for s in staff:
                                 staff_dict = dict(s)
                                 staff_services = await db.execute(
-                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price, srv.description
-                                    FROM services srv
-                                    JOIN staff_services ss ON srv.id = ss.service_id
-                                    WHERE ss.staff_id = ?""",
+                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
+                                       FROM services srv
+                                       JOIN staff_services ss ON srv.id = ss.service_id
+                                       WHERE ss.staff_id = ?""",
                                     [s["id"]]
                                 )
                                 staff_dict["services"] = [dict(svc) for svc in staff_services]
@@ -705,8 +641,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,
                     start_secs=0.2,
-                    stop_secs=0.6,
-                    min_volume=0.3,
+                    stop_secs=0.4,
+                    min_volume=0.4,
                 )
             ),
             serializer=TwilioFrameSerializer(
@@ -729,10 +665,9 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1200,
-            endpointing=500,
+            utterance_end_ms=1100,
+            endpointing=350,
             keyterm=tenant_keyterms,
-            no_delay=True
         )
     )
 
@@ -745,7 +680,7 @@ async def websocket_endpoint(websocket: WebSocket):
         model="gpt-4.1-mini",
         params=BaseOpenAILLMService.InputParams(
             temperature=0.3,
-            max_completion_tokens=120,
+            max_completion_tokens=150,
         ),
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
@@ -958,21 +893,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.error(f"End call error: {e}")
                     await task.cancel()
                 break
-    first_filler = FirstResponseFiller(stt_ready_time=time.time() + 30.0)
+
+    # ==========================================
+    # PIPELINE
+    # ==========================================
+
+    first_filler = FirstResponseFiller() if greeting_played else None
 
     pipeline_components = [
         transport.input(),
         stt,
+    ]
+    if first_filler:
+        pipeline_components.append(first_filler)
+    pipeline_components += [
         user_idle,
         context_aggregator.user(),
-        first_filler,  # ← po aggregatorze, nie przed
         llm,
         tts,
         transport.output(),
         context_aggregator.assistant(),
     ]
-
+    
     pipeline = Pipeline(pipeline_components)
+
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
@@ -982,6 +926,7 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_sample_rate=8000,
         )
     )
+
     # ==========================================
     # PIPECAT FLOWS
     # ==========================================
@@ -1025,17 +970,13 @@ async def websocket_endpoint(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
+
+        # Równolegle: warm-up LLM + monitoring (TTS warm-up wyłączony - filler go zastępuje)
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
 
-        # ✅ System prompt SYNCHRONICZNIE przed wszystkim
-        initial_node = create_initial_node(tenant, greeting_played)
-        system_messages = initial_node.get("role_messages", []) + initial_node.get("task_messages", [])
-        if system_messages:
-            context.set_messages(system_messages)
-            logger.info(f"✅ System prompt set in context: {len(system_messages)} messages")
-
-        await flow_manager.initialize(initial_node)
+        # Inicjalizacja flow - tylko raz!
+        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played:
             async def greeting_silence_watchdog():
@@ -1073,11 +1014,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
             asyncio.create_task(greeting_silence_watchdog())
             logger.info("⏰ Greeting silence watchdog started (10s)")
-            
+
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        nonlocal conversation_ended
-        conversation_ended = True
         logger.info("📴 Client disconnected")
 
     # ==========================================
