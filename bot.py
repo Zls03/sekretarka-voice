@@ -1032,6 +1032,14 @@ async def websocket_endpoint(websocket: WebSocket):
         # Daj LLM 300ms head start zanim flow zainicjuje
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
+        # Wstrzyknij system prompt bezpośrednio do kontekstu LLM
+        from pipecat.frames.frames import LLMMessagesAppendFrame
+        initial_node = create_initial_node(tenant, greeting_played)
+        system_messages = initial_node.get("role_messages", []) + initial_node.get("task_messages", [])
+        if system_messages:
+            await task.queue_frame(LLMMessagesAppendFrame(messages=system_messages))
+            logger.info(f"✅ System prompt injected: {len(system_messages)} messages")
+
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
