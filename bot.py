@@ -954,9 +954,9 @@ async def websocket_endpoint(websocket: WebSocket):
     pipeline_components = [
         transport.input(),
         stt,
-        first_filler,
         user_idle,
         context_aggregator.user(),
+        first_filler,  # ← po aggregatorze, nie przed
         llm,
         tts,
         transport.output(),
