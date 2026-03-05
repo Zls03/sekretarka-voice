@@ -521,16 +521,6 @@ class FirstResponseFiller(FrameProcessor):
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         
-        if (not self._first_done
-            and isinstance(frame, UserStoppedSpeakingFrame)):
-            
-            self._first_done = True
-            filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
-            FirstResponseFiller._filler_index += 1
-            logger.info(f"🎯 First response filler: '{filler}'")
-            await self.push_frame(TTSSpeakFrame(text=filler))
-        
-        await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -733,6 +723,13 @@ async def websocket_endpoint(websocket: WebSocket):
         if text and text.strip():
             timing_state["_stt_end_time"] = time.time()
             logger.info(f"⏱️ [STT DONE] '{text[:40]}...'")
+            if first_filler and not first_filler._first_done:
+                first_filler._first_done = True
+                fillers = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
+                filler_text = fillers[FirstResponseFiller._filler_index % len(fillers)]
+                FirstResponseFiller._filler_index += 1
+                await task.queue_frame(TTSSpeakFrame(text=filler_text))
+                logger.info(f"🎯 Filler: '{filler_text}'")
 
     @llm.event_handler("on_llm_started")
     async def on_llm_started(llm_service):
