@@ -274,6 +274,7 @@ async def twilio_incoming(request: Request):
             <Parameter name="tenantId" value="{tenant['id']}" />
             <Parameter name="greetingPlayed" value="true" />
             <Parameter name="callerPhone" value="{caller}" />
+            <Parameter name="playStartedAt" value="{int(time.time() * 1000)}" />
         </Stream>
     </Connect>
     <Say language="pl-PL" voice="Google.pl-PL-Standard-E">Do widzenia.</Say>
@@ -520,7 +521,8 @@ class FirstResponseFiller(FrameProcessor):
         self._buffered_frames = []
         self._pending_stop_frame = None
         self._flushed = False
-    
+        self._has_transcript = False
+
     async def _flush_buffer(self):
         if self._flushed:
             return
@@ -531,17 +533,25 @@ class FirstResponseFiller(FrameProcessor):
         if self._pending_stop_frame:
             await self.push_frame(self._pending_stop_frame[0], self._pending_stop_frame[1])
             self._pending_stop_frame = None
-    
+
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         now = time.time()
-        
+
         if isinstance(frame, UserStoppedSpeakingFrame):
             if now < self._stt_ready_time:
                 self._pending_stop_frame = (frame, direction)
                 return
             await self._flush_buffer()
-        
+            if not self._first_done and self._has_transcript:
+                self._first_done = True
+                filler = FirstResponseFiller.FILLERS[
+                    FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)
+                ]
+                FirstResponseFiller._filler_index += 1
+                logger.info(f"🎯 Filler: '{filler}'")
+                await self.push_frame(TTSSpeakFrame(text=filler))
+
         elif isinstance(frame, TranscriptionFrame):
             if now < self._stt_ready_time:
                 time_until_ready = self._stt_ready_time - now
@@ -552,18 +562,10 @@ class FirstResponseFiller(FrameProcessor):
                     logger.info(f"🔄 Buffering: '{frame.text}'")
                     self._buffered_frames.append((frame, direction))
                     return
-            
             await self._flush_buffer()
-            
-            if not self._first_done and frame.text and frame.text.strip():
-                self._first_done = True
-                filler = FirstResponseFiller.FILLERS[
-                    FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)
-                ]
-                FirstResponseFiller._filler_index += 1
-                logger.info(f"🎯 Filler: '{filler}'")
-                await self.push_frame(TTSSpeakFrame(text=filler))
-        
+            if frame.text and frame.text.strip():
+                self._has_transcript = True
+
         await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
@@ -604,6 +606,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = custom_params.get("greetingPlayed", "false") == "true"
                 caller_phone = custom_params.get("callerPhone", "nieznany")
+                play_started_at = int(custom_params.get("playStartedAt", 0)) / 1000
 
                 logger.info(f"📋 Stream started: {stream_sid}")
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
@@ -958,9 +961,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
     if greeting_played:
         greeting_duration = float(tenant.get("greeting_duration") or 4.6)
-        stt_ready_time = time.time() + greeting_duration
-        logger.info(f"🔇 Filler will ignore transcripts for {greeting_duration}s")
-        first_filler = FirstResponseFiller(stt_ready_time=stt_ready_time)
+        if play_started_at > 0:
+            elapsed = time.time() - play_started_at
+            remaining = max(0.3, greeting_duration - elapsed)
+            logger.info(f"🔇 MP3 started {elapsed:.1f}s ago, {remaining:.1f}s remaining")
+        else:
+            remaining = greeting_duration
+        stt_ready_time = time.time() + remaining
+        first_filler = FirstResponseFiller(stt_ready_time=stt_ready_time, buffer_window=1.5)
     else:
         first_filler = None
 
