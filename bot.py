@@ -512,24 +512,56 @@ class FirstResponseFiller(FrameProcessor):
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0
     
-    def __init__(self, stt_ready_time=0, **kwargs):
+    def __init__(self, stt_ready_time=0, buffer_window=1.5, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
         self._stt_ready_time = stt_ready_time
+        self._buffer_window = buffer_window
+        self._buffered_frames = []
+        self._pending_stop_frame = None
+        self._flushed = False
+    
+    async def _flush_buffer(self):
+        if self._flushed:
+            return
+        self._flushed = True
+        for bf, bd in self._buffered_frames:
+            await self.push_frame(bf, bd)
+        self._buffered_frames.clear()
+        if self._pending_stop_frame:
+            await self.push_frame(self._pending_stop_frame[0], self._pending_stop_frame[1])
+            self._pending_stop_frame = None
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
+        now = time.time()
         
-        if isinstance(frame, TranscriptionFrame):
-            if time.time() < self._stt_ready_time:
-                logger.info(f"🔇 Ignoring early transcript (echo): '{frame.text}'")
-                return  # NIE przekazuj dalej - blokuj echo
+        if isinstance(frame, UserStoppedSpeakingFrame):
+            if now < self._stt_ready_time:
+                self._pending_stop_frame = (frame, direction)
+                return
+            await self._flush_buffer()
+        
+        elif isinstance(frame, TranscriptionFrame):
+            if now < self._stt_ready_time:
+                time_until_ready = self._stt_ready_time - now
+                if time_until_ready > self._buffer_window:
+                    logger.info(f"🔇 Dropping echo: '{frame.text}'")
+                    return
+                else:
+                    logger.info(f"🔄 Buffering: '{frame.text}'")
+                    self._buffered_frames.append((frame, direction))
+                    return
+            
+            await self._flush_buffer()
             
             if not self._first_done and frame.text and frame.text.strip():
                 self._first_done = True
-                filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
+                filler = FirstResponseFiller.FILLERS[
+                    FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)
+                ]
                 FirstResponseFiller._filler_index += 1
-                logger.info(f"🎯 First response filler: '{filler}'")
+                logger.info(f"🎯 Filler: '{filler}'")
                 await self.push_frame(TTSSpeakFrame(text=filler))
         
         await self.push_frame(frame, direction)
