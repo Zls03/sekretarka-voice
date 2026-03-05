@@ -949,7 +949,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.error(f"End call error: {e}")
                     await task.cancel()
                 break
-    first_filler = FirstResponseFiller(stt_ready_time=0)
+    first_filler = FirstResponseFiller(stt_ready_time=time.time() + 1.5)
 
     pipeline_components = [
         transport.input(),
@@ -1021,7 +1021,6 @@ async def websocket_endpoint(websocket: WebSocket):
         asyncio.create_task(check_max_duration())
 
         # Daj LLM 300ms head start zanim flow zainicjuje
-        await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played:
