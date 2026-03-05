@@ -538,7 +538,7 @@ class FirstResponseFiller(FrameProcessor):
                 self._pending_stop_frame = (frame, direction)
                 return
             await self._flush_buffer()
-            if not self._first_done and self._has_transcript:
+            if not self._first_done:
                 self._first_done = True
                 filler = FirstResponseFiller.FILLERS[
                     FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)
