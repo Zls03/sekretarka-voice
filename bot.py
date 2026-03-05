@@ -1003,6 +1003,28 @@ async def websocket_endpoint(websocket: WebSocket):
         await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
+        if greeting_played and first_filler:
+            async def wait_for_mark():
+                try:
+                    while True:
+                        message = await asyncio.wait_for(
+                            websocket.receive_text(), timeout=10.0
+                        )
+                        data = json.loads(message)
+                        if data.get("event") == "mark":
+                            mark_name = data.get("mark", {}).get("name", "")
+                            logger.info(f"🎵 Mark: {mark_name}")
+                            if mark_name == "greeting_end":
+                                first_filler.enable()
+                                break
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️ Mark timeout - enabling filler anyway")
+                    first_filler.enable()
+                except Exception as e:
+                    logger.warning(f"⚠️ Mark error: {e} - enabling filler anyway")
+                    first_filler.enable()
+            asyncio.create_task(wait_for_mark())
+
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
