@@ -999,7 +999,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
+        logger.info(f"🔍 STT methods: {[m for m in dir(stt) if 'audio' in m.lower() or 'enable' in m.lower() or 'mute' in m.lower()]}")
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
+        if greeting_played:
+            await stt.set_audio_enabled(False)
+            async def enable_stt_after_greeting():
+                await asyncio.sleep(4.0)
+                await stt.set_audio_enabled(True)
+                logger.info("🎤 STT enabled after greeting MP3")
+            asyncio.create_task(enable_stt_after_greeting())
 
         if greeting_played:
             async def greeting_silence_watchdog():
@@ -1040,6 +1048,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        nonlocal conversation_ended
+        conversation_ended = True
         logger.info("📴 Client disconnected")
 
     # ==========================================
