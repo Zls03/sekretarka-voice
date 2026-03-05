@@ -512,22 +512,25 @@ class FirstResponseFiller(FrameProcessor):
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0
     
-    def __init__(self, **kwargs):
+    def __init__(self, stt_ready_time=0, **kwargs):
         super().__init__(**kwargs)
         self._first_done = False
+        self._stt_ready_time = stt_ready_time
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         
-        if (not self._first_done
-            and isinstance(frame, TranscriptionFrame)
-            and frame.text and frame.text.strip()):
+        if isinstance(frame, TranscriptionFrame):
+            if time.time() < self._stt_ready_time:
+                logger.info(f"🔇 Ignoring early transcript (echo): '{frame.text}'")
+                return  # NIE przekazuj dalej - blokuj echo
             
-            self._first_done = True
-            filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
-            FirstResponseFiller._filler_index += 1
-            logger.info(f"🎯 First response filler: '{filler}'")
-            await self.push_frame(TTSSpeakFrame(text=filler))
+            if not self._first_done and frame.text and frame.text.strip():
+                self._first_done = True
+                filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
+                FirstResponseFiller._filler_index += 1
+                logger.info(f"🎯 First response filler: '{filler}'")
+                await self.push_frame(TTSSpeakFrame(text=filler))
         
         await self.push_frame(frame, direction)
 # ==========================================
@@ -921,7 +924,13 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
-    first_filler = FirstResponseFiller() if greeting_played else None
+    if greeting_played:
+        greeting_duration = float(tenant.get("greeting_duration") or 4.6)
+        stt_ready_time = time.time() + greeting_duration
+        logger.info(f"🔇 Filler will ignore transcripts for {greeting_duration}s")
+        first_filler = FirstResponseFiller(stt_ready_time=stt_ready_time)
+    else:
+        first_filler = None
 
     pipeline_components = [
         transport.input(),
@@ -999,17 +1008,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
-        if greeting_played:
-            greeting_duration = float(tenant.get("greeting_duration") or 3.0)
-            stream_delay = 2.0
-            mute_duration = max(1.0, greeting_duration - stream_delay)
-            logger.info(f"🔇 STT muted - mute duration: {mute_duration:.1f}s (greeting={greeting_duration}s)")
-            stt._muted = True
-            async def enable_stt_after_greeting():
-                await asyncio.sleep(mute_duration)
-                stt._muted = False
-                logger.info("🎤 STT unmuted after greeting MP3")
-            asyncio.create_task(enable_stt_after_greeting())
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
 
         if greeting_played:
