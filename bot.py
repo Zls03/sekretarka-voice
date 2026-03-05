@@ -257,13 +257,8 @@ async def twilio_incoming(request: Request):
     host = request.headers.get("host", "localhost")
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
     
-    if tenant.get("greeting_audio"):
-        cache_buster = int(time.time())
-        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
-        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
-    else:
-        greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
-        logger.info(f"🔊 Using Twilio Say for instant greeting")
+    greeting_twiml = ""
+    logger.info(f"🔊 Bot will greet via TTS after WebSocket")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -272,7 +267,7 @@ async def twilio_incoming(request: Request):
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
-            <Parameter name="greetingPlayed" value="true" />
+            <Parameter name="greetingPlayed" value="false" />
             <Parameter name="callerPhone" value="{caller}" />
             <Parameter name="playStartedAt" value="{int(time.time() * 1000)}" />
         </Stream>
