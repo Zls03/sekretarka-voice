@@ -518,6 +518,10 @@ class FirstResponseFiller(FrameProcessor):
         self._flushed = False
         self._has_transcript = False
 
+    def set_stt_ready(self):
+        self._stt_ready_time = 0
+        logger.info("🎤 STT unlocked after greeting")
+
     async def _flush_buffer(self):
         if self._flushed:
             return
@@ -949,7 +953,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.error(f"End call error: {e}")
                     await task.cancel()
                 break
-    first_filler = FirstResponseFiller(stt_ready_time=time.time() + 1.5)
+    first_filler = FirstResponseFiller(stt_ready_time=time.time() + 30.0)
 
     pipeline_components = [
         transport.input(),
@@ -1059,7 +1063,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
             asyncio.create_task(greeting_silence_watchdog())
             logger.info("⏰ Greeting silence watchdog started (10s)")
-
+    @transport.event_handler("on_bot_stopped_speaking")
+    async def on_bot_stopped_speaking(transport):
+        if not first_filler._first_done:
+            first_filler.set_stt_ready()
+            logger.info("🔊 Greeting finished - STT now active")
+            
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         nonlocal conversation_ended
