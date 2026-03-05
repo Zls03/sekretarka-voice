@@ -258,17 +258,12 @@ async def twilio_incoming(request: Request):
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
     
     if tenant.get("greeting_audio"):
-        import base64
-        audio_bytes = base64.b64decode(tenant["greeting_audio"])
-        greeting_duration = len(audio_bytes) / 16000
-        greeting_duration = max(1.0, min(greeting_duration - 1.5, 10.0))
         cache_buster = int(time.time())
         greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
-        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting ({greeting_duration:.1f}s)")
+        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
     else:
-        greeting_duration = max(1.0, min(len(first_message) / 15.0 - 1.0, 8.0))
         greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
-        logger.info(f"🔊 Using Twilio Say for instant greeting ({greeting_duration:.1f}s)")
+        logger.info(f"🔊 Using Twilio Say for instant greeting")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -278,7 +273,6 @@ async def twilio_incoming(request: Request):
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
             <Parameter name="greetingPlayed" value="true" />
-            <Parameter name="greetingDuration" value="{greeting_duration:.1f}" />
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
@@ -515,25 +509,28 @@ def create_tts_service(tenant: dict):
 from pipecat.frames.frames import UserStoppedSpeakingFrame
 
 class FirstResponseFiller(FrameProcessor):
+    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
+    
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._enabled = False
-    
-    def enable(self):
-        self._enabled = True
-        logger.info("✅ FirstResponseFiller enabled")
+        self._first_done = False
     
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if (self._enabled
-                and isinstance(frame, UserStoppedSpeakingFrame)):
+        
+        if (not self._first_done
+            and isinstance(frame, UserStoppedSpeakingFrame)):
+            
+            self._first_done = True
             filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
             FirstResponseFiller._filler_index += 1
-            logger.info(f"🎯 Filler: '{filler}'")
+            logger.info(f"🎯 First response filler: '{filler}'")
             await self.push_frame(TTSSpeakFrame(text=filler))
+        
+        await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -572,7 +569,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = custom_params.get("greetingPlayed", "false") == "true"
-                greeting_duration = float(custom_params.get("greetingDuration", "3.0"))
                 caller_phone = custom_params.get("callerPhone", "nieznany")
 
                 logger.info(f"📋 Stream started: {stream_sid}")
@@ -695,6 +691,7 @@ async def websocket_endpoint(websocket: WebSocket):
             utterance_end_ms=1200,
             endpointing=500,
             keyterm=tenant_keyterms,
+            no_delay=True
         )
     )
 
@@ -714,7 +711,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)
-    filler = FirstResponseFiller()
+
     # ==========================================
     # ⏱️ TIMING STATE
     # ==========================================
@@ -925,11 +922,16 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
+    first_filler = FirstResponseFiller() if greeting_played else None
+
     pipeline_components = [
         transport.input(),
         stt,
+    ]
+    if first_filler:
+        pipeline_components.append(first_filler)
+    pipeline_components += [
         user_idle,
-        filler,                        # ← DODANE
         context_aggregator.user(),
         llm,
         tts,
@@ -999,17 +1001,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # Daj LLM 300ms head start zanim flow zainicjuje
         await asyncio.sleep(0.3)
         await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-        if greeting_played:
-            # Greeting już odtworzony przez Twilio — filler może działać od razu
-            filler.enable()
-            logger.info("✅ Filler enabled (greeting was pre-played)")
-        else:
-            # Poczekaj aż bot skończy mówić swoje powitanie
-            async def enable_filler_after_greeting():
-                await asyncio.sleep(5.0)  # bezpieczny margines po TTS powitania
-                filler.enable()
-                logger.info("✅ Filler enabled (after greeting TTS)")
-            asyncio.create_task(enable_filler_after_greeting())
+
         if greeting_played:
             async def greeting_silence_watchdog():
                 nonlocal conversation_ended
