@@ -506,11 +506,9 @@ def create_tts_service(tenant: dict):
         tts.add_text_transformer(expand_abbreviations)
         return tts
 
-from pipecat.frames.frames import UserStoppedSpeakingFrame
+from pipecat.frames.frames import UserStoppedSpeakingFrame, TranscriptionFrame
 
 class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
-    
     FILLERS = ["Chwileczkę.", "Już sprawdzam.", "Już patrzę."]
     _filler_index = 0
     
@@ -522,7 +520,8 @@ class FirstResponseFiller(FrameProcessor):
         await super().process_frame(frame, direction)
         
         if (not self._first_done
-            and isinstance(frame, UserStoppedSpeakingFrame)):
+            and isinstance(frame, TranscriptionFrame)
+            and frame.text and frame.text.strip()):
             
             self._first_done = True
             filler = FirstResponseFiller.FILLERS[FirstResponseFiller._filler_index % len(FirstResponseFiller.FILLERS)]
