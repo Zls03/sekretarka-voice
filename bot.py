@@ -8,7 +8,7 @@ import time
 import os
 import sys
 import json
-from pipecat.frames.frames import EndFrame, TTSSpeakFrame
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame
 import asyncio
 import random
 from pipecat.processors.frame_processor import FrameProcessor
@@ -230,24 +230,15 @@ async def twilio_incoming(request: Request):
     
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     host = request.headers.get("host", "localhost")
-    first_message = tenant.get("first_message") or f"Dzień dobry, tu {tenant.get('name')}. W czym mogę pomóc?"
-    
-    if tenant.get("greeting_audio"):
-        cache_buster = int(time.time())
-        greeting_twiml = f'<Play>https://{host}/greeting-audio/{tenant["id"]}?v={cache_buster}</Play>'
-        logger.info(f"🎵 Using pre-generated ElevenLabs MP3 greeting")
-    else:
-        greeting_twiml = f'<Say language="pl-PL" voice="Google.pl-PL-Standard-E">{first_message}</Say>'
-        logger.info(f"🔊 Using Twilio Say for instant greeting")
+    logger.info(f"📢 Greeting will play via Pipecat TTS (non-interruptible)")
     
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    {greeting_twiml}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="tenantId" value="{tenant['id']}" />
-            <Parameter name="greetingPlayed" value="true" />
+            <Parameter name="greetingPlayed" value="false" />
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
@@ -508,6 +499,35 @@ class FirstResponseFiller(FrameProcessor):
             await self.push_frame(TTSSpeakFrame(text=filler))
         
         await self.push_frame(frame, direction)
+
+class GreetingGate(FrameProcessor):
+    """
+    Wyłącza interruptions na czas greeting TTS.
+    Po pierwszym BotStoppedSpeakingFrame (= koniec greeting) → włącza z powrotem.
+    """
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._greeting_done = False
+        self._pipeline_processors = []
+    
+    def set_processors(self, processors: list):
+        self._pipeline_processors = processors
+    
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        
+        if not self._greeting_done and isinstance(frame, BotStoppedSpeakingFrame):
+            self._greeting_done = True
+            logger.info("🔓 Greeting finished — enabling interruptions")
+            count = 0
+            for proc in self._pipeline_processors:
+                if hasattr(proc, '_allow_interruptions'):
+                    proc._allow_interruptions = True
+                    count += 1
+            logger.info(f"🔓 Interruptions enabled on {count} processors")
+        
+        await self.push_frame(frame, direction)     
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -545,7 +565,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 call_sid = custom_params.get("callSid", "unknown")
                 tenant_id = custom_params.get("tenantId")
-                greeting_played = custom_params.get("greetingPlayed", "false") == "true"
+                greeting_played = False  # Greeting zawsze przez Pipecat TTS
                 caller_phone = custom_params.get("callerPhone", "nieznany")
 
                 logger.info(f"📋 Stream started: {stream_sid}")
@@ -898,19 +918,18 @@ async def websocket_endpoint(websocket: WebSocket):
     # PIPELINE
     # ==========================================
 
-    first_filler = FirstResponseFiller() if greeting_played else None
+    greeting_gate = GreetingGate()
+    first_filler = FirstResponseFiller()
 
     pipeline_components = [
         transport.input(),
         stt,
-    ]
-    if first_filler:
-        pipeline_components.append(first_filler)
-    pipeline_components += [
+        first_filler,
         user_idle,
         context_aggregator.user(),
         llm,
         tts,
+        greeting_gate,
         transport.output(),
         context_aggregator.assistant(),
     ]
@@ -920,12 +939,14 @@ async def websocket_endpoint(websocket: WebSocket):
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=True,
+            allow_interruptions=False,
             enable_metrics=True,
             audio_in_sample_rate=8000,
             audio_out_sample_rate=8000,
         )
     )
+
+    greeting_gate.set_processors(pipeline.processors)
 
     # ==========================================
     # PIPECAT FLOWS
@@ -971,50 +992,13 @@ async def websocket_endpoint(websocket: WebSocket):
     async def on_client_connected(transport, client):
         logger.info("🎤 Client connected - starting flow")
 
-        # Równolegle: warm-up LLM + monitoring (TTS warm-up wyłączony - filler go zastępuje)
         asyncio.create_task(send_warm_prompt())
         asyncio.create_task(check_max_duration())
 
-        # Inicjalizacja flow - tylko raz!
-        await flow_manager.initialize(create_initial_node(tenant, greeting_played))
-
-        if greeting_played:
-            async def greeting_silence_watchdog():
-                nonlocal conversation_ended
-                await asyncio.sleep(10.0)
-                if conversation_ended or flow_manager.state.get("conversation_ended"):
-                    return
-                try:
-                    ctx = flow_manager.get_current_context()
-                    has_user = any(m.get("role") == "user" for m in ctx)
-                except:
-                    has_user = False
-                if has_user:
-                    logger.info("⏰ Watchdog: user already responded, stopping")
-                    return
-                logger.info("⏰ No response after greeting - saying Halo")
-                await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
-                await asyncio.sleep(6.0)
-                if conversation_ended or flow_manager.state.get("conversation_ended"):
-                    return
-                try:
-                    ctx2 = flow_manager.get_current_context()
-                    has_user2 = any(m.get("role") == "user" for m in ctx2)
-                except:
-                    has_user2 = False
-                if has_user2:
-                    logger.info("⏰ Watchdog: user responded after Halo, stopping")
-                    return
-                logger.info("⏰ Still no response - ending call")
-                conversation_ended = True
-                await task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
-                await asyncio.sleep(2.0)
-                await task.queue_frame(EndFrame())
-                logger.info("🔚 EndFrame sent from greeting watchdog")
-
-            asyncio.create_task(greeting_silence_watchdog())
-            logger.info("⏰ Greeting silence watchdog started (10s)")
-
+        # Greeting przez Pipecat TTS (nieprzerywalny — allow_interruptions=False)
+        # GreetingGate włączy interruptions po zakończeniu greeting
+        await flow_manager.initialize(create_initial_node(tenant, greeting_played=False))
+        logger.info("📢 Greeting playing via TTS (non-interruptible)")
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("📴 Client disconnected")
