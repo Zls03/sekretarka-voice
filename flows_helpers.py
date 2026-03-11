@@ -609,6 +609,11 @@ def build_business_context(tenant: dict) -> str:
     parts = []
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     
+    # Branża
+    industry = tenant.get("industry", "").strip()
+    if industry:
+        parts.append(f"BRANŻA: {industry}")
+    
     # Godziny pracy
     working_hours = tenant.get("working_hours", [])
     if working_hours:
@@ -716,7 +721,9 @@ def build_business_context(tenant: dict) -> str:
                                 close_t = format_time_for_tts(day_data['close'])
                                 hours_list.append(f"{day_pl}: {open_t}-{close_t}")
                         if hours_list:
-                            staff_hours.append(f"{s['name']}: {', '.join(hours_list)}")
+                            position = s.get("position", "").strip()
+                            name_part = f"{s['name']} ({position})" if position else s['name']
+                            staff_hours.append(f"{name_part}: {', '.join(hours_list)}")
                     except:
                         pass
             if staff_hours:

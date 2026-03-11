@@ -220,11 +220,13 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
         staff_info = []
         for s in staff:
             staff_services = s.get("services", [])
+            position = s.get("position", "").strip()
+            position_part = f", {position}" if position else ""
             if staff_services:
                 svc_names = [svc["name"] for svc in staff_services]
-                staff_info.append(f"{s['name']} ({', '.join(svc_names)})")
+                staff_info.append(f"{s['name']}{position_part} ({', '.join(svc_names)})")
             else:
-                staff_info.append(f"{s['name']} (wszystkie usługi)")
+                staff_info.append(f"{s['name']}{position_part} (wszystkie usługi)")
         staff_list = ", ".join(staff_info)
     else:
         staff_list = ", ".join([s["name"] for s in staff]) if staff else "brak pracowników"
