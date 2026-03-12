@@ -1014,7 +1014,7 @@ def create_booking_node(tenant: Dict) -> Dict:
             "role": "system",
             "content": f"""Jesteś asystentką rezerwacji. {today_info}
 
-USŁUGI: {services_text}
+USŁUGI (wymień ZAWSZE WSZYSTKIE): {services_text}
 PRACOWNICY: {staff_text}
 
 ZASADY:
@@ -1029,6 +1029,8 @@ ZASADY:
         "task_messages": [{
             "role": "system",
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
+NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
+Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
@@ -1099,7 +1101,7 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     flow_manager.state["booking_confirmed"] = False
     
     services = tenant.get("services", [])
-    names = natural_list([s["name"] for s in services[:4]])
+    names = natural_list([s["name"] for s in services])
     
     from pipecat.frames.frames import TTSSpeakFrame
     await flow_manager.task.queue_frame(
