@@ -1,6 +1,7 @@
 # Pipecat framework
-pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq,cartesia,google]
-pipecat-ai-flows
+pipecat-ai[twilio,deepgram,elevenlabs,openai,silero,groq,cartesia,google]==0.0.104
+pipecat-ai-flows==0.0.11
+pipecat-ai[azure]==0.0.104
 # Server
 fastapi
 uvicorn[standard]
@@ -11,10 +12,8 @@ aiohttp
 httpx
 # OpenAI
 openai
-pipecat-ai[azure]
 google-cloud-texttospeech
 google-generativeai
 pydub==0.25.1
 deepgram-sdk==3.7.7
-
 dateparser
