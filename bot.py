@@ -672,7 +672,7 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     )
 
-    from deepgram import ListenWebSocketOptions as LiveOptions
+    from deepgram import LiveOptions
 
     tenant_keyterms = build_keyterms(tenant)
 
