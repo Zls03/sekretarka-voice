@@ -564,6 +564,101 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
     except Exception as e:
         logger.error(f"📧 Send email error: {e}")
 
+
+async def send_lead_email(tenant: dict, caller_phone: str, conversation_text: str, to_email: str, call_duration: int = None):
+    """Wysyła email z podsumowaniem rozmowy do właściciela"""
+    import httpx
+    import os
+    import openai
+    
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        logger.warning("📧 RESEND_API_KEY not configured")
+        return
+    
+    business_name = tenant.get("name", "Firma")
+    
+    # GPT streszczenie
+    summary = ""
+    try:
+        oai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = oai_client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "Streść rozmowę telefoniczną w 2-3 zdaniach po polsku. Napisz: czego klient szukał, jakie pytania zadał, czy umówił wizytę, i jaki był wynik rozmowy. Pisz zwięźle i konkretnie."},
+                {"role": "user", "content": conversation_text}
+            ],
+            max_tokens=200,
+            temperature=0.3
+        )
+        summary = response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"📧 GPT summary error: {e}")
+        summary = "Nie udało się wygenerować streszczenia."
+    
+    # HTML emaila
+    now = datetime.now()
+    date_str = now.strftime("%d.%m.%Y, %H:%M")
+    
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1a1a2e; color: white; padding: 20px 25px; border-radius: 12px 12px 0 0;">
+            <h2 style="margin: 0; font-size: 18px;">📞 Raport z rozmowy</h2>
+            <p style="margin: 5px 0 0; opacity: 0.8; font-size: 13px;">{business_name} • {date_str}</p>
+        </div>
+        
+        <div style="background: white; padding: 25px; border: 1px solid #e5e7eb; border-top: none;">
+            <div style="background: #f0f9ff; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+                <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1e40af;">Podsumowanie</p>
+                <p style="margin: 8px 0 0; color: #334155; font-size: 14px; line-height: 1.5;">{summary}</p>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; color: #64748b; font-size: 13px; width: 100px;">Telefon</td>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px;"><a href="tel:{caller_phone}" style="color: #3b82f6; text-decoration: none;">{caller_phone}</a></td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; color: #64748b; font-size: 13px;">Data</td>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px;">{date_str}</td>
+                </tr>
+            </table>
+            
+            <details style="margin-top: 15px;">
+                <summary style="cursor: pointer; color: #64748b; font-size: 13px; padding: 8px 0;">Pokaż pełną transkrypcję</summary>
+                <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-top: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; color: #475569;">{conversation_text}</div>
+            </details>
+        </div>
+        
+        <div style="padding: 15px 25px; background: #f8fafc; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="margin: 0; color: #94a3b8; font-size: 11px; text-align: center;">Raport wygenerowany automatycznie przez asystenta głosowego BizVoice.pl</p>
+        </div>
+    </div>
+    """
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": "Voice AI <noreply@bizvoice.pl>",
+                    "to": [to_email],
+                    "subject": f"📞 Rozmowa z {caller_phone} — {business_name}",
+                    "html": html_content
+                },
+                timeout=10.0
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"📧 Lead email sent to {to_email}")
+            else:
+                logger.error(f"📧 Resend error: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"📧 Send lead email error: {e}")
 # ==========================================
 # NODE: Zakończenie
 # ==========================================

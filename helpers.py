@@ -144,5 +144,8 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
         "transfer_enabled": int(tenant.get("transfer_enabled") or 0),
         "transfer_number": tenant.get("transfer_number") or "",
         "notification_email": tenant.get("notification_email") or tenant.get("email") or "",
+        "lead_email_enabled": int(tenant.get("lead_email_enabled") or 0),
+        "lead_email": tenant.get("lead_email") or "",
+        "azure_voice_id": tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
         "info_services": info_services,
     }

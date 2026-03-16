@@ -421,11 +421,12 @@ def create_tts_service(tenant: dict):
         return tts
 
     if tts_provider == 'azure':
-        logger.info(f"🎙️ Using Azure TTS | voice: pl-PL-AgnieszkaNeural")
+        azure_voice = tenant.get('azure_voice_id') or 'pl-PL-AgnieszkaNeural'
+        logger.info(f"🎙️ Using Azure TTS | voice: {azure_voice}")
         tts = AzureTTSService(
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
-            voice="pl-PL-AgnieszkaNeural",
+            voice=azure_voice,
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
@@ -476,7 +477,7 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "Moment.",
+        "Już patrzę.",
         "Już sprawdzam.",
         "Sekundkę.",
     ]
@@ -1032,6 +1033,7 @@ async def websocket_endpoint(websocket: WebSocket):
 # ==========================================
 
 async def save_call_log(flow_manager):
+    
     if flow_manager.state.get("call_logged"):
         return
 
@@ -1091,6 +1093,35 @@ async def save_call_log(flow_manager):
                 )
             except:
                 pass
+            # Lead email po rozmowie
+            try:
+                lead_enabled = int(tenant.get("lead_email_enabled") or 0)
+                lead_email = tenant.get("lead_email") or tenant.get("notification_email") or ""
+                
+                if lead_enabled and lead_email and saved_count > 0:
+                    # Zbierz rozmowę
+                    conversation_lines = []
+                    for msg in context:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role in ["user", "assistant"] and content and len(content.strip()) > 2:
+                            prefix = "Klient" if role == "user" else "Asystent"
+                            conversation_lines.append(f"{prefix}: {content[:200]}")
+                    
+                    conversation_text = "\n".join(conversation_lines)
+                    
+                    if conversation_lines:
+                        from flows import send_lead_email
+                        asyncio.create_task(send_lead_email(
+                            tenant=tenant,
+                            caller_phone=flow_manager.state.get("caller_phone", "nieznany"),
+                            conversation_text=conversation_text,
+                            to_email=lead_email,
+                            call_duration=None,
+                        ))
+                        logger.info(f"📧 Lead email queued to {lead_email}")
+            except Exception as e:
+                logger.error(f"Lead email error: {e}")
 
             flow_manager.state["call_logged"] = True
     except Exception as e:
