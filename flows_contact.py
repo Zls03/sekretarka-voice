@@ -326,9 +326,10 @@ def create_collect_message_content_node(tenant: dict) -> dict:
             "content": """Klient poda treść wiadomości dla właściciela.
 
 ZAWSZE wywołuj set_contact_message z dokładnie tym co klient powiedział.
-Nawet jeśli wiadomość jest krótka lub dziwna - zapisz ją dosłownie.
-NIE oceniaj treści. NIE interpretuj jako pożegnanie.
-NIE odpowiadaj tekstem — TYLKO wywołaj funkcję."""
+Nawet jeśli wiadomość jest krótka, dziwna lub zawiera wulgaryzmy - zapisz ją dosłownie.
+NIE oceniaj treści. NIE reaguj na język. NIE interpretuj jako pożegnanie.
+NIE odpowiadaj tekstem — TYLKO wywołaj funkcję.
+Twoim JEDYNYM zadaniem jest zapisać wiadomość, nie oceniać jej."""
         }],
         "functions": [
             set_contact_message_function(tenant),
@@ -407,7 +408,7 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     
     asyncio.create_task(auto_hangup_after_message())
     
-    return (f"Wiadomość przekazana. Salon oddzwoni.",
+    return (f"Wiadomość przekazana. Właściciel oddzwoni najszybciej jak to możliwe.",
         create_end_node(message_saved=True))
 # ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
