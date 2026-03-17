@@ -624,10 +624,6 @@ async def send_lead_email(tenant: dict, caller_phone: str, conversation_text: st
                 </tr>
             </table>
             
-            <details style="margin-top: 15px;">
-                <summary style="cursor: pointer; color: #64748b; font-size: 13px; padding: 8px 0;">Pokaż pełną transkrypcję</summary>
-                <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-top: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; color: #475569;">{conversation_text}</div>
-            </details>
         </div>
         
         <div style="padding: 15px 25px; background: #f8fafc; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
