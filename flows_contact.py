@@ -109,21 +109,18 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     if customer_name:
         flow_manager.state["contact_name"] = customer_name
     
-    # 🔥 FIX: Waliduj treść wiadomości - nie akceptuj "meta" opisów od GPT
-    if message:
-        invalid_patterns = [
-            "klient chce", "chce zostawić", "prosi o", "chciałby",
-            "jest mężczyzną", "jest kobietą", "klient jest", "klient prosi",
-            "zostawić wiadomość", "przekazać wiadomość"
-        ]
-        message_lower = message.lower()
-        is_meta_description = any(inv in message_lower for inv in invalid_patterns)
+    # Waliduj treść wiadomości - filtruj TYLKO oczywiste meta-opisy GPT
+    if message and len(message) >= 5:
+        # Meta-opisy GPT zaczynają się od "klient..." — prawdziwe wiadomości NIE
+        meta_starts = ["klient chce", "klient prosi", "klient jest", "klient potrzebuje"]
+        is_meta = any(message.lower().startswith(m) for m in meta_starts)
         
-        if is_meta_description or len(message) < 15:
-            logger.info(f"📞 Rejecting meta-description as message: '{message[:50]}'")
-            message = ""  # Zignoruj - zapytamy o prawdziwą treść
+        if is_meta:
+            logger.info(f"📞 Rejecting GPT meta-description: '{message[:50]}'")
+            message = ""
         else:
             flow_manager.state["contact_message"] = message
+            logger.info(f"📞 Valid message captured: '{message[:50]}'")
     
     # Jeśli mamy już imię i PRAWDZIWĄ wiadomość - zapisz od razu
     if customer_name and flow_manager.state.get("contact_message"):
