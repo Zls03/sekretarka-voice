@@ -98,7 +98,7 @@ def contact_owner_function(tenant: dict) -> FlowsFunctionSchema:
 
 
 async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: dict):
-    """KOD decyduje na podstawie reason - sprawdź WIADOMOŚĆ przed TRANSFER"""
+    """Obsługa kontaktu z właścicielem — zapis wiadomości lub transfer"""
     reason = args.get("reason", "").lower()
     customer_name = args.get("customer_name", "")
     message = args.get("message", "")
@@ -109,25 +109,17 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     if customer_name:
         flow_manager.state["contact_name"] = customer_name
     
-    # Waliduj treść wiadomości - filtruj TYLKO oczywiste meta-opisy GPT
-    if message and len(message) >= 5:
-        # Meta-opisy GPT zaczynają się od "klient..." — prawdziwe wiadomości NIE
+    # Jeśli mamy imię (z tego lub wcześniejszego kroku) + wiadomość → zapisz od razu
+    existing_name = flow_manager.state.get("contact_name")
+    if existing_name and message and len(message) >= 5:
         meta_starts = ["klient chce", "klient prosi", "klient jest", "klient potrzebuje"]
         is_meta = any(message.lower().startswith(m) for m in meta_starts)
-        
-        if is_meta:
-            logger.info(f"📞 Rejecting GPT meta-description: '{message[:50]}'")
-            message = ""
-        else:
+        if not is_meta:
+            logger.info(f"📞 Have name + valid message — saving directly")
             flow_manager.state["contact_message"] = message
-            logger.info(f"📞 Valid message captured: '{message[:50]}'")
-    
-    # Jeśli mamy już imię i PRAWDZIWĄ wiadomość - zapisz od razu
-    if customer_name and flow_manager.state.get("contact_message"):
-        logger.info("📞 Have name and valid message - saving directly")
-        return await save_and_confirm_message(
-            flow_manager, tenant, customer_name, flow_manager.state["contact_message"]
-        )
+            return await save_and_confirm_message(flow_manager, tenant, existing_name, message)
+        else:
+            logger.info(f"📞 Rejecting GPT meta-description: '{message[:50]}'")
     
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
@@ -142,7 +134,7 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     if wants_message:
         logger.info(f"📞 MESSAGE requested based on reason keywords")
-        if customer_name:
+        if existing_name:
             return (None, create_collect_message_content_node(tenant))
         else:
             return (None, create_collect_contact_name_node(tenant))
@@ -162,7 +154,7 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     elif has_transfer:
         return (None, create_contact_choice_node(tenant))
     else:
-        if customer_name:
+        if existing_name:
             return (None, create_collect_message_content_node(tenant))
         else:
             return (None, create_collect_contact_name_node(tenant))
