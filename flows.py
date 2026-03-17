@@ -374,12 +374,25 @@ def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
     )
 
 async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
-    from flows_contact import handle_contact_owner
-    return await handle_contact_owner(
-        {"reason": "zmiana lub anulowanie wizyty"},
-        flow_manager,
-        tenant
-    )
+    from pipecat.frames.frames import TTSSpeakFrame
+    
+    # Sprawdź czy transfer dostępny
+    transfer_enabled = tenant.get("transfer_enabled", 0) == 1
+    transfer_number = tenant.get("transfer_number", "")
+    has_transfer = transfer_enabled and transfer_number
+    
+    if has_transfer:
+        from flows_contact import create_contact_choice_node
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Co wolisz?")
+        )
+        return (None, create_contact_choice_node(tenant))
+    else:
+        from flows_contact import create_collect_contact_name_node
+        await flow_manager.task.queue_frame(
+            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Przekażę wiadomość do właściciela, który oddzwoni. Jak się Pan nazywa?")
+        )
+        return (None, create_collect_contact_name_node(tenant))
 
 # ==========================================
 # NODE: Czy coś jeszcze?

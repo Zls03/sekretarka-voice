@@ -264,7 +264,8 @@ def create_collect_contact_name_node(tenant: dict) -> dict:
 
 Gdy powie jakiekolwiek imię/nazwisko → wywołaj set_contact_name
 Tylko gdy WYRAŹNIE rezygnuje ("nie chcę", "nieważne", "do widzenia") → end_conversation
-NIE interpretuj imienia jako pożegnania."""
+NIE interpretuj imienia jako pożegnania.
+NIE powtarzaj imienia klienta w odpowiedzi — po prostu wywołaj funkcję."""
         }],
         "functions": [
             set_contact_name_function(tenant),
@@ -312,6 +313,7 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
             flow_manager, tenant, name, flow_manager.state["contact_message"]
         )
     
+    # Przejdź do treści BEZ powtarzania imienia (TTS źle wymawia polskie imiona)
     return (None, create_collect_message_content_node(tenant))
 
 
@@ -334,9 +336,10 @@ def create_collect_message_content_node(tenant: dict) -> dict:
             "role": "system",
             "content": """Klient poda treść wiadomości dla właściciela.
 
-ZAWSZE wywołaj set_contact_message z dokładnie tym co klient powiedział.
+ZAWSZE wywołuj set_contact_message z dokładnie tym co klient powiedział.
 Nawet jeśli wiadomość jest krótka lub dziwna - zapisz ją dosłownie.
-NIE oceniaj treści. NIE interpretuj jako pożegnanie."""
+NIE oceniaj treści. NIE interpretuj jako pożegnanie.
+NIE odpowiadaj tekstem — TYLKO wywołaj funkcję."""
         }],
         "functions": [
             set_contact_message_function(tenant),
