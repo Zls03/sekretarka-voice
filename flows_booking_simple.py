@@ -1003,7 +1003,8 @@ def create_booking_node(tenant: Dict) -> Dict:
     services_text = ", ".join(s["name"] for s in services[:5])
     staff_text = ", ".join(s["name"] for s in staff_list)
     
-    now = datetime.now()
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Europe/Warsaw"))
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
     
     return {

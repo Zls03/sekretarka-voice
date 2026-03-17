@@ -170,8 +170,9 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
     
-    # Aktualna data dla GPT
-    now = datetime.now()
+    # Aktualna data dla GPT (polska strefa czasowa)
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Europe/Warsaw"))
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
 
     # Usługi z kalendarza lub info_services - Z CENAMI!
@@ -609,8 +610,9 @@ async def send_lead_email(tenant: dict, caller_phone: str, conversation_text: st
         logger.error(f"📧 GPT summary error: {e}")
         summary = "Nie udało się wygenerować streszczenia."
     
-    # HTML emaila
-    now = datetime.now()
+    # HTML emaila (polska strefa czasowa)
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Europe/Warsaw"))
     date_str = now.strftime("%d.%m.%Y, %H:%M")
     
     html_content = f"""
