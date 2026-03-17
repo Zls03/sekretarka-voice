@@ -1050,12 +1050,13 @@ async def save_call_log(flow_manager):
             if not existing:
                 await db.execute(
                     """INSERT INTO call_logs 
-                       (id, tenant_id, call_sid, duration_seconds, status, created_at)
-                       VALUES (?, ?, ?, 0, 'in_progress', datetime('now'))""",
+                       (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                       VALUES (?, ?, ?, ?, 0, 'in_progress', datetime('now'))""",
                     [
                         f"call_{int(datetime.utcnow().timestamp())}",
                         tenant.get("id"),
                         call_sid,
+                        flow_manager.state.get("caller_phone", "nieznany"),
                     ]
                 )
                 logger.info(f"📊 Call log created: {call_sid}")

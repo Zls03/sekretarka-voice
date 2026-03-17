@@ -77,7 +77,8 @@ def contact_owner_function(tenant: dict) -> FlowsFunctionSchema:
 - "chcę rozmawiać z człowiekiem"
 - klient jest sfrustrowany i potrzebuje pomocy człowieka
 - nie możesz pomóc i klient potrzebuje właściciela
-- klient chce się umówić ale rezerwacje są wyłączone (zaproponuj wiadomość)""",
+- klient chce się umówić ale rezerwacje są wyłączone (zaproponuj wiadomość)
+- klient chce rozmawiać z konkretnym pracownikiem/fryzjerem/fryzjerką""",
         properties={
             "reason": {
                 "type": "string",
