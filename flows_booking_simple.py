@@ -629,13 +629,32 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 state["available_slots"] = current_slots  # Odśwież listę
                 logger.info(f"✅ Time: {parsed_time}")
             else:
-                # Slot zajęty - pokaż aktualne wolne
                 if current_slots:
-                    slots_text = _slots_summary(current_slots)
-                    return await _respond(
-                        f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
-                        f"Wolne są: {slots_text}.",
-                        flow_manager, tenant, state=state)
+                    first_slot = current_slots[0]
+                    last_slot = current_slots[-1]
+                    first_h = int(first_slot.split(":")[0])
+                    last_h = int(last_slot.split(":")[0])
+                    requested_h = int(parsed_time.split(":")[0])
+                    requested_m = int(parsed_time.split(":")[1]) if ":" in parsed_time else 0
+                    
+                    if requested_h < first_h or (requested_h == first_h and requested_m < int(first_slot.split(":")[1])):
+                        slots_text = _slots_summary(current_slots)
+                        return await _respond(
+                            f"W tym dniu pracujemy od {format_hour_polish(first_slot)}. "
+                            f"Wolne są: {slots_text}.",
+                            flow_manager, tenant, state=state)
+                    elif requested_h > last_h:
+                        slots_text = _slots_summary(current_slots)
+                        return await _respond(
+                            f"W tym dniu pracujemy do {format_hour_polish(last_slot)}. "
+                            f"Wolne są: {slots_text}.",
+                            flow_manager, tenant, state=state)
+                    else:
+                        slots_text = _slots_summary(current_slots)
+                        return await _respond(
+                            f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
+                            f"Wolne są: {slots_text}.",
+                            flow_manager, tenant, state=state)
                 else:
                     # Cały dzień zajęty
                     state.pop("date", None)

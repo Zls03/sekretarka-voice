@@ -413,7 +413,7 @@ def create_anything_else_node(tenant: dict) -> dict:
             "content": f"""Jesteś {assistant_name}, wirtualną asystentką {business_name}.
 Mów KRÓTKO, naturalnie, w rodzaju żeńskim. Używaj formy "Pan/Pani"."""
         }],
-        "task_messages": [{"role": "system", "content": "Zapytaj KRÓTKO czy możesz jeszcze w czymś pomóc."}],
+        "task_messages": [{"role": "system", "content": "Klient właśnie usłyszał potwierdzenie. NIE powtarzaj szczegółów wizyty. Zapytaj TYLKO: 'Czy mogę jeszcze w czymś pomóc?' lub podobne KRÓTKIE pytanie."}],
         "functions": [
             need_more_help_function(tenant),
             contact_owner_function(tenant),
