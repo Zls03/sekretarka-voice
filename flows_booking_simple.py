@@ -629,8 +629,34 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 state["available_slots"] = current_slots  # Odśwież listę
                 logger.info(f"✅ Time: {parsed_time}")
             else:
-                # Slot zajęty - pokaż aktualne wolne
                 if current_slots:
+                    # Pobierz faktyczne godziny pracy pracownika dla tego dnia
+                    from flows_helpers import get_staff_working_hours
+                    work_day = state["date"].weekday()
+                    staff_hours = get_staff_working_hours(state["staff"], work_day)
+                    if not staff_hours:
+                        salon_hours = get_opening_hours(tenant, work_day)
+                        staff_hours = salon_hours
+                    
+                    requested_h = int(parsed_time.split(":")[0])
+                    requested_m = int(parsed_time.split(":")[1]) if ":" in parsed_time else 0
+                    
+                    if staff_hours:
+                        open_h, close_h = staff_hours
+                        if requested_h < open_h or (requested_h == open_h and requested_m < 0):
+                            slots_text = _slots_summary(current_slots)
+                            return await _respond(
+                                f"W tym dniu pracujemy od {format_hour_polish(f'{open_h}:00')}. "
+                                f"Wolne są: {slots_text}.",
+                                flow_manager, tenant, state=state)
+                        elif requested_h >= close_h:
+                            slots_text = _slots_summary(current_slots)
+                            return await _respond(
+                                f"W tym dniu pracujemy do {format_hour_polish(f'{close_h}:00')}. "
+                                f"Wolne są: {slots_text}.",
+                                flow_manager, tenant, state=state)
+                    
+                    # W godzinach pracy ale zajęte
                     slots_text = _slots_summary(current_slots)
                     return await _respond(
                         f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
