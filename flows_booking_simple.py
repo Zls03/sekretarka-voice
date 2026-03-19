@@ -631,7 +631,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             else:
                 if current_slots:
                     # Pobierz faktyczne godziny pracy pracownika dla tego dnia
-                    from flows_helpers import get_staff_working_hours, get_opening_hours
+                    from flows_helpers import get_staff_working_hours
                     work_day = state["date"].weekday()
                     staff_hours = get_staff_working_hours(state["staff"], work_day)
                     if not staff_hours:
