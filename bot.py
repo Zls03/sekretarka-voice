@@ -1001,8 +1001,15 @@ async def websocket_endpoint(websocket: WebSocket):
         await flow_manager.initialize(create_initial_node(tenant, greeting_played=False))
         logger.info("📢 Greeting playing via TTS (non-interruptible)")
     @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport, client): 
+    async def on_client_disconnected(transport, client):
+        nonlocal conversation_ended
         logger.info("📴 Client disconnected")
+        conversation_ended = True
+        try:
+            await task.queue_frame(EndFrame())
+            logger.info("🔚 EndFrame sent after client disconnect")
+        except Exception as e:
+            logger.error(f"Error sending EndFrame on disconnect: {e}")
 
     # ==========================================
     # RUN PIPELINE
