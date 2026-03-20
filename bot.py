@@ -452,6 +452,7 @@ def create_tts_service(tenant: dict):
             params=GoogleTTSService.InputParams(
                 language=Language.PL_PL,
                 speaking_rate=0.98,
+                pitch=0.0,
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
