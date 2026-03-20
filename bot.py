@@ -417,7 +417,13 @@ def create_tts_service(tenant: dict):
             voice="alloy",
             sample_rate=24000,
         )
+
+        def add_speed_instruction(text: str) -> str:
+            return f"Mów naturalnie, trochę szybciej niż standardowo: {text}"
+
         tts.add_text_transformer(expand_abbreviations)
+        tts.add_text_transformer(add_speed_instruction)
+
         return tts
 
     if tts_provider == 'azure':
