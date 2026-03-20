@@ -427,10 +427,10 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
             voice=azure_voice,
-            sample_rate=8000,
+            sample_rate=24000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.05",
+                rate="1.03",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
