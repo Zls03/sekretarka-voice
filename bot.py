@@ -431,6 +431,7 @@ def create_tts_service(tenant: dict):
             params=AzureTTSService.InputParams(
                 language=Language.PL,
                 rate="1.03",
+                pitch="-2Hz",   # albo -1Hz / -3Hz
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
