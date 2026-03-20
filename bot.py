@@ -427,7 +427,7 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
             voice=azure_voice,
-            sample_rate=8000,
+            sample_rate=24000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
                 rate="1.03",
@@ -448,7 +448,7 @@ def create_tts_service(tenant: dict):
         tts = GoogleTTSService(
             credentials_path=creds_file.name,
             voice_id="pl-PL-Chirp3-HD-Kore",
-            sample_rate=8000,
+            sample_rate=24000,
             params=GoogleTTSService.InputParams(
                 language=Language.PL_PL,
                 speaking_rate=1.05,
