@@ -430,7 +430,7 @@ def create_tts_service(tenant: dict):
             sample_rate=8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
-                rate="1.03",
+                rate="1.04",
             ),
         )
         tts.add_text_transformer(expand_abbreviations)
