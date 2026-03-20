@@ -439,13 +439,13 @@ def create_tts_service(tenant: dict):
     if tts_provider == 'google':
         from pipecat.services.google.tts import GoogleTTSService
         import tempfile
+        google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Kore'
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice}")
         creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         creds_dict = json.loads(creds_json)
         creds_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(creds_dict, creds_file)
         creds_file.flush()
-        google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Kore'
         tts = GoogleTTSService(
             credentials_path=creds_file.name,
             voice_id=google_voice,
@@ -457,7 +457,6 @@ def create_tts_service(tenant: dict):
         )
         tts.add_text_transformer(expand_abbreviations)
         return tts
-
     else:
         # ElevenLabs (domyślny)
         voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
