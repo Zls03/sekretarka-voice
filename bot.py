@@ -410,11 +410,11 @@ def create_tts_service(tenant: dict):
         return tts
 
     if tts_provider == 'openai':
-        logger.info(f"🎙️ Using OpenAI TTS | voice: Shimmer")
+        logger.info(f"🎙️ Using OpenAI TTS | voice: shimmer")
         tts = OpenAITTSService(
             api_key=os.getenv("OPENAI_API_KEY"),
             model="tts-1",
-            voice="Shimmer",
+            voice="shimmer",
             sample_rate=24000,
         )
         tts.add_text_transformer(expand_abbreviations)
