@@ -660,10 +660,10 @@ async def websocket_endpoint(websocket: WebSocket):
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.55,
+                    confidence=0.6,
                     start_secs=0.2,
                     stop_secs=0.4,
-                    min_volume=0.35,
+                    min_volume=0.4,
                 )
             ),
             serializer=TwilioFrameSerializer(
@@ -686,7 +686,7 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=900,
+            utterance_end_ms=1100,
             endpointing=350,
             keyterm=tenant_keyterms,
         )
