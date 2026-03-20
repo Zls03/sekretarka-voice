@@ -410,20 +410,14 @@ def create_tts_service(tenant: dict):
         return tts
 
     if tts_provider == 'openai':
-        logger.info(f"🎙️ Using OpenAI TTS | voice: alloy")
+        logger.info(f"🎙️ Using OpenAI TTS | voice: Shimmer")
         tts = OpenAITTSService(
             api_key=os.getenv("OPENAI_API_KEY"),
             model="tts-1",
-            voice="alloy",
+            voice="Shimmer",
             sample_rate=24000,
         )
-
-        def add_speed_instruction(text: str) -> str:
-            return f"Mów naturalnie, trochę szybciej niż standardowo: {text}"
-
         tts.add_text_transformer(expand_abbreviations)
-        tts.add_text_transformer(add_speed_instruction)
-
         return tts
 
     if tts_provider == 'azure':
