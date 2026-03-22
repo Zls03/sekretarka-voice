@@ -655,6 +655,16 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
                             logger.info(f"   tts_provider: {tenant.get('tts_provider')}")
                             logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
+                            # Auto-tryb informacyjny gdy brak pracownika z kalendarzem
+                            if tenant.get('booking_enabled') == 1:
+                                has_ready_staff = any(
+                                    s.get('google_connected') and
+                                    len(s.get('services', [])) > 0
+                                    for s in tenant.get('staff', [])
+                                )
+                                if not has_ready_staff:
+                                    tenant['booking_enabled'] = 0
+                                    logger.warning(f"⚠️ booking_enabled forced to 0 — no staff with calendar+services")
                             logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
                             logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
                             logger.info(f"   transfer_enabled: {tenant.get('transfer_enabled')}")
