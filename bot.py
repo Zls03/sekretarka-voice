@@ -49,7 +49,7 @@ from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
 from pipecat_flows import FlowManager
-
+from helpers import get_tenant_by_phone, db, saas_db
 # Idle timeout processor
 from pipecat.processors.user_idle_processor import UserIdleProcessor
 
@@ -573,7 +573,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
 
                 if tenant_id:
-                    rows = await db.execute("SELECT phone_number, tts_provider FROM tenants WHERE id = ?", [tenant_id])
+                    # Wykryj źródło po prefiksie ID
+                    is_saas = tenant_id.startswith("firm_")
+
+                    if is_saas:
+                        # Baza SaaS — czytaj z tabeli firms
+                        rows = await saas_db.execute(
+                            "SELECT phone_number, tts_provider FROM firms WHERE id = ?",
+                            [tenant_id]
+                        )
+                    else:
+                        # Baza admina — stara logika bez zmian
+                        rows = await db.execute(
+                            "SELECT phone_number, tts_provider FROM tenants WHERE id = ?",
+                            [tenant_id]
+                        )
+
                     if rows and rows[0].get("phone_number"):
                         tenant = await get_tenant_by_phone(rows[0]["phone_number"])
 
@@ -582,10 +597,16 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"🔍 Raw tts_provider from DB: '{raw_tts}'")
                             tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
 
-                            staff = await db.execute(
-                                "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
-                                [tenant_id]
-                            )
+                            if is_saas:
+                                # SaaS — staff już załadowany przez get_tenant_by_phone
+                                staff_list = tenant.get("staff", [])
+                                logger.info(f"   staff: {len(staff_list)} (from saas)")
+                            else:
+                                # Admin — stara logika bez zmian
+                                staff = await db.execute(
+                                    "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
+                                    [tenant_id]
+                                )
 
                             staff_list = []
                             for s in staff:
