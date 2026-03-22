@@ -594,7 +594,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         if tenant:
                             raw_tts = dict(rows[0]).get('tts_provider')
                             logger.info(f"🔍 Raw tts_provider from DB: '{raw_tts}'")
-                            tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
+                            # Dla SaaS — nie nadpisuj, helpers.py już poprawnie zmapował provider
+                            if not is_saas:
+                                tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
+                            # Dla SaaS tts_provider już jest ustawiony przez _get_tenant_from_saas
 
                             if is_saas:
                                 # SaaS — staff już załadowany przez get_tenant_by_phone
