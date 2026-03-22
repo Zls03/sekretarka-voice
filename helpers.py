@@ -20,15 +20,12 @@ from loguru import logger
 # KONFIGURACJA
 # ==========================================
 
-# Baza admina (obecna)
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
 TURSO_AUTH_TOKEN   = os.getenv("TURSO_AUTH_TOKEN", "")
 
-# Baza SaaS (nowa) — dodaj te zmienne do .env
 SAAS_TURSO_URL   = os.getenv("SAAS_TURSO_DATABASE_URL", "")
 SAAS_TURSO_TOKEN = os.getenv("SAAS_TURSO_AUTH_TOKEN", "")
 
-# Klucz szyfrowania — ten sam co w Next.js (ENCRYPTION_KEY)
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 
 
@@ -37,13 +34,8 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 # ==========================================
 
 def decrypt_token(encrypted: str) -> str:
-    """
-    Deszyfruje Auth Token zaszyfrowany przez Next.js (AES-GCM, Web Crypto API).
-    Format: base64(iv):base64(ciphertext)
-    Wymaga: pip install cryptography
-    """
     if not encrypted or ":" not in encrypted:
-        return encrypted  # plain text (stare dane) — zwróć jak jest
+        return encrypted
 
     if not ENCRYPTION_KEY:
         logger.warning("⚠️ ENCRYPTION_KEY not set — cannot decrypt Twilio Auth Token")
@@ -134,17 +126,15 @@ class TursoDB:
         return []
 
 
-# Instancje baz
 db      = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
 saas_db = TursoDB(SAAS_TURSO_URL, SAAS_TURSO_TOKEN, label="saas")
 
 
 # ==========================================
-# POBIERZ TENANT Z BAZY ADMINA (obecna logika)
+# POBIERZ TENANT Z BAZY ADMINA
 # ==========================================
 
 async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
-    """Pobiera tenant z bazy admina (tabela tenants)."""
     rows = await db.execute(
         "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
         [f"%{phone_suffix}"]
@@ -187,35 +177,33 @@ async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
 
     return {
         **tenant,
-        "source":           "admin",
-        "business_name":    tenant.get("business_name") or tenant.get("name"),
-        "services":         services,
-        "working_hours":    working_hours,
-        "faq":              faq_rows,
-        "is_blocked":       int(tenant.get("is_blocked") or 0),
-        "minutes_limit":    int(tenant.get("minutes_limit") or 100),
-        "minutes_used":     float(tenant.get("minutes_used") or 0),
-        "first_message":    tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
-        "additional_info":  tenant.get("additional_info") or "",
-        "industry":         tenant.get("industry") or "",
-        "booking_enabled":  int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
-        "transfer_enabled": int(tenant.get("transfer_enabled") or 0),
-        "transfer_number":  tenant.get("transfer_number") or "",
+        "source":             "admin",
+        "business_name":      tenant.get("business_name") or tenant.get("name"),
+        "services":           services,
+        "working_hours":      working_hours,
+        "faq":                faq_rows,
+        "is_blocked":         int(tenant.get("is_blocked") or 0),
+        "minutes_limit":      int(tenant.get("minutes_limit") or 100),
+        "minutes_used":       float(tenant.get("minutes_used") or 0),
+        "first_message":      tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info":    tenant.get("additional_info") or "",
+        "industry":           tenant.get("industry") or "",
+        "booking_enabled":    int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
+        "transfer_enabled":   int(tenant.get("transfer_enabled") or 0),
+        "transfer_number":    tenant.get("transfer_number") or "",
         "notification_email": tenant.get("notification_email") or tenant.get("email") or "",
         "lead_email_enabled": int(tenant.get("lead_email_enabled") or 0),
-        "lead_email":       tenant.get("lead_email") or "",
-        "azure_voice_id":   tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
-        "info_services":    info_services,
+        "lead_email":         tenant.get("lead_email") or "",
+        "azure_voice_id":     tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
+        "info_services":      info_services,
     }
 
 
 # ==========================================
-# POBIERZ TENANT Z BAZY SaaS (nowa logika)
+# POBIERZ TENANT Z BAZY SaaS
 # ==========================================
 
 async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
-    """Pobiera tenant z bazy SaaS (tabela firms) i mapuje na format bota."""
-
     if not saas_db.is_configured:
         logger.debug("SaaS DB not configured — skipping")
         return None
@@ -230,13 +218,11 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     firm = rows[0]
     firm_id = firm["id"]
 
-    # Usługi
     services = await saas_db.execute(
         "SELECT id, name, duration_minutes, price, description FROM services WHERE firm_id = ?",
         [firm_id]
     )
 
-    # Godziny pracy
     hours_rows = await saas_db.execute(
         "SELECT day_of_week, open_time, close_time FROM working_hours WHERE firm_id = ?",
         [firm_id]
@@ -248,16 +234,14 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
             "close_time":  h["close_time"],
         }
         for h in hours_rows
-        if h.get("open_time")  # pomijamy dni bez godzin
+        if h.get("open_time")
     ]
 
-    # FAQ
     faq_rows = await saas_db.execute(
         "SELECT question, answer FROM faqs WHERE firm_id = ? ORDER BY created_at",
         [firm_id]
     )
 
-    # Staff (pracownicy z Google Calendar)
     staff_rows = await saas_db.execute(
         "SELECT * FROM staff WHERE firm_id = ?",
         [firm_id]
@@ -271,19 +255,14 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
                WHERE ss.staff_id = ?""",
             [s["id"]]
         )
-        staff_list.append({
-            **s,
-            "services": staff_services,
-        })
+        staff_list.append({**s, "services": staff_services})
 
-    # Deszyfruj Auth Token Twilio
+    # Deszyfruj Auth Token
     raw_token = firm.get("twilio_auth_token") or ""
     decrypted_token = decrypt_token(raw_token) if raw_token else ""
 
-    # Pobierz twilio_account_sid z firmy lub z konta użytkownika
     twilio_sid = firm.get("twilio_account_sid") or ""
     if not twilio_sid:
-        # Fallback — pobierz z konta usera
         user_rows = await saas_db.execute(
             "SELECT twilio_account_sid, twilio_auth_token FROM users WHERE id = ?",
             [firm["user_id"]]
@@ -294,10 +273,36 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
                 raw_user_token = user_rows[0].get("twilio_auth_token") or ""
                 decrypted_token = decrypt_token(raw_user_token) if raw_user_token else ""
 
+    # ── Mapowanie TTS provider + voice_id ──
+    raw_provider = firm.get("tts_provider") or "elevenlabs"
+    raw_voice_id = firm.get("voice_id") or ""
+
+    # Zabezpieczenie na stare dane gdzie nazwa głosu była wpisana do tts_provider
+    google_voices = [
+        "pl-PL-Chirp3-HD-Leda", "pl-PL-Chirp3-HD-Aoede",
+        "pl-PL-Chirp3-HD-Kore", "pl-PL-Chirp3-HD-Zephyr",
+        "pl-PL-Chirp3-HD-Charon", "pl-PL-Chirp3-HD-Fenrir",
+        "pl-PL-Chirp3-HD-Orus", "pl-PL-Chirp3-HD-Puck",
+    ]
+    azure_voices = ["pl-PL-AgnieszkaNeural", "pl-PL-ZofiaNeural", "pl-PL-MarekNeural"]
+
+    if raw_provider in google_voices:
+        actual_provider = "google"
+        actual_voice_id = raw_provider
+    elif raw_provider in azure_voices:
+        actual_provider = "azure"
+        actual_voice_id = raw_provider
+    else:
+        actual_provider = raw_provider
+        actual_voice_id = raw_voice_id or {
+            "google": "pl-PL-Chirp3-HD-Leda",
+            "azure":  "pl-PL-AgnieszkaNeural",
+        }.get(actual_provider, "")
+
     logger.info(f"✅ [saas] Found firm: {firm.get('name')} (id: {firm_id})")
+    logger.info(f"   tts_provider: {actual_provider} | voice: {actual_voice_id or 'default'}")
 
     return {
-        # Identyfikatory — mapujemy firm → tenant format
         "id":               firm_id,
         "source":           "saas",
         "name":             firm.get("name") or "",
@@ -307,65 +312,52 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "email":            firm.get("email") or "",
         "phone_number":     firm.get("phone_number") or "",
 
-        # Twilio (odszyfrowane)
         "twilio_account_sid": twilio_sid,
         "twilio_auth_token":  decrypted_token,
 
-        # AI config
         "assistant_name":   firm.get("assistant_name") or "Ania",
         "first_message":    firm.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
         "additional_info":  firm.get("additional_info") or "",
-        "tts_provider":     firm.get("tts_provider") or "elevenlabs",
 
-        # Limity i status
+        # TTS — poprawnie rozdzielone
+        "tts_provider":        actual_provider,
+        "azure_voice_id":      actual_voice_id,
+        "elevenlabs_voice_id": actual_voice_id if actual_provider == "elevenlabs" else None,
+
         "is_active":        int(firm.get("is_active") or 1),
         "is_blocked":       int(firm.get("is_blocked") or 0),
         "minutes_used":     float(firm.get("minutes_used") or 0),
         "minutes_limit":    int(firm.get("minutes_limit") or 100),
 
-        # Funkcje
-        "booking_enabled":  int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
-        "transfer_enabled": int(firm.get("transfer_enabled") or 0),
-        "transfer_number":  firm.get("transfer_number") or "",
+        "booking_enabled":    int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
+        "transfer_enabled":   int(firm.get("transfer_enabled") or 0),
+        "transfer_number":    firm.get("transfer_number") or "",
 
-        # Email
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
         "lead_email":          firm.get("lead_email") or "",
 
-        # TTS
-        "azure_voice_id":   "pl-PL-AgnieszkaNeural",
-        "elevenlabs_voice_id": None,
-
-        # Dane
-        "services":         services,
-        "working_hours":    working_hours,
-        "faq":              faq_rows,
-        "info_services":    services,  # w SaaS nie ma osobnej tabeli info_services
-        "staff":            staff_list,
+        "services":      services,
+        "working_hours": working_hours,
+        "faq":           faq_rows,
+        "info_services": services,
+        "staff":         staff_list,
     }
 
 
 # ==========================================
-# GŁÓWNA FUNKCJA — sprawdza obie bazy
+# GŁÓWNA FUNKCJA
 # ==========================================
 
 async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
-    """
-    Pobierz tenant po numerze telefonu.
-    Kolejność: 1) baza admina, 2) baza SaaS
-    Admina ma priorytet — jeśli numer jest w obu, wygrywa admin.
-    """
     phone_clean  = phone.replace(" ", "").replace("-", "")
     phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
 
-    # 1. Sprawdź bazę admina (obecna logika — nie ruszamy)
     tenant = await _get_tenant_from_admin(phone_suffix)
     if tenant:
         logger.info(f"📞 Tenant from ADMIN DB: {tenant.get('name')}")
         return tenant
 
-    # 2. Sprawdź bazę SaaS
     tenant = await _get_tenant_from_saas(phone_suffix)
     if tenant:
         logger.info(f"📞 Tenant from SAAS DB: {tenant.get('name')}")
