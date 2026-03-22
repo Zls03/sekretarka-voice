@@ -652,16 +652,17 @@ def build_business_context(tenant: dict) -> str:
             for s in info_services:
                 name = s.get('name', '')
                 price = s.get('price', '')
-                description = s.get('description', '')
+                duration = s.get('duration_minutes', '')
+                description = s.get('description', '').strip() if s.get('description') else ''
                 
-                if price and description:
-                    svc_lines.append(f"• {name} = {price} ({description})")
-                elif price:
-                    svc_lines.append(f"• {name} = {price}")
-                elif description:
-                    svc_lines.append(f"• {name} ({description})")
-                else:
-                    svc_lines.append(f"• {name}")
+                line = f"• {name}"
+                if price:
+                    line += f" = {price} zł"
+                if duration:
+                    line += f" (Trwa {duration} min)"
+                if description:
+                    line += f". Opis: {description}"
+                svc_lines.append(line)
             cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
             parts.append(cennik_text)
         
