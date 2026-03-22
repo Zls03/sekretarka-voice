@@ -255,7 +255,11 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
                WHERE ss.staff_id = ?""",
             [s["id"]]
         )
-        staff_list.append({**s, "services": staff_services})
+        staff_list.append({
+            **s,
+            "services": staff_services,
+            "description": s.get("description") or "",
+        })
 
     # Deszyfruj Auth Token
     raw_token = firm.get("twilio_auth_token") or ""
