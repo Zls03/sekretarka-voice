@@ -226,6 +226,20 @@ async def twilio_incoming(request: Request):
             content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml"
         )
+
+    # Pre-check kredytów dla SaaS
+    if tenant.get("source") == "saas":
+        user_credits = await saas_db.execute(
+            "SELECT balance FROM credits WHERE user_id = ?",
+            [tenant.get("user_id", "")]
+        )
+        balance = float(user_credits[0].get("balance") or 0) if user_credits else 0
+        if balance < 0.49:
+            logger.warning(f"🚫 SaaS {tenant['id']} — brak kredytów: {balance:.2f} zł")
+            return Response(
+                content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, konto nie ma wystarczających środków. Do widzenia.</Say><Hangup/></Response>',
+                media_type="application/xml"
+            )
     
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     host = request.headers.get("host", "localhost")

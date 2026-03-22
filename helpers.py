@@ -311,6 +311,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "address":          firm.get("address") or "",
         "email":            firm.get("email") or "",
         "phone_number":     firm.get("phone_number") or "",
+        "user_id":          firm.get("user_id") or "", 
 
         "twilio_account_sid": twilio_sid,
         "twilio_auth_token":  decrypted_token,
