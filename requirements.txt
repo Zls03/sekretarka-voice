@@ -17,3 +17,4 @@ google-generativeai
 pydub==0.25.1
 deepgram-sdk==4.7.0
 dateparser
+cryptography
