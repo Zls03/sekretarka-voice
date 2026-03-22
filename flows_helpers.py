@@ -730,11 +730,22 @@ def build_business_context(tenant: dict) -> str:
                 parts.append(f"GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
     
     # Ostrzeżenie na końcu
-    parts.append("""⚠️ WAŻNE ZASADY:
+    has_additional_info = bool(tenant.get("additional_info", "").strip())
+    
+    if has_additional_info:
+        reservation_rule = "- Sposoby rezerwacji podawaj TYLKO na podstawie DODATKOWYCH INFO powyżej — nie wymyślaj innych"
+    else:
+        if booking_enabled:
+            reservation_rule = "- Rezerwacje przyjmuj PRZEZ AGENTA — nie odsyłaj do innych miejsc jeśli nie ma takiej informacji"
+        else:
+            reservation_rule = "- NIE mów że można rezerwować online jeśli nie ma takiej informacji w DODATKOWYCH INFO"
+    
+    parts.append(f"""⚠️ WAŻNE ZASADY:
 - Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji
 - NIGDY NIE WYMYŚLAJ cen, godzin ani innych faktów
 - Podawaj ceny DOKŁADNIE tak jak są napisane powyżej
-- NIE mów że można rezerwować online - rezerwacje TYLKO telefonicznie przez ten numer""")
+- NIGDY nie podawaj informacji spoza tego co masz powyżej (cennik, FAQ, godziny, adres, dodatkowe info)
+{reservation_rule}""")
  
     return "\n\n".join(parts)
 
