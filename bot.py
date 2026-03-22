@@ -1161,6 +1161,8 @@ async def save_call_log(flow_manager):
 # TWILIO STATUS CALLBACK
 # ==========================================
 
+PRICE_PER_MINUTE = 0.49  # zł za minutę rozmowy
+
 @app.post("/twilio/status")
 async def twilio_status(request: Request):
     form = await request.form()
@@ -1177,51 +1179,114 @@ async def twilio_status(request: Request):
         try:
             duration = int(call_duration) if call_duration else 0
             duration_minutes = duration / 60.0
-
             phone_suffix = called.replace(" ", "").replace("-", "")[-9:]
-            rows = await db.execute(
+
+            # ── 1. Szukaj w bazie ADMINA ──
+            admin_rows = await db.execute(
                 "SELECT id FROM tenants WHERE phone_number LIKE ?",
                 [f"%{phone_suffix}"]
             )
 
-            if rows:
-                tenant_id = rows[0]["id"]
-
-                existing = await db.execute(
-                    "SELECT id FROM call_logs WHERE call_sid = ?",
-                    [call_sid]
+            if admin_rows:
+                tenant_id = admin_rows[0]["id"]
+                is_saas_tenant = False
+                logger.info(f"📊 Status: found tenant in ADMIN DB: {tenant_id}")
+            else:
+                # ── 2. Szukaj w bazie SaaS ──
+                saas_rows = await saas_db.execute(
+                    "SELECT id, user_id FROM firms WHERE REPLACE(REPLACE(phone_number, ' ', ''), '-', '') LIKE ?",
+                    [f"%{phone_suffix}"]
                 )
-
-                if existing:
-                    await db.execute(
-                        """UPDATE call_logs 
-                           SET duration_seconds = ?, status = ?
-                           WHERE call_sid = ?""",
-                        [duration, call_status, call_sid]
-                    )
-                    logger.info(f"📊 Updated call log: {call_sid} → {duration}s")
+                if saas_rows:
+                    tenant_id = saas_rows[0]["id"]
+                    saas_user_id = saas_rows[0]["user_id"]
+                    is_saas_tenant = True
+                    logger.info(f"📊 Status: found tenant in SAAS DB: {tenant_id}")
                 else:
-                    await db.execute(
-                        """INSERT INTO call_logs 
-                           (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                    logger.warning(f"⚠️ No tenant found for {called}")
+                    return Response(content="OK", media_type="text/plain")
+
+            # ── 3. Aktualizuj call_log ──
+            target_db = saas_db if is_saas_tenant else db
+
+            existing = await target_db.execute(
+                "SELECT id FROM call_logs WHERE call_sid = ?",
+                [call_sid]
+            )
+
+            if existing:
+                await target_db.execute(
+                    "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?",
+                    [duration, call_status, call_sid]
+                )
+                logger.info(f"📊 Updated call log: {call_sid} → {duration}s")
+            else:
+                await target_db.execute(
+                    """INSERT INTO call_logs
+                       (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                    [
+                        f"call_{int(datetime.utcnow().timestamp())}",
+                        tenant_id, call_sid, caller, duration, call_status,
+                    ]
+                )
+                logger.info(f"📊 Created call log: {call_sid} → {duration}s")
+
+            # ── 4. Aktualizuj minuty / kredyty ──
+            if call_status == "completed" and duration > 0:
+
+                if is_saas_tenant:
+                    # SaaS — odejmuj kredyty z konta użytkownika
+                    cost = round(duration_minutes * PRICE_PER_MINUTE, 4)
+
+                    await saas_db.execute(
+                        "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?",
+                        [duration_minutes, tenant_id]
+                    )
+
+                    await saas_db.execute(
+                        """UPDATE credits
+                           SET balance = balance - ?,
+                               total_spent = total_spent + ?
+                           WHERE user_id = ?""",
+                        [cost, cost, saas_user_id]
+                    )
+                    logger.info(f"📊 SaaS: -{cost:.4f} zł ({duration_minutes:.2f} min) for user {saas_user_id}")
+
+                    # Sprawdź czy saldo wystarczy na następną rozmowę
+                    credits = await saas_db.execute(
+                        "SELECT balance FROM credits WHERE user_id = ?",
+                        [saas_user_id]
+                    )
+                    if credits:
+                        balance = float(credits[0].get("balance") or 0)
+                        if balance < PRICE_PER_MINUTE:
+                            await saas_db.execute(
+                                "UPDATE firms SET is_blocked = 1 WHERE id = ?",
+                                [tenant_id]
+                            )
+                            logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
+
+                    # Zapisz transakcję
+                    await saas_db.execute(
+                        """INSERT INTO transactions
+                           (id, user_id, type, amount, description, created_at)
+                           VALUES (?, ?, 'usage', ?, ?, datetime('now'))""",
                         [
-                            f"call_{int(datetime.utcnow().timestamp())}",
-                            tenant_id,
-                            call_sid,
-                            caller,
-                            duration,
-                            call_status,
+                            f"tx_{call_sid[:12]}",
+                            saas_user_id,
+                            -cost,
+                            f"Rozmowa {duration}s ({duration_minutes:.2f} min)",
                         ]
                     )
-                    logger.info(f"📊 Created call log: {call_sid} → {duration}s")
 
-                if call_status == "completed" and duration > 0:
+                else:
+                    # Admin — stara logika
                     await db.execute(
                         "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
                         [duration_minutes, tenant_id]
                     )
-                    logger.info(f"📊 Updated minutes: +{duration_minutes:.2f} min for {tenant_id}")
+                    logger.info(f"📊 Admin: +{duration_minutes:.2f} min for {tenant_id}")
 
                     tenant_data = await db.execute(
                         "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?",
@@ -1235,15 +1300,12 @@ async def twilio_status(request: Request):
                                 "UPDATE tenants SET is_blocked = 1 WHERE id = ?",
                                 [tenant_id]
                             )
-                            logger.warning(f"⚠️ Tenant {tenant_id} BLOCKED - limit reached")
-            else:
-                logger.warning(f"⚠️ No tenant found for {called}")
+                            logger.warning(f"⚠️ Admin tenant {tenant_id} BLOCKED - limit reached")
 
         except Exception as e:
             logger.error(f"Twilio status error: {e}")
 
     return Response(content="OK", media_type="text/plain")
-
 
 # ==========================================
 # TWILIO AFTER STREAM
