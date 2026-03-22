@@ -49,15 +49,14 @@ from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 
 # Pipecat Flows
 from pipecat_flows import FlowManager
-from helpers import get_tenant_by_phone, db, saas_db
 # Idle timeout processor
 from pipecat.processors.user_idle_processor import UserIdleProcessor
 
 # Nasze moduły
-from helpers import get_tenant_by_phone, db
+
 import uuid
 from flows import create_initial_node
-
+from helpers import get_tenant_by_phone, db, saas_db
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -602,26 +601,24 @@ async def websocket_endpoint(websocket: WebSocket):
                                 staff_list = tenant.get("staff", [])
                                 logger.info(f"   staff: {len(staff_list)} (from saas)")
                             else:
-                                # Admin — stara logika bez zmian
-                                staff = await db.execute(
+                                # Admin — stara logika
+                                staff_rows = await db.execute(
                                     "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
                                     [tenant_id]
                                 )
-
-                            staff_list = []
-                            for s in staff:
-                                staff_dict = dict(s)
-                                staff_services = await db.execute(
-                                    """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
-                                       FROM services srv
-                                       JOIN staff_services ss ON srv.id = ss.service_id
-                                       WHERE ss.staff_id = ?""",
-                                    [s["id"]]
-                                )
-                                staff_dict["services"] = [dict(svc) for svc in staff_services]
-                                staff_list.append(staff_dict)
-
-                            tenant["staff"] = staff_list
+                                staff_list = []
+                                for s in staff_rows:
+                                    staff_dict = dict(s)
+                                    staff_services = await db.execute(
+                                        """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
+                                        FROM services srv
+                                        JOIN staff_services ss ON srv.id = ss.service_id
+                                        WHERE ss.staff_id = ?""",
+                                        [s["id"]]
+                                    )
+                                    staff_dict["services"] = [dict(svc) for svc in staff_services]
+                                    staff_list.append(staff_dict)
+                                tenant["staff"] = staff_list
 
                             if not tenant.get("services"):
                                 all_services = {}
