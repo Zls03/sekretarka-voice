@@ -1,46 +1,97 @@
 """
-VOICE AI - HELPERS (cleaned)
-============================
-Zawiera tylko używane funkcje:
-- TursoDB - baza danych
-- get_tenant_by_phone - pobieranie tenant
+VOICE AI - HELPERS
+==================
+Obsługuje dwie bazy Turso:
+- Baza ADMINA  (TURSO_DATABASE_URL)      → tabela tenants (ręcznie dodawane firmy)
+- Baza SaaS    (SAAS_TURSO_DATABASE_URL) → tabela firms   (firmy z panelu użytkowników)
+
+Funkcja get_tenant_by_phone() sprawdza obie bazy.
+Admina ma priorytet — jeśli numer znajdzie się w obu, wygrywa admin.
 """
 from dotenv import load_dotenv
 load_dotenv()
 
 import os
 import httpx
-from datetime import datetime
 from typing import Optional, Dict, List
 from loguru import logger
 
 # ==========================================
 # KONFIGURACJA
 # ==========================================
+
+# Baza admina (obecna)
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+TURSO_AUTH_TOKEN   = os.getenv("TURSO_AUTH_TOKEN", "")
+
+# Baza SaaS (nowa) — dodaj te zmienne do .env
+SAAS_TURSO_URL   = os.getenv("SAAS_TURSO_DATABASE_URL", "")
+SAAS_TURSO_TOKEN = os.getenv("SAAS_TURSO_AUTH_TOKEN", "")
+
+# Klucz szyfrowania — ten sam co w Next.js (ENCRYPTION_KEY)
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 
 
 # ==========================================
-# TURSO DATABASE
+# DESZYFROWANIE AUTH TOKEN (AES-GCM)
 # ==========================================
+
+def decrypt_token(encrypted: str) -> str:
+    """
+    Deszyfruje Auth Token zaszyfrowany przez Next.js (AES-GCM, Web Crypto API).
+    Format: base64(iv):base64(ciphertext)
+    Wymaga: pip install cryptography
+    """
+    if not encrypted or ":" not in encrypted:
+        return encrypted  # plain text (stare dane) — zwróć jak jest
+
+    if not ENCRYPTION_KEY:
+        logger.warning("⚠️ ENCRYPTION_KEY not set — cannot decrypt Twilio Auth Token")
+        return ""
+
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import base64
+
+        key_bytes = ENCRYPTION_KEY[:32].encode("utf-8")
+        iv_b64, ct_b64 = encrypted.split(":", 1)
+        iv = base64.b64decode(iv_b64)
+        ciphertext = base64.b64decode(ct_b64)
+
+        aesgcm = AESGCM(key_bytes)
+        plaintext = aesgcm.decrypt(iv, ciphertext, None)
+        return plaintext.decode("utf-8")
+    except Exception as e:
+        logger.error(f"❌ decrypt_token failed: {e}")
+        return ""
+
+
+# ==========================================
+# TURSO DATABASE CLIENT
+# ==========================================
+
 class TursoDB:
-    def __init__(self):
-        self.url = TURSO_DATABASE_URL.replace("libsql://", "https://")
-        self.token = TURSO_AUTH_TOKEN
-        
+    def __init__(self, url: str, token: str, label: str = "db"):
+        self.url   = url.replace("libsql://", "https://") if url else ""
+        self.token = token
+        self.label = label
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.url and self.token)
+
     async def execute(self, sql: str, args: List = None) -> List[Dict]:
-        if not self.url or not self.token:
-            logger.warning("DB not configured")
+        if not self.is_configured:
+            logger.warning(f"[{self.label}] DB not configured")
             return []
-            
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.url}/v2/pipeline",
                     headers={
                         "Authorization": f"Bearer {self.token}",
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
                     },
                     json={
                         "requests": [
@@ -48,15 +99,18 @@ class TursoDB:
                                 "type": "execute",
                                 "stmt": {
                                     "sql": sql,
-                                    "args": [{"type": "text", "value": str(a) if a is not None else None} for a in (args or [])]
-                                }
+                                    "args": [
+                                        {"type": "text", "value": str(a) if a is not None else None}
+                                        for a in (args or [])
+                                    ],
+                                },
                             },
-                            {"type": "close"}
+                            {"type": "close"},
                         ]
                     },
-                    timeout=10.0
+                    timeout=10.0,
                 )
-                
+
                 if response.status_code == 200:
                     data = response.json()
                     results = data.get("results", [])
@@ -71,81 +125,251 @@ class TursoDB:
                                 row_dict[col] = val.get("value") if isinstance(val, dict) else val
                             rows.append(row_dict)
                         return rows
+                else:
+                    logger.error(f"[{self.label}] HTTP {response.status_code}: {response.text[:200]}")
+
         except Exception as e:
-            logger.error(f"DB error: {e}")
+            logger.error(f"[{self.label}] DB error: {e}")
+
         return []
 
-db = TursoDB()
+
+# Instancje baz
+db      = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
+saas_db = TursoDB(SAAS_TURSO_URL, SAAS_TURSO_TOKEN, label="saas")
 
 
 # ==========================================
-# TENANT
+# POBIERZ TENANT Z BAZY ADMINA (obecna logika)
 # ==========================================
-async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
-    """Pobierz tenant po numerze telefonu"""
-    phone_clean = phone.replace(" ", "").replace("-", "")
-    phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
-    
+
+async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
+    """Pobiera tenant z bazy admina (tabela tenants)."""
     rows = await db.execute(
         "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
         [f"%{phone_suffix}"]
     )
-    
     if not rows:
         return None
-    
+
     tenant = rows[0]
     tenant_id = tenant["id"]
-    
-    # Usługi
+
     services = await db.execute(
         "SELECT id, name, duration_minutes, price, description FROM services WHERE tenant_id = ? AND is_active = 1",
         [tenant_id]
     )
-    
-    # Godziny pracy - jako lista (dla build_business_context)
+
     hours_rows = await db.execute(
         "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?",
         [tenant_id]
     )
-    working_hours = []
-    for h in hours_rows:
-        working_hours.append({
+    working_hours = [
+        {
             "day_of_week": int(h["day_of_week"]) if h["day_of_week"] else 0,
-            "open_time": h["open_time"],
-            "close_time": h["close_time"]
-        })
-    
-    # FAQ
+            "open_time":   h["open_time"],
+            "close_time":  h["close_time"],
+        }
+        for h in hours_rows
+    ]
+
     faq_rows = await db.execute(
         "SELECT question, answer FROM tenant_faq WHERE tenant_id = ? ORDER BY sort_order",
         [tenant_id]
     )
-    
-    # Usługi informacyjne (dla trybu bez rezerwacji)
+
     info_services = await db.execute(
         "SELECT name, price, description FROM info_services WHERE tenant_id = ? ORDER BY sort_order",
         [tenant_id]
     )
-    
+
+    logger.info(f"✅ [admin] Found tenant: {tenant.get('name')} (id: {tenant_id})")
+
     return {
         **tenant,
-        "business_name": tenant.get("business_name") or tenant.get("name"),
-        "services": services,
-        "working_hours": working_hours,
-        "faq": faq_rows,
-        "is_blocked": int(tenant.get("is_blocked") or 0),
-        "minutes_limit": int(tenant.get("minutes_limit") or 100),
-        "minutes_used": float(tenant.get("minutes_used") or 0),
-        "first_message": tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
-        "additional_info": tenant.get("additional_info") or "",
-        "industry": tenant.get("industry") or "",
-        "booking_enabled": int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
+        "source":           "admin",
+        "business_name":    tenant.get("business_name") or tenant.get("name"),
+        "services":         services,
+        "working_hours":    working_hours,
+        "faq":              faq_rows,
+        "is_blocked":       int(tenant.get("is_blocked") or 0),
+        "minutes_limit":    int(tenant.get("minutes_limit") or 100),
+        "minutes_used":     float(tenant.get("minutes_used") or 0),
+        "first_message":    tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info":  tenant.get("additional_info") or "",
+        "industry":         tenant.get("industry") or "",
+        "booking_enabled":  int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
         "transfer_enabled": int(tenant.get("transfer_enabled") or 0),
-        "transfer_number": tenant.get("transfer_number") or "",
+        "transfer_number":  tenant.get("transfer_number") or "",
         "notification_email": tenant.get("notification_email") or tenant.get("email") or "",
         "lead_email_enabled": int(tenant.get("lead_email_enabled") or 0),
-        "lead_email": tenant.get("lead_email") or "",
-        "azure_voice_id": tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
-        "info_services": info_services,
+        "lead_email":       tenant.get("lead_email") or "",
+        "azure_voice_id":   tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
+        "info_services":    info_services,
     }
+
+
+# ==========================================
+# POBIERZ TENANT Z BAZY SaaS (nowa logika)
+# ==========================================
+
+async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
+    """Pobiera tenant z bazy SaaS (tabela firms) i mapuje na format bota."""
+
+    if not saas_db.is_configured:
+        logger.debug("SaaS DB not configured — skipping")
+        return None
+
+    rows = await saas_db.execute(
+        "SELECT * FROM firms WHERE REPLACE(REPLACE(phone_number, ' ', ''), '-', '') LIKE ? AND is_active = 1 AND is_blocked = 0",
+        [f"%{phone_suffix}"]
+    )
+    if not rows:
+        return None
+
+    firm = rows[0]
+    firm_id = firm["id"]
+
+    # Usługi
+    services = await saas_db.execute(
+        "SELECT id, name, duration_minutes, price, description FROM services WHERE firm_id = ?",
+        [firm_id]
+    )
+
+    # Godziny pracy
+    hours_rows = await saas_db.execute(
+        "SELECT day_of_week, open_time, close_time FROM working_hours WHERE firm_id = ?",
+        [firm_id]
+    )
+    working_hours = [
+        {
+            "day_of_week": int(h["day_of_week"]) if h["day_of_week"] else 0,
+            "open_time":   h["open_time"],
+            "close_time":  h["close_time"],
+        }
+        for h in hours_rows
+        if h.get("open_time")  # pomijamy dni bez godzin
+    ]
+
+    # FAQ
+    faq_rows = await saas_db.execute(
+        "SELECT question, answer FROM faqs WHERE firm_id = ? ORDER BY created_at",
+        [firm_id]
+    )
+
+    # Staff (pracownicy z Google Calendar)
+    staff_rows = await saas_db.execute(
+        "SELECT * FROM staff WHERE firm_id = ?",
+        [firm_id]
+    )
+    staff_list = []
+    for s in staff_rows:
+        staff_services = await saas_db.execute(
+            """SELECT srv.id, srv.name, srv.duration_minutes, srv.price
+               FROM services srv
+               JOIN staff_services ss ON srv.id = ss.service_id
+               WHERE ss.staff_id = ?""",
+            [s["id"]]
+        )
+        staff_list.append({
+            **s,
+            "services": staff_services,
+        })
+
+    # Deszyfruj Auth Token Twilio
+    raw_token = firm.get("twilio_auth_token") or ""
+    decrypted_token = decrypt_token(raw_token) if raw_token else ""
+
+    # Pobierz twilio_account_sid z firmy lub z konta użytkownika
+    twilio_sid = firm.get("twilio_account_sid") or ""
+    if not twilio_sid:
+        # Fallback — pobierz z konta usera
+        user_rows = await saas_db.execute(
+            "SELECT twilio_account_sid, twilio_auth_token FROM users WHERE id = ?",
+            [firm["user_id"]]
+        )
+        if user_rows:
+            twilio_sid = user_rows[0].get("twilio_account_sid") or ""
+            if not decrypted_token:
+                raw_user_token = user_rows[0].get("twilio_auth_token") or ""
+                decrypted_token = decrypt_token(raw_user_token) if raw_user_token else ""
+
+    logger.info(f"✅ [saas] Found firm: {firm.get('name')} (id: {firm_id})")
+
+    return {
+        # Identyfikatory — mapujemy firm → tenant format
+        "id":               firm_id,
+        "source":           "saas",
+        "name":             firm.get("name") or "",
+        "business_name":    firm.get("name") or "",
+        "industry":         firm.get("industry") or "",
+        "address":          firm.get("address") or "",
+        "email":            firm.get("email") or "",
+        "phone_number":     firm.get("phone_number") or "",
+
+        # Twilio (odszyfrowane)
+        "twilio_account_sid": twilio_sid,
+        "twilio_auth_token":  decrypted_token,
+
+        # AI config
+        "assistant_name":   firm.get("assistant_name") or "Ania",
+        "first_message":    firm.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info":  firm.get("additional_info") or "",
+        "tts_provider":     firm.get("tts_provider") or "elevenlabs",
+
+        # Limity i status
+        "is_active":        int(firm.get("is_active") or 1),
+        "is_blocked":       int(firm.get("is_blocked") or 0),
+        "minutes_used":     float(firm.get("minutes_used") or 0),
+        "minutes_limit":    int(firm.get("minutes_limit") or 100),
+
+        # Funkcje
+        "booking_enabled":  int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
+        "transfer_enabled": int(firm.get("transfer_enabled") or 0),
+        "transfer_number":  firm.get("transfer_number") or "",
+
+        # Email
+        "notification_email":  firm.get("notification_email") or firm.get("email") or "",
+        "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
+        "lead_email":          firm.get("lead_email") or "",
+
+        # TTS
+        "azure_voice_id":   "pl-PL-AgnieszkaNeural",
+        "elevenlabs_voice_id": None,
+
+        # Dane
+        "services":         services,
+        "working_hours":    working_hours,
+        "faq":              faq_rows,
+        "info_services":    services,  # w SaaS nie ma osobnej tabeli info_services
+        "staff":            staff_list,
+    }
+
+
+# ==========================================
+# GŁÓWNA FUNKCJA — sprawdza obie bazy
+# ==========================================
+
+async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
+    """
+    Pobierz tenant po numerze telefonu.
+    Kolejność: 1) baza admina, 2) baza SaaS
+    Admina ma priorytet — jeśli numer jest w obu, wygrywa admin.
+    """
+    phone_clean  = phone.replace(" ", "").replace("-", "")
+    phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
+
+    # 1. Sprawdź bazę admina (obecna logika — nie ruszamy)
+    tenant = await _get_tenant_from_admin(phone_suffix)
+    if tenant:
+        logger.info(f"📞 Tenant from ADMIN DB: {tenant.get('name')}")
+        return tenant
+
+    # 2. Sprawdź bazę SaaS
+    tenant = await _get_tenant_from_saas(phone_suffix)
+    if tenant:
+        logger.info(f"📞 Tenant from SAAS DB: {tenant.get('name')}")
+        return tenant
+
+    logger.warning(f"❌ No tenant found for suffix: {phone_suffix}")
+    return None
