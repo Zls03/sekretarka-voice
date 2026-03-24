@@ -433,35 +433,44 @@ def _slot_to_minutes(slot: str) -> int:
 
 # Cache dla slotów (używany tylko przez get_available_slots, nie przez _from_api)
 _slots_cache = {}
+_slots_cache_lock = asyncio.Lock()
 
 async def get_available_slots(
     tenant: dict, staff: dict, service: dict, date: datetime
 ) -> List[str]:
     """Główna funkcja - z cache 60s (używaj get_available_slots_from_api dla świeżych danych)"""
-    # Cache key
     cache_key = f"{staff.get('id')}_{date.strftime('%Y-%m-%d')}"
-    
-    # Sprawdź cache (ważny 60 sekund)
+
+    # Szybki odczyt bez locka (optymistyczny)
     if cache_key in _slots_cache:
         cached_time, cached_slots = _slots_cache[cache_key]
         if (datetime.now() - cached_time).seconds < 60:
             logger.info(f"📅 Cache hit for {cache_key}: {len(cached_slots)} slots")
             return cached_slots
-    
-    # Pobierz z API lub working hours
-    calendar_connected = staff.get("google_calendar_id") or staff.get("google_connected")
-    
-    if calendar_connected:
-        logger.info(f"📅 Staff {staff.get('name')} has calendar, using API")
-        slots = await get_available_slots_from_api(tenant, staff, service, date)
-        if slots:
-            _slots_cache[cache_key] = (datetime.now(), slots)
-            return slots
-        logger.warning("⚠️ API returned no slots, falling back")
-    
-    slots = await get_available_slots_from_working_hours(tenant, staff, service, date)
-    _slots_cache[cache_key] = (datetime.now(), slots)
-    return slots
+
+    # Lock tylko gdy trzeba odpytać API
+    async with _slots_cache_lock:
+        # Sprawdź ponownie po wejściu w lock (inny coroutine mógł już uzupełnić)
+        if cache_key in _slots_cache:
+            cached_time, cached_slots = _slots_cache[cache_key]
+            if (datetime.now() - cached_time).seconds < 60:
+                logger.info(f"📅 Cache hit (post-lock) for {cache_key}: {len(cached_slots)} slots")
+                return cached_slots
+
+        # Pobierz z API lub working hours
+        calendar_connected = staff.get("google_calendar_id") or staff.get("google_connected")
+
+        if calendar_connected:
+            logger.info(f"📅 Staff {staff.get('name')} has calendar, using API")
+            slots = await get_available_slots_from_api(tenant, staff, service, date)
+            if slots:
+                _slots_cache[cache_key] = (datetime.now(), slots)
+                return slots
+            logger.warning("⚠️ API returned no slots, falling back")
+
+        slots = await get_available_slots_from_working_hours(tenant, staff, service, date)
+        _slots_cache[cache_key] = (datetime.now(), slots)
+        return slots
 
 # ==========================================
 # API - REZERWACJE

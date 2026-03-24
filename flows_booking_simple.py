@@ -517,13 +517,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 if available_days:
                     suggestion = format_availability_message(available_days)
                     return await _respond(
-                        f"Na {format_date_polish(parsed_date)} u {staff_name} nie ma wolnych terminów. "
+                        f"{format_date_polish(parsed_date).capitalize()} u {staff_name} nie ma wolnych terminów. "
                         f"{suggestion}",
                         flow_manager, tenant, state=state)
                 else:
                     max_days = int(state["staff"].get("max_booking_days") or 14)
                     return await _respond(
-                        f"Na {format_date_polish(parsed_date)} u {staff_name} nie ma wolnych terminów "
+                        f"{format_date_polish(parsed_date).capitalize()} u {staff_name} nie ma wolnych terminów "
                         f"i w najbliższych {max_days} dniach grafik jest pełny. "
                         f"Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
                         flow_manager, tenant, state=state)
@@ -684,7 +684,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     if "time" not in state:
         slots_text = _slots_summary(state["available_slots"])
         return await _respond(
-            f"Na {format_date_polish(state['date'])} wolne są: {slots_text}. "
+            f"{format_date_polish(state['date']).capitalize()} wolne są: {slots_text}. "
             f"Którą godzinę?",
             flow_manager, tenant, state=state)
     

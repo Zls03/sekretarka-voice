@@ -20,7 +20,7 @@ async def play_snippet(flow_manager, category: str):
         from pipecat.frames.frames import TTSSpeakFrame
         
         if category == "checking":
-            phrases = ["Chwileczka...", "Sprawdzam...", "Momencik..."]
+            phrases = ["Chwileczkę...", "Sprawdzam...", "Momencik..."]
         else:  # saving
             phrases = ["Zapisuję...", "Sekundkę...", "Rezerwuję..."]
         
