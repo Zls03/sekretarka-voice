@@ -265,8 +265,10 @@ Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - start_booking → klient WYRAŹNIE chce się UMÓWIĆ na wizytę
-- manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę  
-- contact_owner → klient chce KONTAKT z właścicielem/zostawić wiadomość
+- manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
+- contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
+  (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem", "proszę kogoś z obsługi")
+  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
@@ -308,7 +310,9 @@ Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
-- contact_owner → klient chce KONTAKT z właścicielem/zostawić wiadomość
+- contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
+  (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem")
+  → ZAWSZE wywołaj gdy klient prosi o rozmowę z człowiekiem
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
@@ -485,7 +489,7 @@ Na pytania o cennik, godziny, adres → ODPOWIEDZ z informacji powyżej.
 
 FUNKCJE TYLKO GDY:
 - start_booking → klient chce się UMÓWIĆ
-- contact_owner → klient chce KONTAKT z właścicielem
+- contact_owner → klient chce ROZMAWIAĆ z kimkolwiek z firmy (właściciel, pracownik, fryzjer, itp.) LUB zostawić wiadomość
 - end_conversation → klient się ŻEGNA"""
         }],
         "functions": [
