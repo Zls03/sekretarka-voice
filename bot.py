@@ -298,11 +298,12 @@ async def get_greeting_audio(tenant_id: str):
 # TRANSCRIPT LOGGING
 # ==========================================
 
-async def save_transcript(tenant_id: str, call_sid: str, role: str, content: str):
+async def save_transcript(tenant_id: str, call_sid: str, role: str, content: str, target_db=None):
     try:
+        _db = target_db if target_db is not None else db
         transcript_id = f"tr_{uuid.uuid4().hex[:12]}"
-        await db.execute(
-            """INSERT INTO call_transcripts 
+        await _db.execute(
+            """INSERT INTO call_transcripts
                (id, tenant_id, call_sid, role, content, created_at)
                VALUES (?, ?, ?, ?, ?, datetime('now'))""",
             [transcript_id, tenant_id, call_sid, role, content]
@@ -456,18 +457,21 @@ def create_tts_service(tenant: dict):
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice}")
         creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         creds_dict = json.loads(creds_json)
-        creds_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-        json.dump(creds_dict, creds_file)
-        creds_file.flush()
-        tts = GoogleTTSService(
-            credentials_path=creds_file.name,
-            voice_id=google_voice,
-            sample_rate=8000,
-            params=GoogleTTSService.InputParams(
-                language=Language.PL_PL,
-                speaking_rate=1.04,
-            ),
-        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(creds_dict, f)
+            creds_path = f.name
+        try:
+            tts = GoogleTTSService(
+                credentials_path=creds_path,
+                voice_id=google_voice,
+                sample_rate=8000,
+                params=GoogleTTSService.InputParams(
+                    language=Language.PL_PL,
+                    speaking_rate=1.04,
+                ),
+            )
+        finally:
+            os.unlink(creds_path)
         tts.add_text_transformer(expand_abbreviations)
         return tts
     else:
@@ -490,8 +494,9 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "Już patrzę.",
-        "Już sprawdzam.",
+        "Chwileczkę...",
+        "Sprawdzam...",
+        "Momencik...",
     ]
     
     def __init__(self, **kwargs):
@@ -853,7 +858,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"⏰ User idle - retry #{retry_count}")
 
         if retry_count == 1:
-            await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
+            await task.queue_frame(TTSSpeakFrame(text="Halo? Czy słyszysz mnie?"))
             processor._timeout = 5.0
             return True
         else:
@@ -899,7 +904,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.warning(f"🔇 Extended silence: {silence_seconds:.0f}s - asking if still there")
                     silence_warning_given = True
                     try:
-                        await task.queue_frame(TTSSpeakFrame(text="Halo, czy jest Pan jeszcze przy telefonie?"))
+                        await task.queue_frame(TTSSpeakFrame(text="Halo? Czy słyszysz mnie?"))
                     except Exception as e:
                         logger.error(f"Silence warning error: {e}")
 
@@ -931,7 +936,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         LLMMessagesAppendFrame(
                             messages=[{
                                 "role": "system",
-                                "content": "WAŻNE: Zostało 30 sekund rozmowy. Powiedz klientowi: 'Przepraszam, za chwilę będę musiała kończyć rozmowę. Czy mogę jeszcze w czymś szybko pomóc?'"
+                                "content": "WAŻNE: Zostało 30 sekund rozmowy. Powiedz klientowi: 'Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?'"
                             }],
                             run_llm=True
                         )
@@ -1084,33 +1089,37 @@ async def websocket_endpoint(websocket: WebSocket):
 # ==========================================
 
 async def save_call_log(flow_manager):
-    
+
     if flow_manager.state.get("call_logged"):
         return
 
     try:
         tenant = flow_manager.state.get("tenant", {})
         call_sid = flow_manager.state.get("call_sid")
+        tenant_id = tenant.get("id", "")
 
-        if tenant.get("id") and call_sid:
-            existing = await db.execute(
+        is_saas = tenant_id.startswith("firm_")
+        target_db = saas_db if is_saas else db
+
+        if tenant_id and call_sid:
+            existing = await target_db.execute(
                 "SELECT id FROM call_logs WHERE call_sid = ?",
                 [call_sid]
             )
 
             if not existing:
-                await db.execute(
-                    """INSERT INTO call_logs 
+                await target_db.execute(
+                    """INSERT INTO call_logs
                        (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
                        VALUES (?, ?, ?, ?, 0, 'in_progress', datetime('now'))""",
                     [
                         f"call_{int(datetime.utcnow().timestamp())}",
-                        tenant.get("id"),
+                        tenant_id,
                         call_sid,
                         flow_manager.state.get("caller_phone", "nieznany"),
                     ]
                 )
-                logger.info(f"📊 Call log created: {call_sid}")
+                logger.info(f"📊 Call log created: {call_sid} ({'saas' if is_saas else 'admin'})")
 
             try:
                 context = flow_manager.get_current_context()
@@ -1131,7 +1140,7 @@ async def save_call_log(flow_manager):
                         continue
                     saved_contents.add(content_key)
 
-                    await save_transcript(tenant.get("id"), call_sid, role, content[:500])
+                    await save_transcript(tenant_id, call_sid, role, content[:500], target_db=target_db)
                     saved_count += 1
 
                 logger.info(f"📝 Transcript saved: {saved_count} messages (deduplicated)")
@@ -1139,9 +1148,9 @@ async def save_call_log(flow_manager):
                 logger.error(f"Transcript save error: {e}")
 
             try:
-                await db.execute(
+                await target_db.execute(
                     "DELETE FROM call_transcripts WHERE tenant_id = ? AND created_at < datetime('now', '-30 days')",
-                    [tenant.get("id")]
+                    [tenant_id]
                 )
             except:
                 pass
