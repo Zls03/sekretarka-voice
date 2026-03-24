@@ -138,27 +138,29 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
         if existing_name:
             return (None, create_collect_message_content_node(tenant))
         else:
-            return (None, create_collect_contact_name_node(tenant))
-    
+            return (None, create_collect_contact_name_node(tenant, "Dobrze, przekażę wiadomość. Na jakie imię?"))
+
     # POTEM sprawdź czy chce TRANSFER
     transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "rozmawiać z"]
     wants_transfer = any(kw in reason for kw in transfer_keywords)
-    
+
     if wants_transfer:
         if has_transfer:
             logger.info(f"📞 AUTO-TRANSFER based on reason keywords")
             return await execute_transfer(flow_manager, tenant)
         else:
             logger.info(f"📞 Transfer requested but DISABLED - offering message")
-            return ("Niestety nie mogę teraz połączyć bezpośrednio, ale chętnie przekażę wiadomość do właściciela.", 
-                    create_collect_contact_name_node(tenant))
+            return (None, create_collect_contact_name_node(
+                tenant,
+                "Bezpośredniego połączenia niestety nie mam, ale mogę przekazać wiadomość właścicielowi. Na jakie imię?"
+            ))
     elif has_transfer:
         return (None, create_contact_choice_node(tenant))
     else:
         if existing_name:
             return (None, create_collect_message_content_node(tenant))
         else:
-            return (None, create_collect_contact_name_node(tenant))
+            return (None, create_collect_contact_name_node(tenant, "Chętnie przekażę wiadomość. Na jakie imię?"))
 # ============================================================================
 # NODE: Wybór - wiadomość czy połączenie (gdy transfer dostępny)
 # ============================================================================
@@ -236,12 +238,13 @@ async def handle_do_message(args: dict, flow_manager: FlowManager, tenant: dict)
 # NODE: Zbieranie imienia
 # ============================================================================
 
-def create_collect_contact_name_node(tenant: dict) -> dict:
+def create_collect_contact_name_node(tenant: dict, intro_text: str = None) -> dict:
     """Zbierz imię klienta"""
+    tts_text = intro_text if intro_text else "Na jakie imię zapisuję?"
     return {
         "name": "collect_contact_name",
         "pre_actions": [
-            {"type": "tts_say", "text": "Dobrze. Na jakie imię zapisuję?"}
+            {"type": "tts_say", "text": tts_text}
         ],
         "respond_immediately": False,
         "role_messages": [{

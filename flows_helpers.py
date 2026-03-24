@@ -210,17 +210,22 @@ def format_date_polish(date: datetime) -> str:
     elif target == today + timedelta(days=2):
         return "pojutrze"
     else:
-        day_name = POLISH_DAYS[target.weekday()]
-        
+        # Biernik po "w" (w poniedziałek, w środę, w sobotę...)
+        DAYS_ACCUSATIVE = {
+            0: "poniedziałek", 1: "wtorek", 2: "środę",
+            3: "czwartek", 4: "piątek", 5: "sobotę", 6: "niedzielę"
+        }
+        day_name = DAYS_ACCUSATIVE[target.weekday()]
+
         # Miesiące po polsku w dopełniaczu
         POLISH_MONTHS = {
             1: "stycznia", 2: "lutego", 3: "marca", 4: "kwietnia",
             5: "maja", 6: "czerwca", 7: "lipca", 8: "sierpnia",
             9: "września", 10: "października", 11: "listopada", 12: "grudnia"
         }
-        
+
         month_name = POLISH_MONTHS.get(target.month, str(target.month))
-        
+
         return f"w {day_name}, {target.day} {month_name}"
 
 

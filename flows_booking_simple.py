@@ -395,7 +395,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     
     # === 1. WALIDACJA USŁUGI ===
-    if service_text and ("service" not in state or service_text != state.get("service", {}).get("name")):
+    if service_text and "service" not in state:
         state.pop("service", None)
         found = next((s for s in services if s["name"].strip().lower() == service_text.strip().lower()), None)
         if found:
@@ -1001,7 +1001,7 @@ async def _save_booking(
             await flow_manager.task.queue_frame(TTSSpeakFrame(
                 text=f"Gotowe! {state['service']['name']} u {staff_name}, "
                      f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
-                     f"{sms_info} Czy mogę jeszcze w czymś pomóc?"
+                     f"{sms_info}"
             ))
             
             from flows import create_anything_else_node
