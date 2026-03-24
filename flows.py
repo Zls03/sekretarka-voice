@@ -20,9 +20,9 @@ async def play_snippet(flow_manager, category: str):
         from pipecat.frames.frames import TTSSpeakFrame
         
         if category == "checking":
-            phrases = ["Sprawdzam...", "Moment, sprawdzam...", "Już patrzę..."]
+            phrases = ["Chwileczka...", "Sprawdzam...", "Momencik..."]
         else:  # saving
-            phrases = ["Już zapisuję...", "Rezerwuję termin...", "Sekundkę, zapisuję..."]
+            phrases = ["Zapisuję...", "Sekundkę...", "Rezerwuję..."]
         
         phrase = random.choice(phrases)
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=phrase))
@@ -157,7 +157,7 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     else:
         max_days = int(staff.get("max_booking_days") or 14)
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text=f"Niestety u {staff_name_declined} w najbliższych {max_days} dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.")
+            TTSSpeakFrame(text=f"U {staff_name_declined} w najbliższych {max_days} dniach nie ma wolnych terminów. Proszę spróbować jutro.")
         )
         return (None, create_initial_node(tenant, greeting_played=True))
 # ==========================================
@@ -394,13 +394,13 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
     if has_transfer:
         from flows_contact import create_contact_choice_node
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Co wolisz?")
+            TTSSpeakFrame(text="Zmian ani odwołań samodzielnie nie obsługuję. Przekazać wiadomość czy połączyć bezpośrednio?")
         )
         return (None, create_contact_choice_node(tenant))
     else:
         from flows_contact import create_collect_contact_name_node
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Przekażę wiadomość do właściciela, który oddzwoni. Na jakie imię zapisuję?")
+            TTSSpeakFrame(text="Zmian samodzielnie nie obsługuję, ale przekażę wiadomość. Na jakie imię?")
         )
         return (None, create_collect_contact_name_node(tenant))
 
@@ -734,7 +734,7 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
         tenant = flow_manager.state.get("tenant", {})
         
         from pipecat.frames.frames import TTSSpeakFrame
-        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Rozumiem, rezerwacja anulowana."))
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Jasne, anulujemy."))
         
         return (
             {"cancelled": True, "reason": "end_conversation_during_booking"},
@@ -771,7 +771,7 @@ def create_end_node(message_saved: bool = False) -> dict:
             "name": "end",
             "respond_immediately": False,
             "pre_actions": [
-                {"type": "tts_say", "text": "Wiadomość przekazana, właściciel oddzwoni najszybciej jak to możliwe. Dziękuję za kontakt, do widzenia!"}
+                {"type": "tts_say", "text": "Przekazuję wiadomość. Oddzwonią wkrótce — do widzenia!"}
             ],
             "post_actions": [
                 {"type": "end_conversation"}

@@ -611,8 +611,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             else:
                 all_slots = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:6]])
                 return await _respond(
-                    f"Niestety {range_name} nie ma wolnych terminów. "
-                    f"Dostępne godziny to: {all_slots}.",
+                    f"{range_name.capitalize()} zajęte. Dostępne: {all_slots}.",
                     flow_manager, tenant, state=state)
         
         parsed_time = _parse_time(time_text)
@@ -658,8 +657,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     # W godzinach pracy ale zajęte
                     slots_text = _slots_summary(current_slots)
                     return await _respond(
-                        f"Niestety godzina {format_hour_polish(parsed_time)} jest już zajęta. "
-                        f"Wolne są: {slots_text}.",
+                        f"Godzina {format_hour_polish(parsed_time)} zajęta. Wolne: {slots_text}.",
                         flow_manager, tenant, state=state)
                 else:
                     # Cały dzień zajęty
@@ -721,9 +719,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
             summary = (
-                f"Podsumowuję: {state['service']['name']} u {staff_name}, "
+                f"{state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}, "
-                f"na {customer_gender} {customer_name_declined}. Czy mogę potwierdzić?"
+                f"na {customer_gender} {customer_name_declined}. Zgadza się?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -892,9 +890,9 @@ ZASADY:
         
     except Exception as e:
         logger.error(f"❌ GPT error: {e}")
-        answer = "Przepraszam, nie mam tej informacji"
+        answer = "Nie mam tej informacji."
     
-    full_response = f"{answer} Wracając do rezerwacji - {next_step.lower()}"
+    full_response = f"{answer} {next_step}"
     
     return await _respond(full_response, flow_manager, tenant, state=state)
 
@@ -953,14 +951,13 @@ async def _save_booking(
                 state["available_slots"] = current_slots
                 slots_text = _slots_summary(current_slots)
                 return await _respond(
-                    f"Przepraszam, ta godzina właśnie została zajęta przez kogoś innego. "
-                    f"Pozostały wolne: {slots_text}. Którą wybrać?",
+                    f"Ta godzina właśnie zniknęła. Zostały: {slots_text}. Którą?",
                     flow_manager, tenant, state=state)
             else:
                 state.pop("date", None)
                 state.pop("time", None)
                 return await _respond(
-                    "Przepraszam, ten dzień właśnie się zapełnił. Proszę wybrać inny termin.",
+                    "Ten dzień właśnie się zapełnił. Który inny?",
                     flow_manager, tenant, state=state)
         
         # Zapisz
@@ -1008,13 +1005,13 @@ async def _save_booking(
             return (None, create_anything_else_node(tenant))
         else:
             return await _respond(
-                "Wystąpił problem z zapisem. Czy przekazać wiadomość do właściciela?",
+                "Coś poszło nie tak z zapisem. Przekazać wiadomość do właściciela?",
                 flow_manager, tenant, state=state)
             
     except Exception as e:
         logger.error(f"💾 SAVE error: {e}")
         return await _respond(
-            "Wystąpił błąd. Czy przekazać wiadomość do właściciela?",
+            "Coś poszło nie tak. Przekazać wiadomość?",
             flow_manager, tenant, state=state)
 
 
