@@ -168,7 +168,7 @@ def create_contact_choice_node(tenant: dict) -> dict:
     return {
         "name": "contact_choice",
         "pre_actions": [
-            {"type": "tts_say", "text": "Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Co Pan woli?"}
+            {"type": "tts_say", "text": "Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Wiadomość czy bezpośrednie połączenie?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -241,7 +241,7 @@ def create_collect_contact_name_node(tenant: dict) -> dict:
     return {
         "name": "collect_contact_name",
         "pre_actions": [
-            {"type": "tts_say", "text": "Dobrze, przekażę wiadomość. Jak się Pan nazywa?"}
+            {"type": "tts_say", "text": "Dobrze. Na jakie imię zapisuję?"}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -483,7 +483,7 @@ async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     
     asyncio.create_task(close_for_transfer())
     
-    return ("Łączę z właścicielem, proszę chwilę poczekać.", _create_transfer_end_node())
+    return (None, _create_transfer_end_node())
 
 
 def _create_transfer_end_node() -> dict:

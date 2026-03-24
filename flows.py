@@ -150,7 +150,7 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
         first_date = format_date_polish(first_day["date"])
         first_slots = _slots_summary(first_day["slots"])
         
-        message = f"U {staff_name_declined} najbliższy termin to {first_date}: {first_slots}. Zapisać Pana?"
+        message = f"U {staff_name_declined} najbliższy termin to {first_date}: {first_slots}. Pasuje?"
         
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=message))
         return (None, create_initial_node(tenant, greeting_played=True))
@@ -395,7 +395,7 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
     else:
         from flows_contact import create_collect_contact_name_node
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Przekażę wiadomość do właściciela, który oddzwoni. Jak się Pan nazywa?")
+            TTSSpeakFrame(text="Niestety nie mogę samodzielnie zmienić ani odwołać wizyty. Przekażę wiadomość do właściciela, który oddzwoni. Na jakie imię zapisuję?")
         )
         return (None, create_collect_contact_name_node(tenant))
 

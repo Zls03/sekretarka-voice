@@ -339,7 +339,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         else:
             state = {}
             flow_manager.state["booking"] = state
-            return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę chce się Pan umówić?",
+            return await _respond("Dobrze, zaczynamy od nowa. Na jaką usługę?",
                                  flow_manager, tenant)
     
     # === OBSŁUGA PYTANIA O DOSTĘPNOŚĆ ===
@@ -383,7 +383,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             # Nie mamy usługi - zapytaj najpierw
             return await _respond(
                 "Żeby sprawdzić dostępne terminy, muszę wiedzieć na jaką usługę. "
-                f"Mamy: {natural_list([s['name'] for s in services[:4]])}. Która Pana interesuje?",
+                f"Mamy: {natural_list([s['name'] for s in services[:4]])}. Która usługa?",
                 flow_manager, tenant, state=state)
         
         else:
@@ -408,7 +408,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
     if "service" not in state:
         names = natural_list([s["name"] for s in services[:5]])
-        return await _respond(f"Na jaką usługę chce się Pan umówić? Mamy {names}.",
+        return await _respond(f"Na jaką usługę? Mamy {names}.",
                              flow_manager, tenant, state=state)
     
     # === 2. WALIDACJA PRACOWNIKA ===
@@ -453,8 +453,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         else:
             names = natural_list([s["name"] for s in available])
             return await _respond(
-                f"Świetnie, {state['service']['name']}. Do kogo chce się Pan umówić? "
-                f"Dostępni są {names}. Może być też dowolna osoba.",
+                f"Świetnie. Do kogo? Dostępni: {names}.",
                 flow_manager, tenant, state=state)
     
         # === 3. WALIDACJA DATY ===
@@ -688,7 +687,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         slots_text = _slots_summary(state["available_slots"])
         return await _respond(
             f"Na {format_date_polish(state['date'])} wolne są: {slots_text}. "
-            f"Którą godzinę Pan wybiera?",
+            f"Którą godzinę?",
             flow_manager, tenant, state=state)
     
     # === 5. WALIDACJA IMIENIA ===
@@ -739,17 +738,17 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 def _get_next_step(state: Dict, staff_list: List) -> str:
     """Określa następny krok w rezerwacji"""
     if "service" not in state:
-        return "Na jaką usługę chce się Pan umówić?"
+        return "Na jaką usługę?"
     elif "staff" not in state:
         available = [s for s in staff_list if staff_can_do_service(s, state.get("service", {}))]
         names = natural_list([s["name"] for s in available])
-        return f"Do kogo chce się Pan umówić? Dostępni są {names}."
+        return f"Do kogo? Dostępni: {names}."
     elif "date" not in state:
         staff_name = odmien_imie(state['staff']['name'])
-        return f"Na jaki dzień chce się Pan umówić do {staff_name}?"
+        return f"Na jaki dzień do {staff_name}?"
     elif "time" not in state:
         slots_text = _slots_summary(state.get("available_slots", []))
-        return f"Którą godzinę Pan wybiera? Wolne są: {slots_text}."
+        return f"Którą godzinę? Wolne są: {slots_text}."
     elif "name" not in state:
         return "Na jakie imię zapisać wizytę?"
     else:
@@ -1052,7 +1051,7 @@ ZASADY:
 - Przekazuj DOKŁADNIE co klient powiedział (nie interpretuj!)
 - Dla dat: przekaż słownie ("jutro", "w piątek")
 - Dla godzin: przekaż słownie ("na trzynastą", "14:30")
-- Używaj formy "Pan/Pani"
+- Używaj formy bezpłciowej dopóki nie znasz płci klienta
 - Mów krótko"""
         }],
         
@@ -1121,7 +1120,7 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
         
         from pipecat.frames.frames import TTSSpeakFrame
         await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text=f"Świetnie! Na jaki dzień chce się Pan zapisać do {staff_name}?")
+            TTSSpeakFrame(text=f"Świetnie! Na jaki dzień do {staff_name}?")
         )
         
         return (None, create_booking_node(tenant))
