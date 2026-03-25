@@ -41,7 +41,8 @@ from flows_helpers import (
     get_opening_hours, validate_date_constraints,
     get_available_slots, save_booking_to_api,
     build_business_context, POLISH_DAYS,
-    fuzzy_match_service, fuzzy_match_staff, staff_can_do_service
+    fuzzy_match_service, fuzzy_match_staff, staff_can_do_service,
+    _assistant_gender,
 )
 
 # ==========================================
@@ -169,7 +170,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
     first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
-    
+    g = _assistant_gender(assistant_name)
+
     # Aktualna data dla GPT (polska strefa czasowa)
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
@@ -324,13 +326,13 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
         "respond_immediately": False,
         "role_messages": [{
             "role": "system",
-            "content": f"""Jesteś wirtualną asystentką (sekretarką) firmy "{business_name}".
+            "content": f"""Jesteś {g['role_noun']} firmy "{business_name}".
 
 TOŻSAMOŚĆ:
 - Masz na imię {assistant_name}
-- Jesteś kobietą - mów w rodzaju żeńskim (zrobiłam, powiedziałam, zapisałam, pomogę)
-- Jeśli ktoś pyta kim jesteś: "Jestem {assistant_name}, wirtualna asystentka {business_name}"
-- Jeśli ktoś pyta czy jesteś robotem/AI: "Jestem wirtualną asystentką, ale chętnie pomogę"
+- {g['gender_line']}
+- Jeśli ktoś pyta kim jesteś: "{g['self_intro']} {business_name}"
+- Jeśli ktoś pyta czy jesteś robotem/AI: "{g['self_ai']}"
 
 ZASADY:
 - Mów KRÓTKO i naturalnie (max 2 zdania na raz)
@@ -417,13 +419,14 @@ def create_anything_else_node(tenant: dict) -> dict:
     
     business_name = tenant.get("name", "salon")
     assistant_name = tenant.get("assistant_name", "Ania")
-    
+    g = _assistant_gender(assistant_name)
+
     return {
         "name": "anything_else",
         "role_messages": [{
             "role": "system",
-            "content": f"""Jesteś {assistant_name}, wirtualną asystentką {business_name}.
-Mów KRÓTKO, naturalnie, w rodzaju żeńskim. Używaj formy bezpłciowej — NIE pisz Pan/Pani."."""
+            "content": f"""Jesteś {assistant_name}, {g['role_noun']} {business_name}.
+Mów KRÓTKO, naturalnie, {g['gender_short']}. Używaj formy bezpłciowej — NIE pisz Pan/Pani."."""
         }],
         "task_messages": [{"role": "system", "content": "Klient właśnie usłyszał potwierdzenie. NIE powtarzaj szczegółów wizyty. Zapytaj TYLKO: 'Czy mogę jeszcze w czymś pomóc?' lub podobne KRÓTKIE pytanie."}],
         "functions": [

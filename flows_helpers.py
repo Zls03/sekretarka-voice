@@ -23,6 +23,45 @@ from polish_mappings import (
     parse_hour_from_text, match_staff_name,
     apply_stt_corrections, normalize_polish_text
 )
+
+
+# ==========================================
+# PŁEĆ ASYSTENTA
+# ==========================================
+
+def _assistant_gender(assistant_name: str) -> dict:
+    """
+    Zwraca słownik z formami gramatycznymi na podstawie imienia asystenta.
+    Imiona kończące się na 'a' = żeńskie, z wyjątkami dla imion męskich (Kuba, Barnaba...).
+    """
+    MESKIE_NA_A = {"kuba", "barnaba", "saba", "kosma", "bonawentura"}
+    name_lower = (assistant_name or "").lower().strip()
+    is_female = name_lower.endswith("a") and name_lower not in MESKIE_NA_A
+
+    if is_female:
+        return {
+            "role_noun":       "wirtualną asystentką (sekretarką)",
+            "role_noun_short": "wirtualna asystentka",
+            "role_booking":    "asystentką rezerwacji",
+            "gender_line":     "Jesteś kobietą - mów w rodzaju żeńskim (zrobiłam, powiedziałam, zapisałam, pomogę)",
+            "self_intro":      f"Jestem {assistant_name}, wirtualna asystentka",
+            "self_ai":         "Jestem wirtualną asystentką, ale chętnie pomogę",
+            "gender_short":    "w rodzaju żeńskim (jestem asystentką)",
+            "nie_dosłyszałam": "Nie dosłyszałam",
+        }
+    else:
+        return {
+            "role_noun":       "wirtualnym asystentem (sekretarzem)",
+            "role_noun_short": "wirtualny asystent",
+            "role_booking":    "asystentem rezerwacji",
+            "gender_line":     "Jesteś mężczyzną - mów w rodzaju męskim (zrobiłem, powiedziałem, zapisałem, pomogę)",
+            "self_intro":      f"Jestem {assistant_name}, wirtualny asystent",
+            "self_ai":         "Jestem wirtualnym asystentem, ale chętnie pomogę",
+            "gender_short":    "w rodzaju męskim (jestem asystentem)",
+            "nie_dosłyszałam": "Nie dosłyszałem",
+        }
+
+
 # URL do panelu Next.js
 PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
 PANEL_SLUG = os.getenv("PANEL_SLUG", "")

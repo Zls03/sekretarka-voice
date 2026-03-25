@@ -13,6 +13,7 @@ Działa dla OBU trybów:
 from pipecat_flows import FlowManager, FlowsFunctionSchema
 from loguru import logger
 import asyncio
+from flows_helpers import _assistant_gender
 
 # ============================================================================
 # HELPER: Streszczenie rozmowy
@@ -289,7 +290,8 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
     # Walidacja
     invalid_names = ["pan", "pani", "tak", "nie", "halo", "słucham", "proszę"]
     if not name or len(name) < 2 or name.lower() in invalid_names:
-        return ({"status": "error", "message": "Nie dosłyszałam. Jak mogę zapisać?"}, 
+        nd = _assistant_gender(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
+        return ({"status": "error", "message": f"{nd}. Jak mogę zapisać?"},
                 create_collect_contact_name_node(tenant))
     
     # Usuń "pan/pani" z początku
@@ -361,7 +363,8 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     message = args.get("message", "").strip()
     
     if not message or len(message) < 3:
-        return ({"status": "error", "message": "Nie dosłyszałam. Co mam przekazać?"}, 
+        nd = _assistant_gender(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
+        return ({"status": "error", "message": f"{nd}. Co mam przekazać?"},
                 create_collect_message_content_node(tenant))
     
     name = flow_manager.state.get("contact_name", "Nieznany")

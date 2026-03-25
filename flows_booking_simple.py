@@ -20,12 +20,13 @@ from pipecat_flows import FlowManager, FlowsFunctionSchema
 from flows_helpers import (
     format_hour_polish, format_date_polish,
     get_available_slots, save_booking_to_api,
-    fuzzy_match_service, fuzzy_match_staff, 
+    fuzzy_match_service, fuzzy_match_staff,
     staff_can_do_service, send_booking_sms,
     increment_sms_count, get_opening_hours,
     POLISH_DAYS, build_business_context,
     get_available_slots_from_api,
     validate_date_constraints,
+    _assistant_gender,
 )
 
 # Import funkcji odmiany i formatowania
@@ -701,7 +702,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             logger.info(f"✅ Name: {state['name']}")
         else:
             return await _respond(
-                "Nie dosłyszałam imienia. Na jakie imię zapisać wizytę?",
+                f"{_assistant_gender(tenant.get('assistant_name', 'Ania'))['nie_dosłyszałam']} imienia. Na jakie imię zapisać wizytę?",
                 flow_manager, tenant, state=state)
     
     if "name" not in state:
@@ -873,7 +874,7 @@ ZASADY:
 - Odpowiedz TYLKO na pytanie
 - Użyj DOKŁADNYCH danych z powyższych informacji
 - NIE WYMYŚLAJ informacji których nie masz
-- Mów w rodzaju żeńskim (jestem asystentką)
+- Mów {_assistant_gender(tenant.get("assistant_name", "Ania"))["gender_short"]}
 - NIGDY nie pisz "Pan/Pani" ze slashem — TTS czyta to dosłownie
 - Używaj formy bezpłciowej dopóki nie znasz płci klienta
 - Gdy klient poda imię → używaj odpowiednio "Pan" lub "Pani"
@@ -1021,24 +1022,26 @@ async def _save_booking(
 
 def create_booking_node(tenant: Dict) -> Dict:
     """Tworzy node dla rezerwacji"""
-    
     services = tenant.get("services", [])
     staff_list = tenant.get("staff", [])
-    
+
     services_text = ", ".join(s["name"] for s in services[:5])
     staff_text = ", ".join(s["name"] for s in staff_list)
-    
+
+    assistant_name = tenant.get("assistant_name", "Ania")
+    g = _assistant_gender(assistant_name)
+
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
-    
+
     return {
         "name": "booking_simple",
         "respond_immediately": False,
-        
+
         "role_messages": [{
             "role": "system",
-            "content": f"""Jesteś asystentką rezerwacji. {today_info}
+            "content": f"""Jesteś {g['role_booking']}. {today_info}
 
 USŁUGI (wymień ZAWSZE WSZYSTKIE): {services_text}
 PRACOWNICY: {staff_text}
