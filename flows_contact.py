@@ -255,10 +255,11 @@ def create_collect_contact_name_node(tenant: dict, intro_text: str = None) -> di
             "role": "system",
             "content": """Klient poda imię lub nazwisko.
 
-Gdy powie jakiekolwiek imię/nazwisko → wywołaj set_contact_name
-Tylko gdy WYRAŹNIE rezygnuje ("nie chcę", "nieważne", "do widzenia") → end_conversation
-NIE interpretuj imienia jako pożegnania.
-NIE powtarzaj imienia klienta w odpowiedzi — po prostu wywołaj funkcję."""
+ZASADA PRIORYTETOWA: Jedno słowo lub krótka odpowiedź = ZAWSZE imię. Nigdy pożegnanie.
+Gdy klient poda imię/nazwisko → wywołaj WYŁĄCZNIE set_contact_name. Nic więcej.
+ZAKAZ wywoływania end_conversation jednocześnie z set_contact_name lub zaraz po — to dwie osobne, wzajemnie wykluczające się akcje.
+Tylko gdy klient WPROST rezygnuje słowami "nie chcę", "nieważne", "do widzenia", "żegnaj" → wywołaj end_conversation.
+NIE powtarzaj imienia klienta w odpowiedzi — po prostu wywołaj set_contact_name."""
         }],
         "functions": [
             set_contact_name_function(tenant),
