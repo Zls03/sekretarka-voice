@@ -775,7 +775,7 @@ def create_end_node(message_saved: bool = False) -> dict:
             "name": "end",
             "respond_immediately": False,
             "pre_actions": [
-                {"type": "tts_say", "text": "Przekazuję wiadomość. Oddzwonią wkrótce — do widzenia!"}
+                {"type": "tts_say", "text": "Już przekazałam — odezwiemy się do Ciebie wkrótce. Miłego dnia!"}
             ],
             "post_actions": [
                 {"type": "end_conversation"}
