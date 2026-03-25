@@ -313,6 +313,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
 
     return {
         "id":               firm_id,
+        "slug":             firm_id,
         "source":           "saas",
         "name":             firm.get("name") or "",
         "business_name":    firm.get("name") or "",
