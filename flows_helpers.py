@@ -697,6 +697,8 @@ def build_business_context(tenant: dict) -> str:
                 svc_lines.append(line)
             cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
             parts.append(cennik_text)
+        else:
+            parts.append("CENNIK: NIE SKONFIGUROWANY — nie znasz usług ani cen, nie podawaj żadnych")
     else:
         # Tryb informacyjny - usługi z info_services
         info_services = tenant.get("info_services", [])
@@ -707,7 +709,7 @@ def build_business_context(tenant: dict) -> str:
                 price = s.get('price', '')
                 duration = s.get('duration_minutes', '')
                 description = s.get('description', '').strip() if s.get('description') else ''
-                
+
                 line = f"• {name}"
                 if price:
                     line += f" = {price} zł"
@@ -718,25 +720,29 @@ def build_business_context(tenant: dict) -> str:
                 svc_lines.append(line)
             cennik_text = "CENNIK (DOKŁADNE CENY - PODAWAJ DOKŁADNIE!):\n" + "\n".join(svc_lines)
             parts.append(cennik_text)
+        else:
+            parts.append("CENNIK: NIE SKONFIGUROWANY — nie znasz usług ani cen, nie podawaj żadnych")
         
         # Dodaj informację że rezerwacje są wyłączone
         parts.append("UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon.")
     
     # Adres - formatuj ładnie dla wymowy TTS
-    address = tenant.get("address", "")
+    address = tenant.get("address", "").strip()
     if address:
         import re
-        
+
         # Zamień skróty
         address = address.replace("ul.", "ulica").replace("ul ", "ulica ")
         address = address.replace("al.", "aleja").replace("al ", "aleja ")
         address = address.replace("pl.", "plac").replace("pl ", "plac ")
-        
+
         # Dodaj "numer" przed liczbą w adresie (np. "Kwiatowa 15" → "Kwiatowa numer 15")
         # Szuka: spacja + cyfry + (koniec lub przecinek lub spacja)
         address = re.sub(r' (\d+)([,\s]|$)', r' numer \1\2', address)
-        
+
         parts.append(f"ADRES: {address}")
+    else:
+        parts.append("ADRES: NIE SKONFIGUROWANY — nie znasz adresu firmy, nie podawaj żadnego adresu")
     
     # FAQ
     faq = tenant.get("faq", [])
