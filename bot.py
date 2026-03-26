@@ -1298,6 +1298,21 @@ async def twilio_status(request: Request):
                             )
                             logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
 
+                    # Sprawdź limit minut
+                    firm_data = await saas_db.execute(
+                        "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?",
+                        [tenant_id]
+                    )
+                    if firm_data:
+                        used = float(firm_data[0].get("minutes_used") or 0)
+                        limit = int(firm_data[0].get("minutes_limit") or 0)
+                        if limit > 0 and used >= limit * 0.99:
+                            await saas_db.execute(
+                                "UPDATE firms SET is_blocked = 1 WHERE id = ?",
+                                [tenant_id]
+                            )
+                            logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min")
+
                     # Zapisz transakcję
                     await saas_db.execute(
                         """INSERT INTO transactions
