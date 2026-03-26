@@ -21,7 +21,7 @@ load_dotenv()
 from flows import end_conversation_function
 from flows_contact import contact_owner_function
 
-# Zbiór call_sid odrzuconych z powodu braku środków — nie naliczamy im kosztów
+# Zbiór call_sid odrzuconych z powodu braku środków — nie naliczamy im kosztóww
 _rejected_calls: set = set()
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
