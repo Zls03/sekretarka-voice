@@ -1192,7 +1192,7 @@ async def save_call_log(flow_manager):
 # TWILIO STATUS CALLBACK
 # ==========================================
 
-PRICE_PER_MINUTE = 0.49  # zł za minutę rozmowy
+PRICE_PER_MINUTE = 0.39  # zł za minutę rozmowy
 
 @app.post("/twilio/status")
 async def twilio_status(request: Request):
