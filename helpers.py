@@ -283,7 +283,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
                 decrypted_token = decrypt_token(raw_user_token) if raw_user_token else ""
 
     # ── Mapowanie TTS provider + voice_id ──
-    raw_provider = firm.get("tts_provider") or "elevenlabs"
+    raw_provider = firm.get("tts_provider") or "google"
     raw_voice_id = firm.get("voice_id") or ""
 
     # Zabezpieczenie na stare dane gdzie nazwa głosu była wpisana do tts_provider
@@ -304,7 +304,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     else:
         actual_provider = raw_provider
         actual_voice_id = raw_voice_id or {
-            "google": "pl-PL-Chirp3-HD-Leda",
+            "google": "pl-PL-Chirp3-HD-Aoede",
             "azure":  "pl-PL-AgnieszkaNeural",
         }.get(actual_provider, "")
 
