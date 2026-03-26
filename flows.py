@@ -328,7 +328,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
         przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Czy umówić wizytę?", "Coś jeszcze?"'
     else:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/oferty → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z informacjami o firmie.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc w czymś innym?")'
-        zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu → powiedz "Nie mam szczegółowych informacji o tej usłudze — mogę przekazać wiadomość do firmy"'
+        zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu → powiedz "Nie mam szczegółowych informacji o tej usłudze"'
         zasada_wiele_osob = ''  # nie dotyczy trybu informacyjnego
         przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Coś jeszcze?", "Czy jest coś innego w czym mogę pomóc?"'
 
