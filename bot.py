@@ -218,13 +218,15 @@ async def twilio_incoming(request: Request):
     
     if not tenant:
         logger.warning(f"❌ No tenant for {called}")
+        _rejected_calls.add(call_sid)
         return Response(
             content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, ten numer nie jest aktywny.</Say></Response>',
             media_type="application/xml"
         )
-    
+
     if tenant.get("is_blocked"):
         logger.warning(f"🚫 Tenant {tenant['id']} BLOCKED")
+        _rejected_calls.add(call_sid)
         return Response(
             content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml"
