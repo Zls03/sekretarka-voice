@@ -20,6 +20,9 @@ load_dotenv()
 
 from flows import end_conversation_function
 from flows_contact import contact_owner_function
+
+# Zbiór call_sid odrzuconych z powodu braku środków — nie naliczamy im kosztów
+_rejected_calls: set = set()
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response
@@ -234,8 +237,9 @@ async def twilio_incoming(request: Request):
             [tenant.get("user_id", "")]
         )
         balance = float(user_credits[0].get("balance") or 0) if user_credits else 0
-        if balance < 0.49:
+        if balance < PRICE_PER_MINUTE:
             logger.warning(f"🚫 SaaS {tenant['id']} — brak kredytów: {balance:.2f} zł")
+            _rejected_calls.add(call_sid)
             return Response(
                 content='<?xml version="1.0"?><Response><Say language="pl-PL">Przepraszamy, konto nie ma wystarczających środków. Do widzenia.</Say><Hangup/></Response>',
                 media_type="application/xml"
@@ -1264,7 +1268,10 @@ async def twilio_status(request: Request):
                 logger.info(f"📊 Created call log: {call_sid} → {duration}s")
 
             # ── 4. Aktualizuj minuty / kredyty ──
-            if call_status == "completed" and duration > 0:
+            if call_sid in _rejected_calls:
+                _rejected_calls.discard(call_sid)
+                logger.info(f"📊 Skipping charge — call was rejected (no funds): {call_sid}")
+            elif call_status == "completed" and duration > 0:
 
                 if is_saas_tenant:
                     # SaaS — odejmuj kredyty z konta użytkownika
