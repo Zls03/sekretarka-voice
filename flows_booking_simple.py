@@ -1103,6 +1103,9 @@ Przykłady dopasowania:
 - "kiedy macie wolne?" → question="kiedy macie wolne?"
 - "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="jutro", time_text="14:00"
 - "do Ani w piątek rano" → staff="Ania", date_text="w piątek", time_text="rano"
+- "tak pasuje" (po propozycji "piątek o 10:00") → date_text="piątek", time_text="10:00"
+- "dobra, ten termin" → date_text=<ostatnio wymieniona data>, time_text=<ostatnio wymieniona godzina>
+WAŻNE: Gdy klient akceptuje zaproponowany termin (np. "tak", "pasuje", "dobra") → wpisz zaproponowaną datę i godzinę w pola date_text i time_text.
 WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie tylko jedno! """
         }],
         
