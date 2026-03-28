@@ -1208,13 +1208,13 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
         if len(available) == 1:
             booking["staff"] = available[0]
             flow_manager.state["booking"] = booking
-            msg = f"Świetnie, {booking['service']['name']}. Już szukam terminu."
+            msg = f"Świetnie, {booking['service']['name']}. Na jaki dzień?"
         else:
             names = natural_list([s["name"] for s in available])
             msg = f"Świetnie, {booking['service']['name']}. Do kogo? Dostępni: {names}."
     else:
         from polish_mappings import odmien_imie
-        msg = f"Świetnie, {booking['service']['name']} u {odmien_imie(booking['staff']['name'])}. Szukam terminu."
+        msg = f"Świetnie, {booking['service']['name']} u {odmien_imie(booking['staff']['name'])}. Na jaki dzień?"
 
     await flow_manager.task.queue_frame(TTSSpeakFrame(text=msg))
     return (None, create_booking_node(tenant))
