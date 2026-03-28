@@ -395,6 +395,15 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                                              flow_manager, tenant, state)
     
     
+    # === PRE-FILL: Zachowaj date/time z tego wywołania nawet jeśli wyjdziemy wcześniej ===
+    # Gdy user mówi "strzyżenie jutro o 14" i brak pracownika → nie tracimy daty i godziny
+    if date_text and "date" not in state and "_pending_date" not in state:
+        state["_pending_date"] = date_text
+        logger.info(f"📅 Pending date stored: {date_text}")
+    if time_text and "time" not in state and "_pending_time" not in state:
+        state["_pending_time"] = time_text
+        logger.info(f"⏰ Pending time stored: {time_text}")
+
     # === 1. WALIDACJA USŁUGI ===
     if service_text and "service" not in state:
         state.pop("service", None)
@@ -420,9 +429,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 state["staff"] = available[0]
                 logger.info(f"✅ Staff (auto): {available[0]['name']}")
                 staff_name = odmien_imie(available[0]['name'])
-                return await _respond(
-                    f"Dobrze, zapiszę do {staff_name}. Na jaki dzień?",
-                    flow_manager, tenant, state=state)
+                # Wróć wcześnie tylko gdy nie mamy daty — inaczej kontynuuj flow
+                has_date = date_text or state.get("_pending_date") or "date" in state
+                if not has_date:
+                    return await _respond(
+                        f"Dobrze, zapiszę do {staff_name}. Na jaki dzień?",
+                        flow_manager, tenant, state=state)
         else:
             found = next((s for s in staff_list if s["name"] == staff_text), None)
             if found:
@@ -458,6 +470,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 flow_manager, tenant, state=state)
     
         # === 3. WALIDACJA DATY ===
+    # Użyj date_text z aktualnego wywołania LUB z pending (zapisanego wcześniej)
+    if not date_text:
+        date_text = state.pop("_pending_date", None)
+    elif "_pending_date" in state:
+        state.pop("_pending_date")  # Wyczyść pending bo mamy świeżą datę
+
     if date_text and ("date" not in state or date_text != state.get("_last_date_text")):
         state["_last_date_text"] = date_text
         state.pop("date", None)
@@ -576,6 +594,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 flow_manager, tenant, state=state)
     
     # === 4. WALIDACJA GODZINY ===
+    # Użyj time_text z aktualnego wywołania LUB z pending
+    if not time_text:
+        time_text = state.pop("_pending_time", None)
+    elif "_pending_time" in state:
+        state.pop("_pending_time")
+
     if time_text and ("time" not in state or time_text != state.get("time")):
         state.pop("time", None)  # Reset jeśli nowa godzina
         # 🔥 NOWE: Obsługa pory dnia ("po południu", "rano")
@@ -1078,7 +1102,10 @@ Przykłady dopasowania:
 - "tak, potwierdzam" → confirmation="yes"
 - "nie, dziękuję" → confirmation="no"
 - "chcę zmienić" → confirmation="change"
-- "kiedy macie wolne?" → question="kiedy macie wolne?" """
+- "kiedy macie wolne?" → question="kiedy macie wolne?"
+- "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="jutro", time_text="14:00"
+- "do Ani w piątek rano" → staff="Ania", date_text="w piątek", time_text="rano"
+WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie tylko jedno! """
         }],
         
         "functions": [
@@ -1088,55 +1115,108 @@ Przykłady dopasowania:
 
 
 def start_booking_function_simple() -> FlowsFunctionSchema:
-    """Funkcja startowa - kompatybilna z obecnym systemem"""
+    """Funkcja startowa — przyjmuje opcjonalne pola z pierwszego zdania klienta"""
     return FlowsFunctionSchema(
         name="start_booking",
         description="Klient chce umówić wizytę",
-        properties={},
+        properties={
+            "service_hint": {
+                "type": "string",
+                "description": "Usługa jeśli klient ją podał w tym samym zdaniu (np. 'strzyżenie'). Null jeśli nie podał."
+            },
+            "staff_hint": {
+                "type": "string",
+                "description": "Pracownik jeśli klient go podał (np. 'Ania', 'do Ani'). Null jeśli nie podał."
+            },
+            "date_hint": {
+                "type": "string",
+                "description": "Data jeśli klient ją podał (np. 'jutro', 'w piątek'). Null jeśli nie podał."
+            },
+            "time_hint": {
+                "type": "string",
+                "description": "Godzina jeśli klient ją podał w formacie HH:MM (np. '14:00'). Null jeśli nie podał."
+            },
+        },
         required=[],
         handler=handle_start_booking_simple,
     )
 
 
 async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
-    """Handler startowy"""
+    """Handler startowy — pre-wypełnia state z pierwszego zdania klienta"""
     tenant = flow_manager.state.get("tenant", {})
-    
-    logger.info("📅 BOOKING START (simple)")
-    
-    # NOWE: Sprawdź czy mamy soft_interest z check_availability
+    services = tenant.get("services", [])
+    staff_list = tenant.get("staff", [])
+
+    logger.info(f"📅 BOOKING START: hints={args}")
+
+    # Sprawdź soft_interest z check_availability
     soft_interest = flow_manager.state.get("soft_interest")
-    
     if soft_interest:
-        # Użyj danych z poprzedniego sprawdzenia
         flow_manager.state["booking"] = {
             "service": soft_interest["service"],
             "staff": soft_interest["staff"],
         }
         del flow_manager.state["soft_interest"]
-        
+
         from polish_mappings import odmien_imie
         staff_name = odmien_imie(soft_interest["staff"]["name"])
-        
+
         from pipecat.frames.frames import TTSSpeakFrame
         await flow_manager.task.queue_frame(
             TTSSpeakFrame(text=f"Świetnie! Na jaki dzień do {staff_name}?")
         )
-        
         return (None, create_booking_node(tenant))
-    
-    # Standardowy flow - brak soft_interest
-    flow_manager.state["booking"] = {}
+
+    # Inicjalizuj state — spróbuj pre-wypełnić z pierwszego zdania
+    booking = {}
     flow_manager.state["booking_confirmed"] = False
-    
-    services = tenant.get("services", [])
-    names = natural_list([s["name"] for s in services])
-    
+
+    # Pre-fill usługi (fuzzy match)
+    service_hint = args.get("service_hint")
+    if service_hint:
+        found = fuzzy_match_service(service_hint, services)
+        if found:
+            booking["service"] = found
+            logger.info(f"✅ Start: pre-filled service={found['name']}")
+
+    # Pre-fill pracownika (tylko jeśli mamy usługę)
+    staff_hint = args.get("staff_hint")
+    if staff_hint and "service" in booking:
+        found_staff = fuzzy_match_staff(staff_hint, staff_list)
+        if found_staff and staff_can_do_service(found_staff, booking["service"]):
+            booking["staff"] = found_staff
+            logger.info(f"✅ Start: pre-filled staff={found_staff['name']}")
+
+    # Pre-fill daty i godziny jako pending (wymagają async walidacji)
+    if args.get("date_hint") and "date" not in booking:
+        booking["_pending_date"] = args["date_hint"]
+        logger.info(f"📅 Start: pending date={args['date_hint']}")
+    if args.get("time_hint") and "time" not in booking:
+        booking["_pending_time"] = args["time_hint"]
+        logger.info(f"⏰ Start: pending time={args['time_hint']}")
+
+    flow_manager.state["booking"] = booking
+
+    # Odpowiedź zależna od tego co już wiemy
     from pipecat.frames.frames import TTSSpeakFrame
-    await flow_manager.task.queue_frame(
-        TTSSpeakFrame(text=f"Chętnie pomogę umówić wizytę. Na jaką usługę? Mamy {names}.")
-    )
-    
+    if "service" not in booking:
+        names = natural_list([s["name"] for s in services])
+        msg = f"Chętnie pomogę umówić wizytę. Na jaką usługę? Mamy {names}."
+    elif "staff" not in booking:
+        available = [s for s in staff_list if staff_can_do_service(s, booking["service"])]
+        if len(available) == 1:
+            booking["staff"] = available[0]
+            flow_manager.state["booking"] = booking
+            msg = f"Świetnie, {booking['service']['name']}. Już szukam terminu."
+        else:
+            names = natural_list([s["name"] for s in available])
+            msg = f"Świetnie, {booking['service']['name']}. Do kogo? Dostępni: {names}."
+    else:
+        from polish_mappings import odmien_imie
+        msg = f"Świetnie, {booking['service']['name']} u {odmien_imie(booking['staff']['name'])}. Szukam terminu."
+
+    await flow_manager.task.queue_frame(TTSSpeakFrame(text=msg))
     return (None, create_booking_node(tenant))
 
 
