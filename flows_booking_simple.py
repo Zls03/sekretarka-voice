@@ -527,12 +527,12 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             if not slots:
                 # Zaproponuj inne dni
                 available_days = await get_next_available_days(
-                    tenant, state["staff"], state["service"], 
-                    max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
+                    tenant, state["staff"], state["service"],
+                    max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
                 )
-                
+
                 staff_name = odmien_imie(state['staff']['name'])
-                
+
                 if available_days:
                     suggestion = format_availability_message(available_days)
                     return await _respond(
@@ -567,25 +567,18 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         
         # 🔥 PROPONUJ TERMINY od razu!
         available_days = await get_next_available_days(
-            tenant, state["staff"], state["service"], 
-            max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
+            tenant, state["staff"], state["service"],
+            max_days=int(state["staff"].get("max_booking_days") or 14), limit=1
         )
                 
         if available_days:
             first_day = available_days[0]
             first_date_str = format_date_polish(first_day["date"])
-            first_slots = _slots_summary(first_day["slots"])
-            
-            if len(available_days) > 1:
-                other_dates = natural_list([format_date_polish(d["date"]) for d in available_days[1:]])
-                return await _respond(
-                    f"U {staff_name} najbliższy termin to {first_date_str}: {first_slots}. "
-                    f"Wolne też {other_dates}. Który dzień?",
-                    flow_manager, tenant, state=state)
-            else:
-                return await _respond(
-                    f"U {staff_name} najbliższy termin to {first_date_str}: {first_slots}. Pasuje?",
-                    flow_manager, tenant, state=state)
+            first_slot = format_hour_polish(first_day["slots"][0])
+            return await _respond(
+                f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. "
+                f"Pasuje, czy preferujesz inny termin?",
+                flow_manager, tenant, state=state)
         else:
             max_days = int(state["staff"].get("max_booking_days") or 14)
             return await _respond(
@@ -689,7 +682,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     state.pop("date", None)
                     available_days = await get_next_available_days(
                         tenant, state["staff"], state["service"],
-                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
+                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
                     )
                     if available_days:
                         suggestion = format_availability_message(available_days)
@@ -714,30 +707,32 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             flow_manager, tenant, state=state)
     
     # === 5. WALIDACJA IMIENIA ===
+    name_just_collected = False
     if customer_name and "name" not in state:
         name = customer_name.strip()
-        
+
         for prefix in ["pan ", "pani ", "na "]:
             if name.lower().startswith(prefix):
                 name = name[len(prefix):]
-        
+
         if len(name) >= 2 and name.lower() not in ["tak", "nie", "halo", "proszę"]:
             state["name"] = name.title()
+            name_just_collected = True
             logger.info(f"✅ Name: {state['name']}")
         else:
             return await _respond(
                 f"{_assistant_gender(tenant.get('assistant_name', 'Ania'))['nie_dosłyszałam']} imienia. Na jakie imię zapisać wizytę?",
                 flow_manager, tenant, state=state)
-    
+
     if "name" not in state:
         return await _respond(
             f"Świetnie, {format_date_polish(state['date'])} o {format_hour_polish(state['time'])}. "
             f"Na jakie imię zapisać wizytę?",
             flow_manager, tenant, state=state)
-    
+
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
-        if confirmation == "yes":
+        if confirmation == "yes" and not name_just_collected:
             state["confirmed"] = True
         else:
             staff_name = odmien_imie(state['staff']['name'])
@@ -996,6 +991,7 @@ async def _save_booking(
             booking_code = result.get("booking_code", "")
             
             # SMS
+            sms_info = ""
             if booking_code and caller_phone:
                 try:
                     sms_sent = await send_booking_sms(
@@ -1009,14 +1005,16 @@ async def _save_booking(
                     )
                     if sms_sent:
                         await increment_sms_count(tenant.get("id"))
+                        sms_info = " Wysłałam SMS z potwierdzeniem."
+                    else:
+                        sms_info = " Niestety SMS nie dotarł, ale rezerwacja jest zapisana."
                 except Exception as e:
                     logger.error(f"📱 SMS error: {e}")
-            
+                    sms_info = " Niestety SMS nie dotarł, ale rezerwacja jest zapisana."
+
             # Sukces!
             flow_manager.state["booking"] = {}
             flow_manager.state["booking_confirmed"] = True
-            
-            sms_info = " Wysłałam SMS z potwierdzeniem." if booking_code else ""
             staff_name = odmien_imie(state['staff']['name'])
             
             from pipecat.frames.frames import TTSSpeakFrame
