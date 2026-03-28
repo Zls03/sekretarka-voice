@@ -526,6 +526,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             
             if not slots:
                 # Zaproponuj inne dni
+                try:
+                    from flows import play_snippet
+                    await play_snippet(flow_manager, "checking")
+                except Exception:
+                    pass
                 available_days = await get_next_available_days(
                     tenant, state["staff"], state["service"],
                     max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
@@ -593,6 +598,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     elif "_pending_time" in state:
         state.pop("_pending_time")
 
+    time_just_set = False
     if time_text and ("time" not in state or time_text != state.get("time")):
         state.pop("time", None)  # Reset jeśli nowa godzina
         # 🔥 NOWE: Obsługa pory dnia ("po południu", "rano")
@@ -642,6 +648,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             
             if is_available:
                 state["time"] = parsed_time
+                time_just_set = True
                 state["available_slots"] = current_slots  # Odśwież listę
                 logger.info(f"✅ Time: {parsed_time}")
             else:
@@ -680,6 +687,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 else:
                     # Cały dzień zajęty
                     state.pop("date", None)
+                    try:
+                        from flows import play_snippet
+                        await play_snippet(flow_manager, "checking")
+                    except Exception:
+                        pass
                     available_days = await get_next_available_days(
                         tenant, state["staff"], state["service"],
                         max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
@@ -732,16 +744,16 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
-        if confirmation == "yes" and not name_just_collected:
+        if confirmation == "yes" and not name_just_collected and not time_just_set:
             state["confirmed"] = True
         else:
             staff_name = odmien_imie(state['staff']['name'])
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
             summary = (
-                f"{state['service']['name']} u {staff_name}, "
+                f"To rezerwuję: {state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}, "
-                f"na {customer_gender} {customer_name_declined}. Zgadza się?"
+                f"na {customer_gender} {customer_name_declined}. Dobra?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -877,10 +889,19 @@ async def _answer_and_continue(
 ) -> Tuple:
     """Odpowiada na pytanie klienta i wraca do rezerwacji"""
     import openai
-    
+
     try:
         client = openai.AsyncOpenAI()
-        
+
+        # Ostatnie 6 wiadomości z historii rozmowy (bez system messages)
+        history = []
+        try:
+            all_messages = flow_manager.task.get_context_messages()
+            user_assistant = [m for m in all_messages if m.get("role") in ("user", "assistant") and m.get("content")]
+            history = user_assistant[-6:]
+        except Exception:
+            pass
+
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
@@ -899,6 +920,7 @@ ZASADY:
 - Gdy klient poda imię → używaj odpowiednio "Pan" lub "Pani"
 - NIGDY nie używaj formy "ty"
 - Na końcu NIE pytaj czy mogę w czymś pomóc"""},
+                *history,
                 {"role": "user", "content": question}
             ],
             max_tokens=150,
@@ -1082,6 +1104,7 @@ ZASADY:
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
+Jeśli MUSISZ coś powiedzieć przed wywołaniem funkcji (np. gdy szukasz terminu) → użyj ZAWSZE dokładnie: "Chwileczkę."
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
