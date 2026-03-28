@@ -367,10 +367,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 pass
             
             available_days = await get_next_available_days(
-                tenant, state["staff"], state["service"], 
-                max_days=int(state["staff"].get("max_booking_days") or 14), limit=3
+                tenant, state["staff"], state["service"],
+                max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
             )
-            
+
             if available_days:
                 message = format_availability_message(available_days)
                 return await _respond(message, flow_manager, tenant, state=state)
