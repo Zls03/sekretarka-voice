@@ -294,25 +294,41 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
 
         # Sugestia "jak ostatnio" dla powracającego klienta
         if client_profile and client_profile.get("last_service"):
+            from polish_mappings import odmien_imie as _odmien
             last_svc = client_profile["last_service"]
             last_stf = client_profile.get("last_staff", "")
+            last_stf_declined = _odmien(last_stf) if last_stf else ""
             last_seen = client_profile.get("last_seen", "")
-            crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {client_profile.get('visit_count', 1)} raz/razy."
+            # Formatuj datę z ISO na czytelny polski string z godziną
+            last_seen_fmt = ""
             if last_seen:
-                crm_hint += f" Ostatnia wizyta: {last_seen}."
+                try:
+                    from datetime import timezone
+                    import re as _re
+                    dt_str = _re.sub(r'\.\d+Z?$', '', last_seen).replace('Z', '')
+                    from datetime import datetime as _dt
+                    dt = _dt.fromisoformat(dt_str)
+                    MONTHS_GEN = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
+                                  "lipca","sierpnia","września","października","listopada","grudnia"]
+                    last_seen_fmt = f"{dt.day} {MONTHS_GEN[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}"
+                except Exception:
+                    last_seen_fmt = last_seen
+            crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {client_profile.get('visit_count', 1)} raz/razy."
+            if last_seen_fmt:
+                crm_hint += f" Ostatnia wizyta: {last_seen_fmt}."
             crm_hint += f" Ostatnio korzystał z: {last_svc}"
-            if last_stf:
-                crm_hint += f" u {last_stf}"
+            if last_stf_declined:
+                crm_hint += f" u {last_stf_declined}"
             crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
-            if last_stf:
-                crm_hint += f" u {last_stf}?"
+            if last_stf_declined:
+                crm_hint += f" u {last_stf_declined}?"
             crm_hint += "'"
             crm_hint += f"""
 
 ⚠️ PYTANIA O HISTORIĘ WIZYT:
 Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy byłem?" itp.:
 → Odpowiedz BEZPOŚREDNIO z danych CRM powyżej, jednym zdaniem
-→ Np. "Ostatnio był Pan u nas {last_seen}, na {last_svc}{f' u {last_stf}' if last_stf else ''}."
+→ Np. "Ostatnio był Pan u nas {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
 → NIE pytaj o więcej szczegółów — masz wszystkie dane"""
             role_extra += crm_hint
 
