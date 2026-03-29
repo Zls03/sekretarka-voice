@@ -582,6 +582,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             first_day = available_days[0]
             first_date_str = format_date_polish(first_day["date"])
             first_slot = format_hour_polish(first_day["slots"][0])
+            # Zapisz proponowany slot — gdy user powie "Pasuje" (confirmation=yes bez daty/godziny)
+            # handler użyje tych wartości zamiast ponownie szukać terminów
+            state["_pending_date"] = first_day["date"].strftime("%Y-%m-%d")
+            state["_pending_time"] = first_day["slots"][0]
             return await _respond(
                 f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. "
                 f"Pasuje, czy preferujesz inny termin?",
