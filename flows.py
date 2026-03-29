@@ -172,8 +172,15 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     # Personalizacja powitania dla powracającego klienta
     if client_profile and client_profile.get("visit_count", 0) > 0:
         name = client_profile.get("name", "")
-        name_part = f", {name}" if name else ""
-        first_message = f"Dzień dobry{name_part}! Miło Panią/Pana znowu słyszeć. " + base_greeting
+        name_part = f" {name}" if name else ""
+        # Usuń "Dzień dobry" z początku base_greeting żeby uniknąć duplikatu
+        import re
+        base_stripped = re.sub(r'^[Dd]zień dobry[,!.]?\s*', '', base_greeting).strip()
+        base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
+        if name:
+            first_message = f"Dzień dobry {name}! Miło znowu słyszeć. {base_stripped}"
+        else:
+            first_message = f"Miło znowu słyszeć! {base_stripped}"
     else:
         first_message = base_greeting
     booking_enabled = tenant.get("booking_enabled", 1) == 1
