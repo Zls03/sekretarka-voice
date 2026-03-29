@@ -516,8 +516,8 @@ async def get_available_slots(
 # ==========================================
 
 async def save_booking_to_api(
-    tenant: dict, staff: dict, service: dict, 
-    date: datetime, hour: int, customer_name: str, customer_phone: str = ""
+    tenant: dict, staff: dict, service: dict,
+    date: datetime, hour: int, customer_name: str, customer_phone: str = "", notes: str = ""
 ) -> dict:
     """Zapisuje rezerwację przez API panelu - z retry i kodem wizyty"""
     
@@ -544,16 +544,19 @@ async def save_booking_to_api(
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
+                payload = {
+                    "staff_id": staff.get("id"),
+                    "service_id": service.get("id"),
+                    "date": date_str,
+                    "time": time_str,
+                    "client_name": customer_name,
+                    "client_phone": customer_phone,
+                }
+                if notes:
+                    payload["notes"] = notes
                 response = await client.post(
                     f"{PANEL_API_URL}/api/panel/{slug}/bookings",
-                    json={
-                        "staff_id": staff.get("id"),
-                        "service_id": service.get("id"),
-                        "date": date_str,
-                        "time": time_str,
-                        "client_name": customer_name,
-                        "client_phone": customer_phone,
-                    }
+                    json=payload
                 )
                 
                 if response.status_code in [200, 201]:

@@ -281,6 +281,10 @@ def book_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
             "question": {
                 "type": "string",
                 "description": "Jeśli klient pyta o coś - wpisz pytanie. Null jeśli kontynuuje rezerwację."
+            },
+            "notes": {
+                "type": "string",
+                "description": "Uwagi klienta do wizyty (np. 'ból kręgosłupa', 'alergia na nikiel', 'pierwsza wizyta'). Null jeśli brak uwag lub powiedział 'nie'."
             }
         },
         required=["confirmation"],
@@ -307,6 +311,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     customer_name = args.get("customer_name")
     confirmation = args.get("confirmation", "none")
     question = args.get("question")
+    notes = args.get("notes")
     
     # Pobierz stan z flow_manager
     state = flow_manager.state.get("booking", {})
@@ -759,6 +764,20 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             f"Na jakie imię zapisać wizytę?",
             flow_manager, tenant, state=state)
 
+    # === 5.5 UWAGI ===
+    # Zapisz uwagi jeśli LLM je przekazał (z tego lub poprzedniego wywołania)
+    if notes and "notes" not in state:
+        state["notes"] = notes.strip()
+        logger.info(f"📝 Notes: {state['notes']}")
+
+    # Zapytaj o uwagi tylko raz — jeśli jeszcze nie pytaliśmy I nie mamy już uwag
+    if "notes_asked" not in state and "notes" not in state:
+        state["notes_asked"] = True
+        staff_name_for_notes = odmien_imie(state['staff']['name'])
+        return await _respond(
+            f"Jakieś uwagi dla {staff_name_for_notes}? Jeśli nie — od razu potwierdzam.",
+            flow_manager, tenant, state=state)
+
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
         if confirmation == "yes" and not name_just_collected and not time_just_set:
@@ -767,10 +786,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             staff_name = odmien_imie(state['staff']['name'])
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
+            notes_part = f" Uwagi: {state['notes']}." if state.get("notes") else ""
             summary = (
                 f"{state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])}, {format_hour_polish(state['time'])} "
-                f"— na {customer_gender} {customer_name_declined}. Zgadza się?"
+                f"— na {customer_gender} {customer_name_declined}.{notes_part} Zgadza się?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -1023,7 +1043,8 @@ async def _save_booking(
         result = await save_booking_to_api(
             tenant, state["staff"], state["service"],
             state["date"], state["time"],
-            state["name"], caller_phone
+            state["name"], caller_phone,
+            notes=state.get("notes", "")
         )
         
         if result:
