@@ -786,7 +786,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             staff_name = odmien_imie(state['staff']['name'])
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
-            notes_part = f" Uwagi: {state['notes']}." if state.get("notes") else ""
+            notes_part = " Uwagi zapisane." if state.get("notes") else ""
             summary = (
                 f"{state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])}, {format_hour_polish(state['time'])} "
