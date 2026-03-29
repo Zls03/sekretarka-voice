@@ -753,9 +753,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
             summary = (
-                f"To rezerwuję: {state['service']['name']} u {staff_name}, "
-                f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}, "
-                f"na {customer_gender} {customer_name_declined}. Dobra?"
+                f"{state['service']['name']} u {staff_name}, "
+                f"{format_date_polish(state['date'])}, {format_hour_polish(state['time'])} "
+                f"— na {customer_gender} {customer_name_declined}. Zgadza się?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
     
@@ -1039,6 +1039,7 @@ async def _save_booking(
             # CRM — zapisz klienta i wizytę (nie blokuje przy błędzie)
             try:
                 scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{state['time']}:00"
+                logger.info(f"📋 CRM: wywołuję save_client_visit dla {state.get('name')} / {caller_phone}")
                 asyncio.create_task(save_client_visit(
                     firm_id=tenant.get("id", ""),
                     phone=caller_phone,

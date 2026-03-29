@@ -412,6 +412,7 @@ async def get_client_profile(firm_id: str, phone: str) -> Optional[Dict]:
 async def save_client_visit(firm_id: str, phone: str, name: str, service: str, staff: str, scheduled_at: str):
     """Zapisuje/aktualizuje klienta i wizytę w panelu (CRM). Nie blokuje przy błędzie."""
     if not PANEL_URL or not INTERNAL_API_SECRET:
+        logger.warning("CRM save_client_visit: PANEL_URL lub INTERNAL_API_SECRET nie ustawione — pomijam")
         return
     url = f"{PANEL_URL}/api/internal/client"
     headers = {
@@ -426,8 +427,10 @@ async def save_client_visit(firm_id: str, phone: str, name: str, service: str, s
         "staff": staff,
         "scheduled_at": scheduled_at,
     }
+    logger.info(f"📋 CRM save: {name} ({phone}) → {service} @ {scheduled_at}")
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(url, json=payload, headers=headers)
+            res = await client.post(url, json=payload, headers=headers)
+            logger.info(f"📋 CRM response: {res.status_code}")
     except Exception as e:
         logger.warning(f"CRM save failed: {e}")

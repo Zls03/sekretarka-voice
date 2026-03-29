@@ -20,9 +20,9 @@ async def play_snippet(flow_manager, category: str):
         from pipecat.frames.frames import TTSSpeakFrame
         
         if category == "checking":
-            phrases = ["Już sprawdzam.", "Już patrzę.", "Chwileczkę, sprawdzam."]
+            phrases = ["Chwileczkę.", "Moment, sprawdzam.", "Już sprawdzam."]
         else:  # saving
-            phrases = ["Już zapisuję.", "Sekundkę, rezerwuję.", "Zapisuję termin."]
+            phrases = ["Już zapisuję.", "Zapisuję termin.", "Rezerwuję."]
         
         phrase = random.choice(phrases)
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=phrase))
