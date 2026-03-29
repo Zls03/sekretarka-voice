@@ -178,7 +178,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
         base_stripped = re.sub(r'^[Dd]zień dobry[,!.]?\s*', '', base_greeting).strip()
         base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
         if name:
-            first_message = f"Dzień dobry {name}. Miło znowu Cię słyszeć. {base_stripped}"
+            first_message = f"Dzień dobry {name} - Cieszę się, że znowu Cię słyszę {base_stripped}"
         else:
             first_message = f"Miło znowu Cię słyszeć! {base_stripped}"
     else:
