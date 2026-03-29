@@ -765,17 +765,21 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             flow_manager, tenant, state=state)
 
     # === 5.5 UWAGI ===
-    # Zapisz uwagi jeśli LLM je przekazał (z tego lub poprzedniego wywołania)
+    # Zapisz uwagi jeśli LLM je przekazał — filtruj odpowiedzi "brak/nie"
+    _no_notes = {"brak", "nie", "nie ma", "żadnych", "brak uwag", "nie mam", "nie mam uwag", "żadne", "ok", "dobrze"}
     if notes and "notes" not in state:
-        state["notes"] = notes.strip()
-        logger.info(f"📝 Notes: {state['notes']}")
+        notes_clean = notes.strip().lower().rstrip(".")
+        if notes_clean not in _no_notes and not notes_clean.startswith("brak") and not notes_clean.startswith("nie ma"):
+            state["notes"] = notes.strip()
+            logger.info(f"📝 Notes: {state['notes']}")
+        else:
+            logger.info(f"📝 Notes declined ('{notes}') — pomijam")
 
     # Zapytaj o uwagi tylko raz — jeśli jeszcze nie pytaliśmy I nie mamy już uwag
     if "notes_asked" not in state and "notes" not in state:
         state["notes_asked"] = True
-        staff_name_for_notes = odmien_imie(state['staff']['name'])
         return await _respond(
-            f"Jakieś uwagi dla {staff_name_for_notes}? Jeśli nie — od razu potwierdzam.",
+            "Jakieś uwagi co do wizyty? Jeśli nie — od razu potwierdzam.",
             flow_manager, tenant, state=state)
 
     # === 6. POTWIERDZENIE ===
