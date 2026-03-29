@@ -1087,6 +1087,7 @@ async def _save_booking(
                     service=state["service"]["name"],
                     staff=state["staff"]["name"],
                     scheduled_at=scheduled_at,
+                    notes=state.get("notes", ""),
                 ))
             except Exception as e:
                 logger.warning(f"CRM save_client_visit error: {e}")
