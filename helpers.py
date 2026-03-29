@@ -383,3 +383,51 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
 
     logger.warning(f"❌ No tenant found for suffix: {phone_suffix}")
     return None
+
+
+# ==========================================
+# CRM — profil klienta i zapis wizyty
+# ==========================================
+
+PANEL_URL = os.getenv("PANEL_URL", "")
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+
+
+async def get_client_profile(firm_id: str, phone: str) -> Optional[Dict]:
+    """Pobiera profil dzwoniącego klienta z panelu (CRM)."""
+    if not PANEL_URL or not INTERNAL_API_SECRET:
+        return None
+    url = f"{PANEL_URL}/api/internal/client"
+    headers = {"x-internal-secret": INTERNAL_API_SECRET}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            res = await client.get(url, params={"firm_id": firm_id, "phone": phone}, headers=headers)
+            if res.status_code == 200:
+                return res.json()
+    except Exception as e:
+        logger.warning(f"CRM lookup failed: {e}")
+    return None
+
+
+async def save_client_visit(firm_id: str, phone: str, name: str, service: str, staff: str, scheduled_at: str):
+    """Zapisuje/aktualizuje klienta i wizytę w panelu (CRM). Nie blokuje przy błędzie."""
+    if not PANEL_URL or not INTERNAL_API_SECRET:
+        return
+    url = f"{PANEL_URL}/api/internal/client"
+    headers = {
+        "x-internal-secret": INTERNAL_API_SECRET,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "firm_id": firm_id,
+        "phone": phone,
+        "name": name,
+        "service": service,
+        "staff": staff,
+        "scheduled_at": scheduled_at,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(url, json=payload, headers=headers)
+    except Exception as e:
+        logger.warning(f"CRM save failed: {e}")

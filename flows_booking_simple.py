@@ -9,6 +9,7 @@ ZMIANY W 1.1:
 - Walidacja slotu PRZED i PO potwierdzeniu
 """
 
+import asyncio
 import os
 import json
 import dateparser
@@ -28,6 +29,7 @@ from flows_helpers import (
     validate_date_constraints,
     _assistant_gender,
 )
+from helpers import save_client_visit
 
 # Import funkcji odmiany i formatowania
 from polish_mappings import (
@@ -1033,6 +1035,20 @@ async def _save_booking(
                 except Exception as e:
                     logger.error(f"📱 SMS error: {e}")
                     sms_info = " Niestety SMS nie dotarł, ale rezerwacja jest zapisana."
+
+            # CRM — zapisz klienta i wizytę (nie blokuje przy błędzie)
+            try:
+                scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{state['time']}:00"
+                asyncio.create_task(save_client_visit(
+                    firm_id=tenant.get("id", ""),
+                    phone=caller_phone,
+                    name=state.get("name", ""),
+                    service=state["service"]["name"],
+                    staff=state["staff"]["name"],
+                    scheduled_at=scheduled_at,
+                ))
+            except Exception as e:
+                logger.warning(f"CRM save_client_visit error: {e}")
 
             # Sukces!
             flow_manager.state["booking"] = {}

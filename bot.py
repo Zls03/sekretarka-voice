@@ -59,7 +59,7 @@ from pipecat.processors.user_idle_processor import UserIdleProcessor
 
 import uuid
 from flows import create_initial_node
-from helpers import get_tenant_by_phone, db, saas_db
+from helpers import get_tenant_by_phone, db, saas_db, get_client_profile
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -1022,6 +1022,12 @@ async def websocket_endpoint(websocket: WebSocket):
     flow_manager.state["greeting_played"] = greeting_played
     flow_manager.state["caller_phone"] = caller_phone
 
+    # CRM — lookup dzwoniącego klienta
+    client_profile = await get_client_profile(tenant.get("id", ""), caller_phone)
+    flow_manager.state["client_profile"] = client_profile
+    if client_profile:
+        logger.info(f"👤 CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
+
     # ==========================================
     # 🔥 WARM-UP: send_warm_prompt
     # ==========================================
@@ -1052,7 +1058,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Greeting przez Pipecat TTS (nieprzerywalny — allow_interruptions=False)
         # GreetingGate włączy interruptions po zakończeniu greeting
-        await flow_manager.initialize(create_initial_node(tenant, greeting_played=False))
+        await flow_manager.initialize(create_initial_node(
+            tenant,
+            greeting_played=False,
+            client_profile=flow_manager.state.get("client_profile"),
+        ))
         logger.info("📢 Greeting playing via TTS (non-interruptible)")
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

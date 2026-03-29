@@ -165,9 +165,17 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
 # NODE: Powitanie
 # ==========================================
 
-def create_initial_node(tenant: dict, greeting_played: bool = False) -> dict:
+def create_initial_node(tenant: dict, greeting_played: bool = False, client_profile: dict = None) -> dict:
     business_name = tenant.get("name", "salon")
-    first_message = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
+    base_greeting = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
+
+    # Personalizacja powitania dla powracającego klienta
+    if client_profile and client_profile.get("visit_count", 0) > 0:
+        name = client_profile.get("name", "")
+        name_part = f", {name}" if name else ""
+        first_message = f"Dzień dobry{name_part}! Miło Panią/Pana znowu słyszeć. " + base_greeting
+    else:
+        first_message = base_greeting
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
     g = _assistant_gender(assistant_name)
@@ -276,7 +284,24 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
         role_extra = build_business_context(tenant)
         role_extra += f"\n\nPRACOWNICY: {staff_list}"
-        
+
+        # Sugestia "jak ostatnio" dla powracającego klienta
+        if client_profile and client_profile.get("last_service"):
+            last_svc = client_profile["last_service"]
+            last_stf = client_profile.get("last_staff", "")
+            last_seen = client_profile.get("last_seen", "")
+            crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {client_profile.get('visit_count', 1)} raz/razy."
+            if last_seen:
+                crm_hint += f" Ostatnia wizyta: {last_seen}."
+            crm_hint += f" Ostatnio korzystał z: {last_svc}"
+            if last_stf:
+                crm_hint += f" u {last_stf}"
+            crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
+            if last_stf:
+                crm_hint += f" u {last_stf}?"
+            crm_hint += "'"
+            role_extra += crm_hint
+
         # Instrukcja o godzinach pracowników
         if staff:
             role_extra += """
