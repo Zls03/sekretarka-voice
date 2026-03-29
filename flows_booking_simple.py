@@ -154,8 +154,10 @@ def preprocess_date_text(date_text: str) -> str:
     
     # Usuń przyimki z początku
     prefixes_to_remove = [
-        "na ", "w dniu ", "dnia ", "w ", "we ", "za "
+        "na ", "w dniu ", "dnia ", "w ", "we "
     ]
+    # "za " usuwamy tylko gdy po nim jest dzień tygodnia/miesiąc, nie "za tydzień"/"za 3 dni"
+    # dateparser sam obsłuży "za tydzień" i "za 3 dni" jeśli nie będziemy tego ruszać
     
     for prefix in prefixes_to_remove:
         if text.startswith(prefix):
@@ -335,6 +337,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             if change_field == "date":
                 state.pop("time", None)
                 state.pop("available_slots", None)
+                state.pop("_pending_date", None)
+                state.pop("_pending_time", None)
+            elif change_field == "time":
+                state.pop("_pending_time", None)
             flow_manager.state["booking"] = state
             return await _respond(
                 f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
@@ -375,6 +381,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 
             if available_days:
                 message = format_availability_message(available_days)
+                # Jeśli jest tylko 1 dzień — bot pyta "Pasuje?" o konkretny slot,
+                # zapisz go jako pending żeby user nie musiał powtarzać po potwierdzeniu
+                if len(available_days) == 1:
+                    state["_pending_date"] = available_days[0]["date"].strftime("%Y-%m-%d")
+                    state["_pending_time"] = available_days[0]["slots"][0]
                 return await _respond(message, flow_manager, tenant, state=state)
             else:
                 return await _respond(
