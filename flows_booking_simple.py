@@ -601,7 +601,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         state.pop("_pending_time")
 
     time_just_set = False
-    if time_text and ("time" not in state or time_text != state.get("time")):
+    if time_text and ("time" not in state or _normalize_time(time_text) != _normalize_time(state.get("time", ""))):
         state.pop("time", None)  # Reset jeśli nowa godzina
         # 🔥 NOWE: Obsługa pory dnia ("po południu", "rano")
         time_lower = time_text.lower().strip()
@@ -1120,7 +1120,6 @@ ZASADY:
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
-Jeśli MUSISZ coś powiedzieć przed wywołaniem funkcji (np. gdy szukasz terminu) → użyj ZAWSZE dokładnie: "Chwileczkę."
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
