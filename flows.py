@@ -307,6 +307,13 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
             if last_stf:
                 crm_hint += f" u {last_stf}?"
             crm_hint += "'"
+            crm_hint += f"""
+
+⚠️ PYTANIA O HISTORIĘ WIZYT:
+Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy byłem?" itp.:
+→ Odpowiedz BEZPOŚREDNIO z danych CRM powyżej, jednym zdaniem
+→ Np. "Ostatnio był Pan u nas {last_seen}, na {last_svc}{f' u {last_stf}' if last_stf else ''}."
+→ NIE pytaj o więcej szczegółów — masz wszystkie dane"""
             role_extra += crm_hint
 
         # Instrukcja o godzinach pracowników

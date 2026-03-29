@@ -1252,6 +1252,34 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     booking = {}
     flow_manager.state["booking_confirmed"] = False
 
+    # === "JAK OSTATNIO" — propozycja dla powracającego klienta ===
+    client_profile = flow_manager.state.get("client_profile")
+    if client_profile and client_profile.get("last_service") and client_profile.get("last_staff"):
+        last_svc_name = client_profile["last_service"]
+        last_staff_name = client_profile["last_staff"]
+        last_client_name = client_profile.get("name", "")
+
+        # Waliduj: czy usługa i pracownik nadal istnieją (exact match)
+        matched_service = next((s for s in services if s["name"] == last_svc_name), None)
+        matched_staff = next((s for s in staff_list if s["name"] == last_staff_name), None)
+
+        if matched_service and matched_staff and staff_can_do_service(matched_staff, matched_service):
+            booking["service"] = matched_service
+            booking["staff"] = matched_staff
+            if last_client_name:
+                booking["name"] = last_client_name
+            flow_manager.state["booking"] = booking
+
+            from polish_mappings import odmien_imie
+            staff_declined = odmien_imie(matched_staff["name"])
+            name_part = f" Na {last_client_name}, zgadza się?" if last_client_name else " Na jakie imię?"
+            msg = f"Może znowu {matched_service['name']} u {staff_declined}?{name_part}"
+            logger.info(f"🔁 'Jak ostatnio': {matched_service['name']} u {matched_staff['name']}")
+
+            from pipecat.frames.frames import TTSSpeakFrame
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=msg))
+            return (None, create_booking_node(tenant))
+
     # Pre-fill usługi (fuzzy match)
     service_hint = args.get("service_hint")
     if service_hint:
