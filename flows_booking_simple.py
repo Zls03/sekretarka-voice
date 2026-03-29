@@ -1097,11 +1097,12 @@ async def _save_booking(
             flow_manager.state["booking_confirmed"] = True
             staff_name = odmien_imie(state['staff']['name'])
             
+            notes_confirm = " Uwagi zapisane." if state.get("notes") else ""
             from pipecat.frames.frames import TTSSpeakFrame
             await flow_manager.task.queue_frame(TTSSpeakFrame(
                 text=f"Gotowe! {state['service']['name']} u {staff_name}, "
                      f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
-                     f"{sms_info}"
+                     f"{notes_confirm}{sms_info}"
             ))
             
             from flows import create_anything_else_node
@@ -1273,7 +1274,7 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
 
             from polish_mappings import odmien_imie
             staff_declined = odmien_imie(matched_staff["name"])
-            name_part = f" Na {last_client_name}, zgadza się?" if last_client_name else " Na jakie imię?"
+            name_part = f" Na imię {last_client_name}, zgadza się?" if last_client_name else " Na jakie imię?"
             msg = f"Może znowu {matched_service['name']} u {staff_declined}?{name_part}"
             logger.info(f"🔁 'Jak ostatnio': {matched_service['name']} u {matched_staff['name']}")
 
