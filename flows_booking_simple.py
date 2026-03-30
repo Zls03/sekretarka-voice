@@ -775,13 +775,6 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         else:
             logger.info(f"📝 Notes declined ('{notes}') — pomijam")
 
-    # Zapytaj o uwagi tylko raz — jeśli jeszcze nie pytaliśmy I nie mamy już uwag
-    if "notes_asked" not in state and "notes" not in state:
-        state["notes_asked"] = True
-        return await _respond(
-            "Jakieś uwagi co do wizyty? Jeśli nie — od razu potwierdzam.",
-            flow_manager, tenant, state=state)
-
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
         if confirmation == "yes" and not name_just_collected and not time_just_set:
@@ -790,7 +783,20 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             staff_name = odmien_imie(state['staff']['name'])
             customer_gender = detect_gender(state['name'])
             customer_name_declined = odmien_imie(state['name'])
-            notes_part = " Uwagi zapisane." if state.get("notes") else ""
+            notes_part = f" Uwagi: {state['notes']}." if state.get("notes") else ""
+            # Korekta imienia — skrócona odpowiedź bez powtarzania wszystkiego
+            if customer_name and state.get("name") and customer_name.strip().lower() != state["name"].lower() and not name_just_collected:
+                old_name = state["name"]
+                new_name = customer_name.strip().title()
+                for prefix in ["pan ", "pani ", "na "]:
+                    if new_name.lower().startswith(prefix):
+                        new_name = new_name[len(prefix):].title()
+                state["name"] = new_name
+                customer_name_declined = odmien_imie(new_name)
+                customer_gender = detect_gender(new_name)
+                return await _respond(
+                    f"Poprawiam — na {customer_gender} {customer_name_declined}. Zgadza się?",
+                    flow_manager, tenant, state=state)
             summary = (
                 f"{state['service']['name']} u {staff_name}, "
                 f"{format_date_polish(state['date'])}, {format_hour_polish(state['time'])} "
@@ -1100,7 +1106,7 @@ async def _save_booking(
             notes_confirm = " Uwagi zapisane." if state.get("notes") else ""
             from pipecat.frames.frames import TTSSpeakFrame
             await flow_manager.task.queue_frame(TTSSpeakFrame(
-                text=f"Gotowe! {state['service']['name']} u {staff_name}, "
+                text=f"Gotowe. {state['service']['name']} u {staff_name}, "
                      f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
                      f"{notes_confirm}{sms_info}"
             ))
