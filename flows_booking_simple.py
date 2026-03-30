@@ -338,14 +338,31 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             "date": "datę", "time": "godzinę", "name": "imię"
         }
         if change_field and change_field in field_names:
-            state.pop(change_field, None)
-            if change_field == "date":
+            if change_field == "service":
+                # Reset całości — nowa usługa może mieć inny personel i inne terminy
+                saved_name = state.get("name")
+                state = {}
+                if saved_name:
+                    state["name"] = saved_name
+                flow_manager.state["booking"] = state
+                names = natural_list([s["name"] for s in services[:5]])
+                return await _respond(f"Dobrze, na jaką usługę? Mamy {names}.",
+                                     flow_manager, tenant, state=state)
+            elif change_field == "staff":
+                # Zmiana pracownika — wyczyść datę/czas bo były dla poprzedniego
+                for k in ("staff", "date", "time", "available_slots", "_pending_date", "_pending_time"):
+                    state.pop(k, None)
+            elif change_field == "date":
+                state.pop("date", None)
                 state.pop("time", None)
                 state.pop("available_slots", None)
                 state.pop("_pending_date", None)
                 state.pop("_pending_time", None)
             elif change_field == "time":
+                state.pop("time", None)
                 state.pop("_pending_time", None)
+            else:
+                state.pop(change_field, None)
             flow_manager.state["booking"] = state
             return await _respond(
                 f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
