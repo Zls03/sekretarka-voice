@@ -1084,7 +1084,8 @@ async def _save_booking(
 
             # CRM — zapisz klienta i wizytę (nie blokuje przy błędzie)
             try:
-                scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{state['time']}:00"
+                time_padded = state['time'].zfill(5)  # "9:00" → "09:00"
+                scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{time_padded}:00"
                 logger.info(f"📋 CRM: wywołuję save_client_visit dla {state.get('name')} / {caller_phone}")
                 asyncio.create_task(save_client_visit(
                     firm_id=tenant.get("id", ""),
