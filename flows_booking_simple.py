@@ -332,9 +332,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                              flow_manager, tenant, done=False)
 
     # === ODRZUCENIE "JAK OSTATNIO" ===
-    # Gdy bot zaproponował "jak ostatnio" i klient odpowiada "nie" lub brak potwierdzenia
-    # bez podania nowej usługi/pracownika → reset i pytanie o usługę
-    if state.get("_jak_ostatnio") and confirmation in ("none", "change") and not service_text and not staff_text:
+    # Gdy bot zaproponował "jak ostatnio" i klient odpowiada "nie"/"zmień"/brak potwierdzenia
+    # bez podania nowej usługi/pracownika → reset i pytanie o usługę (NIE "rezerwacja anulowana")
+    if state.get("_jak_ostatnio") and confirmation in ("none", "no", "change") and not service_text and not staff_text:
         saved_name = state.get("name")
         state = {}
         if saved_name:
@@ -545,7 +545,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}'")
 
         # ISO format (YYYY-MM-DD) — parsuj bezpośrednio, dateparser z pl może dać zły wynik
+        # Flaga: data pochodzi z naszego systemu (_pending_date) → była już sprawdzona przy propozycji
         _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
+        _date_from_system = bool(_iso)  # ISO = z naszego systemu, nie od klienta
         if _iso:
             parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3)))
         else:
@@ -554,7 +556,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 languages=['pl'],
                 settings=DATEPARSER_SETTINGS
             )
-        
+
         if parsed_date:
             # Sprawdź czy nie przeszła
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -562,18 +564,20 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                 return await _respond(
                     f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.",
                     flow_manager, tenant, state=state)
-            
+
             # Sprawdź czy salon otwarty
             weekday = parsed_date.weekday()
             if get_opening_hours(tenant, weekday) is None:
                 return await _respond(
                     f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Proszę wybrać inny dzień.",
                     flow_manager, tenant, state=state)
-            
-            # 🔥 WALIDACJA min/max ograniczeń pracownika
-            is_valid, constraint_msg = validate_date_constraints(parsed_date, tenant, state["staff"])
-            if not is_valid:
-                return await _respond(constraint_msg, flow_manager, tenant, state=state)
+
+            # Walidacja min/max ograniczeń pracownika — pomijamy gdy data z naszego systemu
+            # (była już sprawdzona podczas get_next_available_days przy propozycji slotu)
+            if not _date_from_system:
+                is_valid, constraint_msg = validate_date_constraints(parsed_date, tenant, state["staff"])
+                if not is_valid:
+                    return await _respond(constraint_msg, flow_manager, tenant, state=state)
             
             # 🔥 WALIDACJA SLOTÓW - świeże dane!
             try:
