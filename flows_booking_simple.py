@@ -1138,12 +1138,12 @@ async def _save_booking(
                     )
                     if sms_sent:
                         await increment_sms_count(tenant.get("id"))
-                        sms_info = " Wysłałam SMS z potwierdzeniem."
+                        sms_info = " Wysłałam esemes z potwierdzeniem."
                     else:
-                        sms_info = " Niestety SMS nie dotarł, ale rezerwacja jest zapisana."
+                        sms_info = " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
                 except Exception as e:
                     logger.error(f"📱 SMS error: {e}")
-                    sms_info = " Niestety SMS nie dotarł, ale rezerwacja jest zapisana."
+                    sms_info = " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
 
             # CRM — zapisz klienta i wizytę (nie blokuje przy błędzie)
             try:
