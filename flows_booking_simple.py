@@ -12,6 +12,7 @@ ZMIANY W 1.1:
 import asyncio
 import os
 import json
+import re
 import dateparser
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple, List
@@ -339,13 +340,17 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         }
         if change_field and change_field in field_names:
             if change_field == "service":
+                names = natural_list([s["name"] for s in services[:5]])
+                if "service" not in state:
+                    # Już w trybie "wybierz usługę" — po prostu odpowiedz
+                    return await _respond(f"Na jaką usługę? Mamy {names}.",
+                                         flow_manager, tenant, state=state)
                 # Reset całości — nowa usługa może mieć inny personel i inne terminy
                 saved_name = state.get("name")
                 state = {}
                 if saved_name:
                     state["name"] = saved_name
                 flow_manager.state["booking"] = state
-                names = natural_list([s["name"] for s in services[:5]])
                 return await _respond(f"Dobrze, na jaką usługę? Mamy {names}.",
                                      flow_manager, tenant, state=state)
             elif change_field == "staff":
@@ -519,12 +524,17 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 
         date_text_clean = preprocess_date_text(date_text)
         logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}'")
-        
-        parsed_date = dateparser.parse(
-            date_text_clean, 
-            languages=['pl'],
-            settings=DATEPARSER_SETTINGS
-        )
+
+        # ISO format (YYYY-MM-DD) — parsuj bezpośrednio, dateparser z pl może dać zły wynik
+        _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
+        if _iso:
+            parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3)))
+        else:
+            parsed_date = dateparser.parse(
+                date_text_clean,
+                languages=['pl'],
+                settings=DATEPARSER_SETTINGS
+            )
         
         if parsed_date:
             # Sprawdź czy nie przeszła
@@ -561,11 +571,6 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             
             if not slots:
                 # Zaproponuj inne dni
-                try:
-                    from flows import play_snippet
-                    await play_snippet(flow_manager, "checking")
-                except Exception:
-                    pass
                 available_days = await get_next_available_days(
                     tenant, state["staff"], state["service"],
                     max_days=int(state["staff"].get("max_booking_days") or 14), limit=2
