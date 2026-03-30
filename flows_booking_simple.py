@@ -328,9 +328,28 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     # === OBSŁUGA ANULOWANIA ===
     if confirmation == "no":
         flow_manager.state["booking"] = {}
-        return await _respond("Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?", 
+        return await _respond("Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?",
                              flow_manager, tenant, done=False)
-    
+
+    # === ODRZUCENIE "JAK OSTATNIO" ===
+    # Gdy bot zaproponował "jak ostatnio" i klient odpowiada "nie" lub brak potwierdzenia
+    # bez podania nowej usługi/pracownika → reset i pytanie o usługę
+    if state.get("_jak_ostatnio") and confirmation in ("none", "change") and not service_text and not staff_text:
+        saved_name = state.get("name")
+        state = {}
+        if saved_name:
+            state["name"] = saved_name
+        flow_manager.state["booking"] = state
+        names = natural_list([s["name"] for s in services[:5]])
+        logger.info("🔁 'Jak ostatnio' odrzucone — reset stanu")
+        return await _respond(f"Dobrze, na jaką usługę? Mamy {names}.",
+                             flow_manager, tenant, state=state)
+
+    # Wyczyść flagę po pierwszej odpowiedzi klienta (akceptacja)
+    if state.get("_jak_ostatnio"):
+        state.pop("_jak_ostatnio")
+        flow_manager.state["booking"] = state
+
     # === OBSŁUGA ZMIANY ===
     if confirmation == "change":
         change_field = args.get("change_field")
@@ -1299,6 +1318,7 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
             booking["staff"] = matched_staff
             if last_client_name:
                 booking["name"] = last_client_name
+            booking["_jak_ostatnio"] = True  # flaga — czekamy na potwierdzenie klienta
             flow_manager.state["booking"] = booking
 
             from polish_mappings import odmien_imie
