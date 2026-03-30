@@ -763,6 +763,79 @@ def detect_gender_verb(imie: str) -> str:
 
 
 # ==========================================
+# WOŁACZ - powitanie "Dzień dobry Wiktorze"
+# ==========================================
+
+_VOCATIVE = {
+    # Męskie
+    "Adam": "Adamie", "Andrzej": "Andrzeju", "Artur": "Arturze",
+    "Bartosz": "Bartoszu", "Bartłomiej": "Bartłomieju",
+    "Damian": "Damianie", "Daniel": "Danielu", "Dariusz": "Dariuszu",
+    "Dawid": "Dawidzie", "Dominik": "Dominiku",
+    "Filip": "Filipie", "Grzegorz": "Grzegorzu",
+    "Igor": "Igorze", "Jakub": "Jakubie", "Jan": "Janie",
+    "Jarek": "Jarku", "Jarosław": "Jarosławie",
+    "Kamil": "Kamilu", "Karol": "Karolu", "Konrad": "Konradzie",
+    "Krystian": "Krystianie", "Krzysztof": "Krzysztofie",
+    "Łukasz": "Łukaszu", "Maciej": "Macieju", "Marcin": "Marcinie",
+    "Marek": "Marku", "Mariusz": "Mariuszu", "Mateusz": "Mateuszu",
+    "Michał": "Michale", "Mikołaj": "Mikołaju",
+    "Patryk": "Patryku", "Paweł": "Pawle", "Piotr": "Piotrze",
+    "Przemysław": "Przemysławie", "Radosław": "Radosławie",
+    "Rafał": "Rafale", "Robert": "Robercie",
+    "Sebastian": "Sebastianie", "Sławomir": "Sławomirze",
+    "Stanisław": "Stanisławie", "Szymon": "Szymonie",
+    "Tomasz": "Tomaszu", "Waldemar": "Waldemarze",
+    "Wiktor": "Wiktorze", "Wiesław": "Wiesławie",
+    "Wojciech": "Wojciechu", "Zbigniew": "Zbigniewie",
+    # Żeńskie
+    "Agnieszka": "Agnieszko", "Aleksandra": "Aleksandro",
+    "Ania": "Aniu", "Anna": "Anno", "Asia": "Asiu",
+    "Barbara": "Barbaro", "Basia": "Basiu", "Beata": "Beato",
+    "Celina": "Celino", "Dominika": "Dominiko", "Dorota": "Doroto",
+    "Ewa": "Ewo", "Gosia": "Gosiu", "Halina": "Halino",
+    "Izabela": "Izabelo", "Iwona": "Iwono",
+    "Joanna": "Joanno", "Justyna": "Justyno",
+    "Karolina": "Karolino", "Kasia": "Kasiu", "Katarzyna": "Katarzyno",
+    "Magda": "Magdo", "Magdalena": "Magdaleno",
+    "Małgorzata": "Małgorzato", "Marta": "Marto", "Monika": "Moniko",
+    "Nadia": "Nadiu", "Natalia": "Natalio",
+    "Ola": "Olu", "Patrycja": "Patrycjo", "Paulina": "Paulino",
+    "Sylwia": "Sylwio", "Teresa": "Tereso", "Weronika": "Weronico",
+    "Zofia": "Zofio", "Zuzanna": "Zuzanno", "Zuzia": "Zuziu",
+}
+
+def vocative_imie(name: str) -> str:
+    """Zwraca wołacz imienia. Fallback do mianownika gdy nieznane."""
+    if not name:
+        return name
+    name_cap = name.strip().capitalize()
+    if name_cap in _VOCATIVE:
+        return _VOCATIVE[name_cap]
+    lower = name_cap.lower()
+    # Żeńskie zdrobnienia: -sia, -zia, -cia, -nia, -bia → -iu
+    if lower.endswith(('sia', 'zia', 'cia', 'nia', 'bia')):
+        return name_cap[:-2] + 'u'
+    # Żeńskie: kończy na -a → -o
+    if lower.endswith('a'):
+        return name_cap[:-1] + 'o'
+    # Męskie: -sz, -cz → -u
+    if lower.endswith(('sz', 'cz')):
+        return name_cap + 'u'
+    # Męskie: -l, -j, -k → -u
+    if lower.endswith(('l', 'j', 'k')):
+        return name_cap + 'u'
+    # Męskie: -r → -rze
+    if lower.endswith('r'):
+        return name_cap + 'ze'
+    # Męskie: -ł → -le
+    if lower.endswith('ł'):
+        return name_cap[:-1] + 'le'
+    # Nieznane → mianownik
+    return name_cap
+
+
+# ==========================================
 # FUNKCJE LISTY - NOWE W V2!
 # ==========================================
 

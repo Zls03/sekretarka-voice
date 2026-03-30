@@ -799,7 +799,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     flow_manager, tenant, state=state)
             summary = (
                 f"{state['service']['name']} u {staff_name}, "
-                f"{format_date_polish(state['date'])}, {format_hour_polish(state['time'])} "
+                f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])} "
                 f"— na {customer_gender} {customer_name_declined}.{notes_part} Zgadza się?"
             )
             return await _respond(summary, flow_manager, tenant, state=state)
@@ -1281,8 +1281,7 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
 
             from polish_mappings import odmien_imie
             staff_declined = odmien_imie(matched_staff["name"])
-            name_part = f" Na imię {last_client_name}, zgadza się?" if last_client_name else " Na jakie imię?"
-            msg = f"Może znowu {matched_service['name']} u {staff_declined}?{name_part}"
+            msg = f"Świetnie, na {matched_service['name'].lower()} u {staff_declined} jak ostatnio?"
             logger.info(f"🔁 'Jak ostatnio': {matched_service['name']} u {matched_staff['name']}")
 
             from pipecat.frames.frames import TTSSpeakFrame

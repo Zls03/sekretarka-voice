@@ -12,7 +12,7 @@ from pipecat.frames.frames import EndFrame, TTSSpeakFrame, BotStoppedSpeakingFra
 import asyncio
 import random
 from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.frames.frames import TranscriptionFrame
+from pipecat.frames.frames import TranscriptionFrame, UserStoppedSpeakingFrame
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
@@ -512,10 +512,8 @@ class FirstResponseFiller(FrameProcessor):
         await super().process_frame(frame, direction)
         
         if (not self._first_done
-            and isinstance(frame, TranscriptionFrame)
-            and frame.text
-            and len(frame.text.strip()) > 2):
-            
+            and isinstance(frame, UserStoppedSpeakingFrame)):
+
             self._first_done = True
             filler = random.choice(self.FILLERS)
             logger.info(f"🎯 First response filler: '{filler}'")
