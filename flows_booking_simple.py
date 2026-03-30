@@ -577,7 +577,25 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             if not _date_from_system:
                 is_valid, constraint_msg = validate_date_constraints(parsed_date, tenant, state["staff"])
                 if not is_valid:
-                    return await _respond(constraint_msg, flow_manager, tenant, state=state)
+                    # Zamiast odrzucać sucho — zaproponuj najbliższy dostępny termin
+                    try:
+                        from flows import play_snippet
+                        await play_snippet(flow_manager, "checking")
+                    except Exception:
+                        pass
+                    staff_name = odmien_imie(state["staff"]["name"])
+                    available_days = await get_next_available_days(
+                        tenant, state["staff"], state["service"],
+                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=1
+                    )
+                    if available_days:
+                        first = available_days[0]
+                        state["_pending_date"] = first["date"].strftime("%Y-%m-%d")
+                        state["_pending_time"] = first["slots"][0]
+                        suggestion = f"Najbliższy dostępny termin u {staff_name} to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Pasuje?"
+                        return await _respond(suggestion, flow_manager, tenant, state=state)
+                    else:
+                        return await _respond(constraint_msg, flow_manager, tenant, state=state)
             
             # 🔥 WALIDACJA SLOTÓW - świeże dane!
             try:
