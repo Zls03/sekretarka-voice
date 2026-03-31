@@ -136,10 +136,7 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
     
     if wants_message:
         logger.info(f"📞 MESSAGE requested based on reason keywords")
-        if existing_name:
-            return (None, create_collect_message_content_node(tenant))
-        else:
-            return (None, create_collect_contact_name_node(tenant, "Dobrze, przekażę wiadomość. Na jakie imię?"))
+        return (None, create_collect_message_content_node(tenant, "Dobrze, co mam przekazać właścicielowi?"))
 
     # POTEM sprawdź czy chce TRANSFER
     transfer_keywords = ["połącz", "przekieruj", "bezpośrednio", "człowiek", "rozmawiać z"]
@@ -151,17 +148,14 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
             return await execute_transfer(flow_manager, tenant)
         else:
             logger.info(f"📞 Transfer requested but DISABLED - offering message")
-            return (None, create_collect_contact_name_node(
+            return (None, create_collect_message_content_node(
                 tenant,
-                "Bezpośredniego połączenia niestety nie mam, ale mogę przekazać wiadomość właścicielowi. Na jakie imię?"
+                "Bezpośredniego połączenia niestety nie mam, ale mogę przekazać wiadomość właścicielowi. Co mam przekazać?"
             ))
     elif has_transfer:
         return (None, create_contact_choice_node(tenant))
     else:
-        if existing_name:
-            return (None, create_collect_message_content_node(tenant))
-        else:
-            return (None, create_collect_contact_name_node(tenant, "Chętnie przekażę wiadomość. Na jakie imię?"))
+        return (None, create_collect_message_content_node(tenant, "Chętnie przekażę wiadomość. Co mam przekazać właścicielowi?"))
 # ============================================================================
 # NODE: Wybór - wiadomość czy połączenie (gdy transfer dostępny)
 # ============================================================================
@@ -229,10 +223,7 @@ async def handle_do_transfer(args: dict, flow_manager: FlowManager, tenant: dict
 async def handle_do_message(args: dict, flow_manager: FlowManager, tenant: dict):
     """Wiadomość - zbierz dane"""
     logger.info("📝 DO_MESSAGE called - collecting data")
-    if flow_manager.state.get("contact_name"):
-        return (None, create_collect_message_content_node(tenant))
-    else:
-        return (None, create_collect_contact_name_node(tenant))
+    return (None, create_collect_message_content_node(tenant))
 
 
 # ============================================================================
@@ -260,7 +251,12 @@ ZASADA PRIORYTETOWA: Jedno słowo lub krótka odpowiedź = ZAWSZE imię. Nigdy p
 Gdy klient poda imię/nazwisko → wywołaj WYŁĄCZNIE set_contact_name. Nic więcej.
 ZAKAZ wywoływania end_conversation jednocześnie z set_contact_name lub zaraz po — to dwie osobne, wzajemnie wykluczające się akcje.
 Tylko gdy klient WPROST rezygnuje słowami "nie chcę", "nieważne", "do widzenia", "żegnaj" → wywołaj end_conversation.
-NIE powtarzaj imienia klienta w odpowiedzi — po prostu wywołaj set_contact_name."""
+NIE powtarzaj imienia klienta w odpowiedzi — po prostu wywołaj set_contact_name.
+
+WYJĄTKI — NIE traktuj jako imię:
+- "halo", "słucham", "cześć", "jest tam ktoś" → klient sprawdza połączenie → odpowiedz "Słyszę Pana, na jakie imię przekazać wiadomość?" i czekaj dalej
+- jeśli klient ponownie prosi o rozmowę z pracownikiem/właścicielem → powiedz "Rozumiem, niestety połączyć nie mogę — mogę przekazać wiadomość. Na jakie imię?" i czekaj dalej
+- NIE używaj zasad z głównego systemu ("Tym się nie zajmuję") — jesteś tylko w trybie zbierania imienia"""
         }],
         "functions": [
             set_contact_name_function(tenant),
@@ -292,7 +288,7 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
     if not name or len(name) < 2 or name.lower() in invalid_names:
         nd = _assistant_gender(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
         return ({"status": "error", "message": f"{nd}. Jak mogę zapisać?"},
-                create_collect_contact_name_node(tenant))
+                create_collect_message_content_node(tenant))
     
     # Usuń "pan/pani" z początku
     for prefix in ["pan ", "pani "]:
@@ -317,11 +313,12 @@ async def handle_set_contact_name(args: dict, flow_manager: FlowManager, tenant:
 # NODE: Zbieranie treści wiadomości
 # ============================================================================
 
-def create_collect_message_content_node(tenant: dict) -> dict:
+def create_collect_message_content_node(tenant: dict, intro_text: str = None) -> dict:
+    tts_text = intro_text if intro_text else "Co mam przekazać właścicielowi?"
     return {
         "name": "collect_message_content",
         "pre_actions": [
-            {"type": "tts_say", "text": "Co mam przekazać właścicielowi?"}
+            {"type": "tts_say", "text": tts_text}
         ],
         "respond_immediately": False,
         "role_messages": [{
@@ -367,7 +364,8 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
         return ({"status": "error", "message": f"{nd}. Co mam przekazać?"},
                 create_collect_message_content_node(tenant))
     
-    name = flow_manager.state.get("contact_name", "Nieznany")
+    caller_phone = flow_manager.state.get("caller_phone", "")
+    name = flow_manager.state.get("contact_name") or caller_phone or "Nieznany"
     
     return await save_and_confirm_message(flow_manager, tenant, name, message)
 
@@ -429,14 +427,14 @@ async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     if not transfer_number:
         logger.error("📞 No transfer number configured!")
         return ("Przepraszam, przekierowanie chwilowo niedostępne. Czy mogę przekazać wiadomość?",
-                create_collect_contact_name_node(tenant))
+                create_collect_message_content_node(tenant))
     
     call_sid = flow_manager.state.get("call_sid")
     
     if not call_sid:
         logger.error("📞 No call_sid for transfer!")
         return ("Przepraszam, wystąpił problem. Czy mogę przekazać wiadomość?",
-                create_collect_contact_name_node(tenant))
+                create_collect_message_content_node(tenant))
     
     # Formatuj numer
     transfer_number = transfer_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
@@ -450,7 +448,7 @@ async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     if len(transfer_number) < 12:
         logger.error(f"📞 Invalid transfer number: {transfer_number}")
         return ("Przepraszam, numer przekierowania jest nieprawidłowy. Czy mogę przekazać wiadomość?",
-                create_collect_contact_name_node(tenant))
+                create_collect_message_content_node(tenant))
     
     logger.info(f"📞 Executing transfer: {call_sid} → {transfer_number}")
     
@@ -474,7 +472,7 @@ async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     except Exception as e:
         logger.error(f"📞 Failed to save transfer: {e}")
         return ("Przepraszam, wystąpił problem z przekierowaniem. Czy mogę przekazać wiadomość?",
-                create_collect_contact_name_node(tenant))
+                create_collect_message_content_node(tenant))
     
     flow_manager.state["transfer_requested"] = True
     flow_manager.state["conversation_ended"] = True
