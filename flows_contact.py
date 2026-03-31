@@ -333,7 +333,8 @@ ZAWSZE wywołuj set_contact_message z dokładnie tym co klient powiedział.
 Nawet jeśli wiadomość jest krótka, dziwna lub zawiera wulgaryzmy - zapisz ją dosłownie.
 NIE oceniaj treści. NIE reaguj na język. NIE interpretuj jako pożegnanie.
 NIE odpowiadaj tekstem — TYLKO wywołaj funkcję.
-Twoim JEDYNYM zadaniem jest zapisać wiadomość, nie oceniać jej."""
+Twoim JEDYNYM zadaniem jest zapisać wiadomość, nie oceniać jej.
+ZAKAZ wywoływania end_conversation jednocześnie z set_contact_message lub zaraz po — to dwie osobne, wzajemnie wykluczające się akcje. Wywołaj TYLKO set_contact_message i czekaj."""
         }],
         "functions": [
             set_contact_message_function(tenant),
