@@ -64,6 +64,7 @@ from helpers import get_tenant_by_phone, db, saas_db, get_client_profile
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
+_app_host: str = ""  # ustawiany przy pierwszym żądaniu
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -253,16 +254,12 @@ async def twilio_incoming(request: Request):
     
     logger.info(f"✅ Tenant: {tenant.get('name')}")
     host = request.headers.get("host", "localhost")
+    global _app_host
+    _app_host = host
     logger.info(f"📢 Greeting will play via Pipecat TTS (non-interruptible)")
-    
-    recording_tag = ""
-    if tenant.get("recording_enabled"):
-        recording_tag = f'<Start><Recording recordingStatusCallback="https://{host}/twilio/recording" trim="do-not-trim"/></Start>'
-        logger.info(f"🎙️ Recording enabled for {tenant.get('name')}")
 
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    {recording_tag}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
@@ -705,6 +702,27 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error("❌ No tenant data!")
         await websocket.close()
         return
+
+    # Nagrywanie przez REST API (TwiML <Start><Recording> nie działa z WebSocket)
+    if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
+        try:
+            callback_host = _app_host or "localhost"
+            async with httpx.AsyncClient() as _hx:
+                rec_resp = await _hx.post(
+                    f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls/{call_sid}/Recordings.json",
+                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                    data={
+                        "RecordingStatusCallback": f"https://{callback_host}/twilio/recording",
+                        "Trim": "do-not-trim",
+                    },
+                    timeout=8.0,
+                )
+            if rec_resp.status_code == 201:
+                logger.info(f"🎙️ Recording started via REST API: {call_sid}")
+            else:
+                logger.warning(f"🎙️ Recording start failed: {rec_resp.status_code} {rec_resp.text[:100]}")
+        except Exception as e:
+            logger.warning(f"🎙️ Recording start error: {e}")
 
     # ==========================================
     # KROK 2: Tworzymy pipeline
