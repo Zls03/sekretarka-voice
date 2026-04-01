@@ -1233,6 +1233,7 @@ ZASADY:
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
+WYJĄTEK: jeśli klient REZYGNUJE z rezerwacji ("nieważne", "rezygnuję", "nie chcę", "dziękuję nie") → wywołaj end_conversation.
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
@@ -1262,6 +1263,7 @@ WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie t
         
         "functions": [
             book_appointment_function(tenant),
+            _end_conversation_fn(),
         ]
     }
 
@@ -1398,6 +1400,11 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
 
     await flow_manager.task.queue_frame(TTSSpeakFrame(text=msg))
     return (None, create_booking_node(tenant))
+
+
+def _end_conversation_fn():
+    from flows import end_conversation_function
+    return end_conversation_function()
 
 
 # ============================================================================
