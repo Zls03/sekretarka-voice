@@ -550,15 +550,15 @@ async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict
     logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
 
     if urgency == "high":
-        confirmation = "Rozumiem, to pilna sprawa. Przekazuję zgłoszenie — specjalista oddzwoni jeszcze dziś."
+        confirmation = "Zgłoszenie przekazane jako pilne — specjalista oddzwoni jeszcze dziś. Czy mogę pomóc w czymś jeszcze?"
     else:
-        confirmation = "Dziękuję, przekazuję zgłoszenie. Specjalista oddzwoni jeszcze dziś lub jutro w zależności od dostępności."
+        confirmation = "Zgłoszenie przekazane — specjalista oddzwoni jeszcze dziś lub jutro. Czy mogę pomóc w czymś jeszcze?"
 
     return await _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation)
 
 
 async def _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation):
-    from flows import create_end_node
+    from flows import create_initial_node
     owner_email = tenant.get("notification_email") or tenant.get("email")
 
     async def send_email_task():
@@ -571,19 +571,8 @@ async def _save_and_send_lead(flow_manager, tenant, caller_phone, problem, detai
             logger.warning("📧 No owner email for lead!")
 
     asyncio.create_task(send_email_task())
-    flow_manager.state["conversation_ended"] = True
-
-    async def auto_hangup():
-        await asyncio.sleep(3.0)
-        try:
-            from pipecat.frames.frames import EndFrame
-            await flow_manager.task.queue_frame(EndFrame())
-            logger.info("🔚 EndFrame sent after lead saved")
-        except Exception as e:
-            logger.error(f"Error sending EndFrame: {e}")
-
-    asyncio.create_task(auto_hangup())
-    return (confirmation, create_end_node(message_saved=True))
+    # Wróć do głównego node — klient może mieć kolejne pytania
+    return (confirmation, create_initial_node(tenant, greeting_played=True))
 
 
 async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str, details: str, urgency: str, to_email: str):

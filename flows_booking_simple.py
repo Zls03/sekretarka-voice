@@ -1390,16 +1390,38 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
         if len(available) == 1:
             booking["staff"] = available[0]
             flow_manager.state["booking"] = booking
-            msg = f"Świetnie, {booking['service']['name']}. Na jaki dzień?"
+            # Jeden pracownik → od razu sprawdź terminy
+            msg = await _suggest_nearest_slot_start(tenant, booking["staff"], booking["service"], booking)
         else:
             names = natural_list([s["name"] for s in available])
             msg = f"Świetnie, {booking['service']['name']}. Do kogo? Dostępni: {names}."
     else:
-        from polish_mappings import odmien_imie
-        msg = f"Świetnie, {booking['service']['name']} u {odmien_imie(booking['staff']['name'])}. Na jaki dzień?"
+        # Service + staff znane → od razu sprawdź terminy
+        msg = await _suggest_nearest_slot_start(tenant, booking["staff"], booking["service"], booking)
 
     await flow_manager.task.queue_frame(TTSSpeakFrame(text=msg))
     return (None, create_booking_node(tenant))
+
+
+async def _suggest_nearest_slot_start(tenant: Dict, staff: Dict, service: Dict, booking: Dict) -> str:
+    """Sprawdza i proponuje najbliższy wolny termin — używane w handle_start_booking_simple"""
+    from polish_mappings import odmien_imie
+    staff_name = odmien_imie(staff["name"])
+    available_days = await get_next_available_days(
+        tenant, staff, service,
+        max_days=int(staff.get("max_booking_days") or 14), limit=1
+    )
+    if available_days:
+        first_day = available_days[0]
+        first_date_str = format_date_polish(first_day["date"])
+        first_slot = format_hour_polish(first_day["slots"][0])
+        booking["_pending_date"] = first_day["date"].strftime("%Y-%m-%d")
+        booking["_pending_time"] = first_day["slots"][0]
+        return f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. Pasuje?"
+    else:
+        max_days = int(staff.get("max_booking_days") or 14)
+        return (f"U {staff_name} w najbliższych {max_days} dniach nie ma wolnych terminów. "
+                f"Nowe terminy pojawiają się codziennie — proszę spróbować jutro.")
 
 
 def _end_conversation_fn():
