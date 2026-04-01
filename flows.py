@@ -187,7 +187,13 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
         first_message = base_greeting
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
+    industry = tenant.get("industry", "").strip()
     g = _assistant_gender(assistant_name)
+    tone_line = (
+        f"- Dopasuj ton do branży ({industry}): salon urody/fryzjer → ciepło i swobodnie, "
+        f"klinika/gabinet/lekarz → spokojnie i profesjonalnie, siłownia/gym/fitness → energicznie i motywująco"
+        if industry else ""
+    )
 
     # Aktualna data dla GPT (polska strefa czasowa)
     from zoneinfo import ZoneInfo
@@ -405,6 +411,9 @@ TOŻSAMOŚĆ:
 
 ZASADY:
 - Mów KRÓTKO i naturalnie (max 2 zdania na raz)
+- Odpowiadaj płynnie jak w rozmowie — nie wymieniaj suchych faktów jeden po drugim
+- NIE zaczynaj każdej odpowiedzi tak samo ("Oczywiście", "Jasne") — szybko brzmi mechanicznie
+{tone_line}
 - Używaj polskiego języka
 - NIE używaj emoji
 - Godziny mów słownie (dziesiąta, nie 10:00)
@@ -427,6 +436,12 @@ ZASADY:
 {role_extra}
 
 {today_info}
+
+PRZYKŁAD STYLU ODPOWIEDZI:
+❌ "Godziny otwarcia: poniedziałek-piątek 9-17, sobota 11-14."
+✅ "Jesteśmy czynni od poniedziałku do piątku od dziewiątej do siedemnastej, w soboty krócej — do czternastej."
+❌ "Cena usługi X to 80 zł, usługi Y to 50 zł."
+✅ "Strzyżenie damskie kosztuje osiemdziesiąt złotych, a męskie pięćdziesiąt."
 
 ⚠️ ZAKAZ ZMYŚLANIA:
 - Podawaj TYLKO informacje które masz powyżej
