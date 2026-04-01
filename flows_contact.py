@@ -518,13 +518,162 @@ def _get_start_booking_function():
     from flows_booking_simple import start_booking_function_simple
     return start_booking_function_simple()
 
+
+# ============================================================================
+# LEAD QUALIFICATION — zbieranie zgłoszeń serwisowych
+# ============================================================================
+
+def submit_lead_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient opisuje problem wymagający kontaktu ze specjalistą"""
+    return FlowsFunctionSchema(
+        name="submit_lead",
+        description="""Klient opisuje problem, usterkę, awarię lub sprawę wymagającą kontaktu ze specjalistą.
+Użyj gdy klient: opisuje problem techniczny, awarię, reklamację, pyta o wycenę niestandardowej pracy.
+NIE używaj gdy klient chce standardowej rezerwacji usługi z cennika.""",
+        properties={
+            "problem":  {"type": "string", "description": "Krótki opis problemu klienta (1-2 zdania)"},
+            "details":  {"type": "string", "description": "Dodatkowe szczegóły: marka/model/adres/od kiedy itp."},
+            "urgency":  {"type": "string", "enum": ["high", "normal"],
+                         "description": "high = awaria/pilne/nie działa wcale, normal = zwykłe zgłoszenie"},
+        },
+        required=["problem"],
+        handler=lambda args, fm: handle_submit_lead(args, fm, tenant),
+    )
+
+
+async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict):
+    problem = args.get("problem", "").strip()
+    details = args.get("details", "").strip()
+    urgency = args.get("urgency", "normal")
+
+    caller_phone = flow_manager.state.get("caller_phone", "nieznany")
+    logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
+
+    if urgency == "high":
+        confirmation = "Rozumiem, to pilna sprawa. Przekazuję zgłoszenie — specjalista oddzwoni jeszcze dziś."
+    else:
+        confirmation = "Dziękuję, przekazuję zgłoszenie. Specjalista oddzwoni jeszcze dziś lub jutro w zależności od dostępności."
+
+    return await _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation)
+
+
+async def _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation):
+    from flows import create_end_node
+    owner_email = tenant.get("notification_email") or tenant.get("email")
+
+    async def send_email_task():
+        if owner_email:
+            try:
+                await _send_lead_report_email(tenant, caller_phone, problem, details, urgency, owner_email)
+            except Exception as e:
+                logger.error(f"📧 Lead email error: {e}")
+        else:
+            logger.warning("📧 No owner email for lead!")
+
+    asyncio.create_task(send_email_task())
+    flow_manager.state["conversation_ended"] = True
+
+    async def auto_hangup():
+        await asyncio.sleep(3.0)
+        try:
+            from pipecat.frames.frames import EndFrame
+            await flow_manager.task.queue_frame(EndFrame())
+            logger.info("🔚 EndFrame sent after lead saved")
+        except Exception as e:
+            logger.error(f"Error sending EndFrame: {e}")
+
+    asyncio.create_task(auto_hangup())
+    return (confirmation, create_end_node(message_saved=True))
+
+
+async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str, details: str, urgency: str, to_email: str):
+    """Wyślij strukturalny email ze zgłoszeniem serwisowym"""
+    import httpx, os
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        return
+
+    business_name = tenant.get("name", "Firma")
+    now = _dt.now(ZoneInfo("Europe/Warsaw"))
+    date_str = now.strftime("%d.%m.%Y, %H:%M")
+
+    is_urgent = urgency == "high"
+    urgency_badge = "🔴 PILNE" if is_urgent else "🟡 Normalne"
+    urgency_color = "#dc2626" if is_urgent else "#d97706"
+    urgency_bg = "#fef2f2" if is_urgent else "#fefce8"
+    subject_prefix = "🔴 PILNE zgłoszenie" if is_urgent else "🔧 Nowe zgłoszenie"
+
+    details_row = f"""
+        <tr>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; color: #64748b; font-size: 13px; width: 110px;">Szczegóły</td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px;">{details}</td>
+        </tr>""" if details else ""
+
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1a1a2e; color: white; padding: 20px 25px; border-radius: 12px 12px 0 0;">
+            <h2 style="margin: 0; font-size: 18px;">🔧 Nowe zgłoszenie serwisowe</h2>
+            <p style="margin: 5px 0 0; opacity: 0.8; font-size: 13px;">{business_name} • {date_str}</p>
+        </div>
+        <div style="background: white; padding: 25px; border: 1px solid #e5e7eb; border-top: none;">
+            <div style="background: {urgency_bg}; border-left: 4px solid {urgency_color}; padding: 12px 15px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+                <span style="font-weight: 700; color: {urgency_color}; font-size: 15px;">{urgency_badge}</span>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; color: #64748b; font-size: 13px; width: 110px;">Telefon</td>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px;">
+                        <a href="tel:{caller_phone}" style="color: #3b82f6; text-decoration: none; font-weight: 600;">{caller_phone}</a>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; color: #64748b; font-size: 13px;">Problem</td>
+                    <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 500;">{problem}</td>
+                </tr>
+                {details_row}
+                <tr>
+                    <td style="padding: 10px 0; color: #64748b; font-size: 13px;">Data</td>
+                    <td style="padding: 10px 0; font-size: 14px;">{date_str}</td>
+                </tr>
+            </table>
+        </div>
+        <div style="padding: 15px 25px; background: #f8fafc; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="margin: 0; color: #94a3b8; font-size: 11px; text-align: center;">Zgłoszenie przekazane przez asystenta głosowego BizVoice.pl</p>
+        </div>
+    </div>"""
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
+                json={
+                    "from": "Voice AI <noreply@bizvoice.pl>",
+                    "to": [to_email],
+                    "subject": f"{subject_prefix} — {caller_phone} — {business_name}",
+                    "html": html_content,
+                },
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                logger.info(f"📧 Lead email sent to {to_email}")
+            else:
+                logger.error(f"📧 Lead email error: {resp.status_code} — {resp.text}")
+    except Exception as e:
+        logger.error(f"📧 Lead email send error: {e}")
+
+
 __all__ = [
     "contact_owner_function",
     "do_transfer_function",
     "do_message_function",
-    "set_contact_name_function", 
+    "set_contact_name_function",
     "set_contact_message_function",
     "create_contact_choice_node",
     "create_collect_contact_name_node",
     "create_collect_message_content_node",
+    "submit_lead_function",
 ]

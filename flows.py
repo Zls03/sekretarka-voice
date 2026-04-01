@@ -188,6 +188,11 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
     industry = tenant.get("industry", "").strip()
+    lead_mode = tenant.get("lead_mode", 0) == 1
+    lead_triggers = tenant.get("lead_triggers", "").strip()
+    lead_collection = tenant.get("lead_collection", "").strip()
+    lead_urgency_mode = tenant.get("lead_urgency_mode", 0) == 1
+    lead_urgency_text = tenant.get("lead_urgency_text", "").strip()
     g = _assistant_gender(assistant_name)
     tone_line = (
         f"- Dopasuj ton do branży ({industry}): salon urody/fryzjer → ciepło i swobodnie, "
@@ -269,6 +274,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     
     # Różne funkcje i instrukcje w zależności od trybu
     if booking_enabled:
+        from flows_contact import submit_lead_function as _submit_lead_fn
         functions = [
             start_booking_function(),
             check_availability_function(tenant),
@@ -276,12 +282,32 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
             contact_owner_function(tenant),
             end_conversation_function(),
         ]
-        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...". 
+        if lead_mode:
+            functions.insert(2, _submit_lead_fn(tenant))
+
+        # Buduj blok lead do task_content
+        _lead_block = ""
+        if lead_mode:
+            _triggers = lead_triggers or "klient opisuje problem, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej pracy"
+            _collection = lead_collection or "opis problemu i ewentualne szczegóły (marka/model, adres, od kiedy)"
+            _urgency_rule = ""
+            if lead_urgency_mode:
+                _urgency_kw = lead_urgency_text or "awaria, nie działa, stoi, wyciek, brak prądu, brak wody, pilne"
+                _urgency_rule = f"\n  Pilność HIGH gdy klient mówi: {_urgency_kw} → ustaw urgency=high"
+            _lead_block = f"""
+- submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
+  Kiedy: {_triggers}
+  Co zebrać: {_collection}{_urgency_rule}
+  Max 2 pytania doprecyzowujące zanim wywołasz submit_lead.
+  NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
+  NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
+
+        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...".
 NIE witaj się ponownie - NIE mów "dzień dobry"! Odpowiadaj od razu na temat.
 
 ⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
 Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ, pracowników.
-Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto pracuje?" 
+Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto pracuje?"
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
 ⚠️ PO KAŻDEJ ODPOWIEDZI:
@@ -293,7 +319,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
 - contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
   (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem", "proszę kogoś z obsługi")
-  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska
+  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska{_lead_block}
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)
@@ -353,12 +379,31 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
 """
 
     else:
+        from flows_contact import submit_lead_function as _submit_lead_fn
         functions = [
             manage_booking_function(tenant),
             contact_owner_function(tenant),
             end_conversation_function(),
         ]
-        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...". 
+        if lead_mode:
+            functions.insert(1, _submit_lead_fn(tenant))
+
+        _lead_block = ""
+        if lead_mode:
+            _triggers = lead_triggers or "klient opisuje problem, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej pracy"
+            _collection = lead_collection or "opis problemu i ewentualne szczegóły (marka/model, adres, od kiedy)"
+            _urgency_rule = ""
+            if lead_urgency_mode:
+                _urgency_kw = lead_urgency_text or "awaria, nie działa, stoi, wyciek, brak prądu, brak wody, pilne"
+                _urgency_rule = f"\n  Pilność HIGH gdy klient mówi: {_urgency_kw} → ustaw urgency=high"
+            _lead_block = f"""
+- submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
+  Kiedy: {_triggers}
+  Co zebrać: {_collection}{_urgency_rule}
+  Max 2 pytania doprecyzowujące zanim wywołasz submit_lead.
+  NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
+
+        task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...".
 NIE witaj się ponownie - NIE mów "dzień dobry"! Odpowiadaj od razu na temat.
 
 ⚠️ REZERWACJE SĄ WYŁĄCZONE!
@@ -366,7 +411,7 @@ Jeśli klient chce się umówić → powiedz że rezerwacja telefoniczna nie jes
 
 ⚠️ PROSTE PYTANIA - ODPOWIADAJ OD RAZU!
 Masz powyżej wszystkie informacje: cennik, godziny, adres, FAQ.
-Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?" 
+Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?"
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
 ⚠️ PO KAŻDEJ ODPOWIEDZI:
@@ -377,7 +422,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
 - contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
   (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem")
-  → ZAWSZE wywołaj gdy klient prosi o rozmowę z człowiekiem
+  → ZAWSZE wywołaj gdy klient prosi o rozmowę z człowiekiem{_lead_block}
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)

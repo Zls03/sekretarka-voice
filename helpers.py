@@ -201,6 +201,11 @@ async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
         "lead_email":         tenant.get("lead_email") or "",
         "azure_voice_id":     tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
         "info_services":      info_services,
+        "lead_mode":          int(tenant.get("lead_mode") or 0),
+        "lead_triggers":      tenant.get("lead_triggers") or "",
+        "lead_collection":    tenant.get("lead_collection") or "",
+        "lead_urgency_mode":  int(tenant.get("lead_urgency_mode") or 0),
+        "lead_urgency_text":  tenant.get("lead_urgency_text") or "",
     }
 
 
@@ -354,6 +359,11 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
         "lead_email":          firm.get("lead_email") or "",
+        "lead_mode":           int(firm.get("lead_mode") or 0),
+        "lead_triggers":       firm.get("lead_triggers") or "",
+        "lead_collection":     firm.get("lead_collection") or "",
+        "lead_urgency_mode":   int(firm.get("lead_urgency_mode") or 0),
+        "lead_urgency_text":   firm.get("lead_urgency_text") or "",
 
         "services":      services,
         "working_hours": working_hours,

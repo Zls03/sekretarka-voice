@@ -3,7 +3,8 @@
     "allow": [
       "Bash(wc:*)",
       "Bash(grep:*)",
-      "Bash(python -c \"from pipecat.frames.frames import UserStoppedSpeakingFrame; print\\(''ok''\\)\")"
+      "Bash(python -c \"from pipecat.frames.frames import UserStoppedSpeakingFrame; print\\(''ok''\\)\")",
+      "Bash(python -c \"import flows; import flows_contact; import helpers; print\\(''OK''\\)\")"
     ]
   }
 }
