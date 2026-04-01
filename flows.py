@@ -298,7 +298,8 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  Max 2 pytania doprecyzowujące zanim wywołasz submit_lead.
+  ZANIM wywołasz submit_lead: zadaj JEDNO pytanie doprecyzowujące (np. "Od kiedy to się dzieje?" lub "Jaka marka i model auta?").
+  Nie wywołuj submit_lead na podstawie samego krótkiego opisu — zbierz choć 1 detal.
   NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
@@ -400,7 +401,8 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  Max 2 pytania doprecyzowujące zanim wywołasz submit_lead.
+  ZANIM wywołasz submit_lead: zadaj JEDNO pytanie doprecyzowujące (np. "Od kiedy to się dzieje?" lub "Jaka marka i model auta?").
+  Nie wywołuj submit_lead na podstawie samego krótkiego opisu — zbierz choć 1 detal.
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
         task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...".

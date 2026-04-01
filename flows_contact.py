@@ -550,9 +550,9 @@ async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict
     logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
 
     if urgency == "high":
-        confirmation = "Zgłoszenie przekazane jako pilne — specjalista oddzwoni jeszcze dziś. Czy mogę pomóc w czymś jeszcze?"
+        confirmation = "Zgłoszenie przekazane jako pilne — specjalista oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
     else:
-        confirmation = "Zgłoszenie przekazane — specjalista oddzwoni jeszcze dziś lub jutro. Czy mogę pomóc w czymś jeszcze?"
+        confirmation = "Zgłoszenie przekazane — specjalista oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
 
     return await _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation)
 
@@ -564,18 +564,26 @@ async def _save_and_send_lead(flow_manager, tenant, caller_phone, problem, detai
     async def send_email_task():
         if owner_email:
             try:
-                await _send_lead_report_email(tenant, caller_phone, problem, details, urgency, owner_email)
+                conversation_summary = await generate_conversation_summary(flow_manager)
+                await _send_lead_report_email(tenant, caller_phone, problem, details, urgency, owner_email, conversation_summary)
             except Exception as e:
                 logger.error(f"📧 Lead email error: {e}")
         else:
             logger.warning("📧 No owner email for lead!")
 
     asyncio.create_task(send_email_task())
-    # Wróć do głównego node — klient może mieć kolejne pytania
-    return (confirmation, create_initial_node(tenant, greeting_played=True))
+
+    # TTSSpeakFrame zamiast tuple — unikamy opóźnienia LLM przy powrocie do głównego node
+    try:
+        from pipecat.frames.frames import TTSSpeakFrame
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=confirmation))
+    except Exception as e:
+        logger.warning(f"TTSSpeakFrame error: {e}")
+
+    return (None, create_initial_node(tenant, greeting_played=True))
 
 
-async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str, details: str, urgency: str, to_email: str):
+async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str, details: str, urgency: str, to_email: str, conversation_summary: str = ""):
     """Wyślij strukturalny email ze zgłoszeniem serwisowym"""
     import httpx, os
     from zoneinfo import ZoneInfo
@@ -628,6 +636,10 @@ async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str,
                     <td style="padding: 10px 0; font-size: 14px;">{date_str}</td>
                 </tr>
             </table>
+            {f'''<div style="background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin-top: 4px;">
+                <p style="margin: 0 0 6px; color: #64748b; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Streszczenie rozmowy</p>
+                <p style="margin: 0; font-size: 14px; color: #374151; line-height: 1.5;">{conversation_summary}</p>
+            </div>''' if conversation_summary else ''}
         </div>
         <div style="padding: 15px 25px; background: #f8fafc; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
             <p style="margin: 0; color: #94a3b8; font-size: 11px; text-align: center;">Zgłoszenie przekazane przez asystenta głosowego BizVoice.pl</p>
