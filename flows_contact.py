@@ -550,9 +550,9 @@ async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict
     logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
 
     if urgency == "high":
-        confirmation = "Rozumiem, to wygląda na pilną sprawę. Przekażę zgłoszenie odpowiedniej osobie, która oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
+        confirmation = "Rozumiem, to wygląda na pilną sprawę. Przekażę zgłoszenie odpowiedniej osobie — oddzwoni jeszcze dziś lub najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
     else:
-        confirmation = "Dziękuję za informacje. Przekażę zgłoszenie odpowiedniej osobie, która oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
+        confirmation = "Rozumiem, już przekazuję zgłoszenie odpowiedniej osobie, która oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
 
     return await _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation)
 

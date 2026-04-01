@@ -500,8 +500,7 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "Rozumiem, już sprawdzam",
-        "jasne, już patrzę",
+        "rozumiem",
     ]
     
     def __init__(self, **kwargs):
