@@ -298,8 +298,11 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  ZANIM wywołasz submit_lead: zadaj JEDNO pytanie doprecyzowujące (np. "Od kiedy to się dzieje?" lub "Jaka marka i model auta?").
-  Nie wywołuj submit_lead na podstawie samego krótkiego opisu — zbierz choć 1 detal.
+  ZBIERANIE DANYCH — pytaj kolejno (max 2 pytania):
+  1. Jeśli klient NIE opisał co konkretnie się dzieje → zapytaj "Co konkretnie się dzieje?" lub "Na czym polega problem?"
+  2. Gdy masz opis problemu, a NIE masz marki/modelu lub czasu trwania → zapytaj o jedno z tych
+  3. Po zebraniu opisu + choć jednego szczegółu → wywołaj submit_lead
+  Nie wywołuj submit_lead bez opisu problemu ("mam problem" to za mało)!
   NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
@@ -401,8 +404,11 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  ZANIM wywołasz submit_lead: zadaj JEDNO pytanie doprecyzowujące (np. "Od kiedy to się dzieje?" lub "Jaka marka i model auta?").
-  Nie wywołuj submit_lead na podstawie samego krótkiego opisu — zbierz choć 1 detal.
+  ZBIERANIE DANYCH — pytaj kolejno (max 2 pytania):
+  1. Jeśli klient NIE opisał co konkretnie się dzieje → zapytaj "Co konkretnie się dzieje?" lub "Na czym polega problem?"
+  2. Gdy masz opis problemu, a NIE masz marki/modelu lub czasu trwania → zapytaj o jedno z tych
+  3. Po zebraniu opisu + choć jednego szczegółu → wywołaj submit_lead
+  Nie wywołuj submit_lead bez opisu problemu ("mam problem" to za mało)!
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
         task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...".
