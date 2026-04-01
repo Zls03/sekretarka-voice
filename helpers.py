@@ -206,6 +206,7 @@ async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
         "lead_collection":    tenant.get("lead_collection") or "",
         "lead_urgency_mode":  int(tenant.get("lead_urgency_mode") or 0),
         "lead_urgency_text":  tenant.get("lead_urgency_text") or "",
+        "recording_enabled":  int(tenant.get("recording_enabled") or 0),
     }
 
 
@@ -364,6 +365,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "lead_collection":     firm.get("lead_collection") or "",
         "lead_urgency_mode":   int(firm.get("lead_urgency_mode") or 0),
         "lead_urgency_text":   firm.get("lead_urgency_text") or "",
+        "recording_enabled":   int(firm.get("recording_enabled") or 0),
 
         "services":      services,
         "working_hours": working_hours,

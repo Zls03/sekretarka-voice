@@ -58,8 +58,12 @@ from pipecat.processors.user_idle_processor import UserIdleProcessor
 # Nasze moduły
 
 import uuid
+import httpx
 from flows import create_initial_node
 from helpers import get_tenant_by_phone, db, saas_db, get_client_profile
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -251,8 +255,14 @@ async def twilio_incoming(request: Request):
     host = request.headers.get("host", "localhost")
     logger.info(f"📢 Greeting will play via Pipecat TTS (non-interruptible)")
     
+    recording_tag = ""
+    if tenant.get("recording_enabled"):
+        recording_tag = f'<Start><Recording recordingStatusCallback="https://{host}/twilio/recording" trim="do-not-trim"/></Start>'
+        logger.info(f"🎙️ Recording enabled for {tenant.get('name')}")
+
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    {recording_tag}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
@@ -1206,6 +1216,76 @@ async def save_call_log(flow_manager):
 # ==========================================
 
 PRICE_PER_MINUTE = 0.39  # zł za minutę rozmowy
+
+@app.post("/twilio/recording")
+async def twilio_recording(request: Request):
+    """Callback od Twilio gdy nagranie jest gotowe — zapisujemy URL do call_logs"""
+    form = await request.form()
+    call_sid          = form.get("CallSid", "")
+    recording_url     = form.get("RecordingUrl", "")
+    recording_status  = form.get("RecordingStatus", "")
+
+    logger.info(f"🎙️ Recording callback: {call_sid} | status={recording_status}")
+
+    if recording_status == "completed" and recording_url and call_sid:
+        mp3_url = recording_url + ".mp3"
+        # Spróbuj obu baz
+        for target_db in [db, saas_db]:
+            try:
+                existing = await target_db.execute(
+                    "SELECT id FROM call_logs WHERE call_sid = ?", [call_sid]
+                )
+                if existing:
+                    await target_db.execute(
+                        "UPDATE call_logs SET recording_url = ? WHERE call_sid = ?",
+                        [mp3_url, call_sid]
+                    )
+                    logger.info(f"🎙️ Recording URL saved: {call_sid}")
+                    break
+            except Exception as e:
+                logger.debug(f"🎙️ DB check error: {e}")
+
+    return Response(content="OK", media_type="text/plain")
+
+
+@app.get("/api/recordings/{call_log_id}")
+async def get_recording(call_log_id: str, request: Request):
+    """Proxy — serwuje MP3 z Twilio (wymaga auth) bez ujawniania credentials"""
+    recording_url = None
+    for target_db in [db, saas_db]:
+        try:
+            rows = await target_db.execute(
+                "SELECT recording_url FROM call_logs WHERE id = ?", [call_log_id]
+            )
+            if rows and rows[0].get("recording_url"):
+                recording_url = rows[0]["recording_url"]
+                break
+        except Exception:
+            continue
+
+    if not recording_url:
+        return Response(content="Not found", status_code=404)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                recording_url,
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                timeout=30.0,
+                follow_redirects=True,
+            )
+        if resp.status_code != 200:
+            return Response(content="Recording not available", status_code=404)
+
+        return Response(
+            content=resp.content,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": f'inline; filename="recording_{call_log_id}.mp3"'},
+        )
+    except Exception as e:
+        logger.error(f"🎙️ Recording proxy error: {e}")
+        return Response(content="Error", status_code=500)
+
 
 @app.post("/twilio/status")
 async def twilio_status(request: Request):
