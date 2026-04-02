@@ -480,7 +480,7 @@ def create_tts_service(tenant: dict):
                 sample_rate=8000,
                 params=GoogleTTSService.InputParams(
                     language=Language.PL_PL,
-                    speaking_rate=1.06,
+                    speaking_rate=1.05,
                 ),
             )
         finally:
@@ -704,6 +704,7 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     # Nagrywanie przez REST API (TwiML <Start><Recording> nie działa z WebSocket)
+    logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}, tenant_keys={list(tenant.keys())}")
     if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
         try:
             callback_host = _app_host or "localhost"
