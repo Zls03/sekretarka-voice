@@ -999,12 +999,10 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
 
     greeting_gate = GreetingGate()
-    first_filler = FirstResponseFiller()
 
     pipeline_components = [
         transport.input(),
         stt,
-        first_filler,
         user_idle,
         context_aggregator.user(),
         llm,
