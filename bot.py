@@ -509,7 +509,6 @@ class FirstResponseFiller(FrameProcessor):
     FILLERS = [
         "chwileczkę.",
         "już patrzę.",
-        "mhm...",
     ]
     
     def __init__(self, **kwargs):
