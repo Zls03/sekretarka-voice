@@ -507,7 +507,9 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "rozumiem",
+        "chwileczkę.",
+        "już patrzę.",
+        "mhm...",
     ]
     
     def __init__(self, **kwargs):
@@ -1000,10 +1002,12 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
 
     greeting_gate = GreetingGate()
+    first_response_filler = FirstResponseFiller()
 
     pipeline_components = [
         transport.input(),
         stt,
+        first_response_filler,
         user_idle,
         context_aggregator.user(),
         llm,
