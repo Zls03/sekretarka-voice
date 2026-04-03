@@ -388,9 +388,16 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             else:
                 state.pop(change_field, None)
             flow_manager.state["booking"] = state
-            return await _respond(
-                f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
-                flow_manager, tenant, state=state)
+
+            # Jeśli klient podał nową wartość w tym samym zdaniu — nie pytaj ponownie, kontynuuj flow
+            if change_field == "time" and time_text:
+                pass  # Fall through do sekcji walidacji godziny poniżej
+            elif change_field == "date" and date_text:
+                pass  # Fall through do sekcji walidacji daty poniżej
+            else:
+                return await _respond(
+                    f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
+                    flow_manager, tenant, state=state)
         else:
             state = {}
             flow_manager.state["booking"] = state
@@ -1276,7 +1283,7 @@ def start_booking_function_simple() -> FlowsFunctionSchema:
         properties={
             "service_hint": {
                 "type": "string",
-                "description": "Usługa jeśli klient ją podał w tym samym zdaniu (np. 'strzyżenie'). Null jeśli nie podał."
+                "description": "Usługa jeśli klient ją podał — w tym zdaniu LUB wcześniej w rozmowie. Np. klient pytał 'a ogólna diagnostyka?' → service_hint='Diagnostyka komputerowa'. Null tylko gdy usługa nie była w ogóle wspomniana."
             },
             "staff_hint": {
                 "type": "string",
