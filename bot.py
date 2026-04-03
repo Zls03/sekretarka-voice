@@ -507,8 +507,8 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "chwileczkę.",
-        "moment.",
+        "chwileczkę,",
+        "moment,",
     ]
     
     def __init__(self, **kwargs):
@@ -582,6 +582,7 @@ async def websocket_endpoint(websocket: WebSocket):
     stream_sid = None
     tenant = None
     call_sid = None
+    call_account_sid = None   # Twilio accountSid z eventu start (właściciel rozmowy)
     greeting_played = False
     caller_phone = "nieznany"
 
@@ -601,6 +602,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 custom_params = start_data.get("customParameters", {})
 
                 call_sid = custom_params.get("callSid", "unknown")
+                call_account_sid = start_data.get("accountSid")  # właściciel rozmowy w Twilio
                 tenant_id = custom_params.get("tenantId")
                 greeting_played = False  # Greeting zawsze przez Pipecat TTS
                 caller_phone = custom_params.get("callerPhone", "nieznany")
@@ -718,9 +720,15 @@ async def websocket_endpoint(websocket: WebSocket):
     if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
         try:
             callback_host = _app_host or "localhost"
-            # Użyj credentials tenanta (sub-konto), nie platformy
-            _rec_sid   = tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
-            _rec_token = tenant.get("twilio_auth_token")  or TWILIO_AUTH_TOKEN
+            # Użyj accountSid z eventu start (właściciel tej konkretnej rozmowy)
+            # Jeśli to platforma → użyj platformowego tokenu
+            # Jeśli to sub-konto tenanta → użyj tokenu tenanta (lub platformowego jako fallback)
+            _rec_sid = call_account_sid or tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
+            if _rec_sid == TWILIO_ACCOUNT_SID:
+                _rec_token = TWILIO_AUTH_TOKEN
+            else:
+                _rec_token = tenant.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
+            logger.info(f"🎙️ Recording using account: {_rec_sid[:8]}...")
             async with httpx.AsyncClient() as _hx:
                 rec_resp = await _hx.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
