@@ -709,10 +709,13 @@ async def websocket_endpoint(websocket: WebSocket):
     if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
         try:
             callback_host = _app_host or "localhost"
+            # Użyj credentials tenanta (sub-konto), nie platformy
+            _rec_sid   = tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
+            _rec_token = tenant.get("twilio_auth_token")  or TWILIO_AUTH_TOKEN
             async with httpx.AsyncClient() as _hx:
                 rec_resp = await _hx.post(
-                    f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls/{call_sid}/Recordings.json",
-                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                    f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
+                    auth=(_rec_sid, _rec_token),
                     data={
                         "RecordingStatusCallback": f"https://{callback_host}/twilio/recording",
                         "Trim": "do-not-trim",
@@ -1286,11 +1289,47 @@ async def get_recording(call_log_id: str, request: Request):
     if not recording_url:
         return Response(content="Not found", status_code=404)
 
+    # Wyciągnij Account SID z URL nagrania i dobierz właściwy token
+    import re as _re
+    _url_sid_match = _re.search(r"/Accounts/([^/]+)/", recording_url)
+    _url_sid = _url_sid_match.group(1) if _url_sid_match else None
+
+    _proxy_sid   = TWILIO_ACCOUNT_SID
+    _proxy_token = TWILIO_AUTH_TOKEN
+    if _url_sid and _url_sid != TWILIO_ACCOUNT_SID:
+        # Nagranie należy do sub-konta tenanta — szukamy credentiali w DB
+        for target_db in [db, saas_db]:
+            try:
+                rows2 = await target_db.execute(
+                    """SELECT t.twilio_account_sid, t.twilio_auth_token
+                       FROM call_logs cl
+                       JOIN tenants t ON t.id = cl.tenant_id
+                       WHERE cl.id = ?""",
+                    [call_log_id]
+                )
+                if not rows2:
+                    # SaaS: firm
+                    rows2 = await target_db.execute(
+                        """SELECT f.twilio_account_sid, f.twilio_auth_token
+                           FROM call_logs cl
+                           JOIN firms f ON f.id = cl.tenant_id
+                           WHERE cl.id = ?""",
+                        [call_log_id]
+                    )
+                if rows2 and rows2[0].get("twilio_account_sid"):
+                    raw = rows2[0].get("twilio_auth_token") or ""
+                    from helpers import decrypt_token
+                    _proxy_sid   = rows2[0]["twilio_account_sid"]
+                    _proxy_token = decrypt_token(raw) if raw else TWILIO_AUTH_TOKEN
+                    break
+            except Exception:
+                continue
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 recording_url,
-                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                auth=(_proxy_sid, _proxy_token),
                 timeout=30.0,
                 follow_redirects=True,
             )
