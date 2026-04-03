@@ -298,12 +298,15 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  ZBIERANIE DANYCH — JEDNO PYTANIE NA RAZ:
+  ZBIERANIE DANYCH — sekwencyjnie, jedno pytanie na raz:
   1. Jeśli klient NIE opisał co konkretnie się dzieje → zapytaj TYLKO "Co konkretnie się dzieje?"
-     ⚠️ "nie odpala", "stuka", "wycieka", "skrzypi", "nie działa" → to JUŻ opis → przejdź od razu do kroku 2
-  2. Gdy masz opis → zapytaj TYLKO jedno: "Jakiej marki i modelu jest auto?" — i nic więcej
-  3. Po zebraniu opisu + jednego szczegółu → wywołaj submit_lead od razu
-  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj sekwencyjnie, jedno na raz
+     ⚠️ "nie odpala", "stuka", "wycieka", "skrzypi", "nie działa" → to JUŻ opis → idź dalej
+  2. Zbieraj brakujące pola z "Co zebrać" powyżej — JEDNO pytanie na turę:
+     - Sprawdź co klient już podał (opis, marka, czas trwania, inne szczegóły)
+     - Zapytaj o JEDEN brakujący element, np. "Jakiej marki i modelu jest auto?" lub "Od kiedy to się dzieje?"
+     - Jeśli klient w jednej odpowiedzi podał kilka pól — wyciągnij wszystkie i idź dalej
+  3. Gdy masz opis + wszystkie pola z "Co zebrać" (lub klient odmawia podania) → wywołaj submit_lead
+  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj sekwencyjnie
   Nie wywołuj submit_lead bez opisu problemu ("mam problem" to za mało)!
   NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
@@ -406,12 +409,15 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy: {_triggers}
   Co zebrać: {_collection}{_urgency_rule}
-  ZBIERANIE DANYCH — JEDNO PYTANIE NA RAZ:
+  ZBIERANIE DANYCH — sekwencyjnie, jedno pytanie na raz:
   1. Jeśli klient NIE opisał co konkretnie się dzieje → zapytaj TYLKO "Co konkretnie się dzieje?"
-     ⚠️ "nie odpala", "stuka", "wycieka", "skrzypi", "nie działa" → to JUŻ opis → przejdź od razu do kroku 2
-  2. Gdy masz opis → zapytaj TYLKO jedno: "Jakiej marki i modelu jest auto?" — i nic więcej
-  3. Po zebraniu opisu + jednego szczegółu → wywołaj submit_lead od razu
-  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj sekwencyjnie, jedno na raz
+     ⚠️ "nie odpala", "stuka", "wycieka", "skrzypi", "nie działa" → to JUŻ opis → idź dalej
+  2. Zbieraj brakujące pola z "Co zebrać" powyżej — JEDNO pytanie na turę:
+     - Sprawdź co klient już podał (opis, marka, czas trwania, inne szczegóły)
+     - Zapytaj o JEDEN brakujący element, np. "Jakiej marki i modelu jest auto?" lub "Od kiedy to się dzieje?"
+     - Jeśli klient w jednej odpowiedzi podał kilka pól — wyciągnij wszystkie i idź dalej
+  3. Gdy masz opis + wszystkie pola z "Co zebrać" (lub klient odmawia podania) → wywołaj submit_lead
+  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj sekwencyjnie
   Nie wywołuj submit_lead bez opisu problemu ("mam problem" to za mało)!
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 

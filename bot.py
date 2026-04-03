@@ -480,7 +480,7 @@ def create_tts_service(tenant: dict):
                 sample_rate=8000,
                 params=GoogleTTSService.InputParams(
                     language=Language.PL_PL,
-                    speaking_rate=1.05,
+                    speaking_rate=1.06,
                 ),
             )
         finally:
@@ -743,7 +743,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 params=VADParams(
                     confidence=0.6,
                     start_secs=0.2,
-                    stop_secs=0.4,
+                    stop_secs=0.3,
                     min_volume=0.4,
                 )
             ),
@@ -767,8 +767,8 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1100,
-            endpointing=350,
+            utterance_end_ms=800,
+            endpointing=250,
             keyterm=tenant_keyterms,
         )
     )
