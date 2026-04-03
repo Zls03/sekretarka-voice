@@ -480,7 +480,7 @@ def create_tts_service(tenant: dict):
                 sample_rate=8000,
                 params=GoogleTTSService.InputParams(
                     language=Language.PL_PL,
-                    speaking_rate=1.05,
+                    speaking_rate=1.04,
                 ),
             )
         finally:
