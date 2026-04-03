@@ -721,14 +721,10 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             callback_host = _app_host or "localhost"
             # Użyj accountSid z eventu start (właściciel tej konkretnej rozmowy)
-            # Jeśli to platforma → użyj platformowego tokenu
-            # Jeśli to sub-konto tenanta → użyj tokenu tenanta (lub platformowego jako fallback)
-            _rec_sid = call_account_sid or tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
-            if _rec_sid == TWILIO_ACCOUNT_SID:
-                _rec_token = TWILIO_AUTH_TOKEN
-            else:
-                _rec_token = tenant.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
-            logger.info(f"🎙️ Recording using account: {_rec_sid[:8]}...")
+            # Token: zawsze z DB tenanta (odszyfrowany), fallback na env var
+            _rec_sid   = call_account_sid or tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
+            _rec_token = tenant.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
+            logger.info(f"🎙️ Recording using account: {_rec_sid[:8]}... token_from_db={bool(tenant.get('twilio_auth_token'))}")
             async with httpx.AsyncClient() as _hx:
                 rec_resp = await _hx.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
