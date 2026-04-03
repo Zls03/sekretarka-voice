@@ -11,7 +11,7 @@ import json
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame
 import asyncio
 import random
-from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import TranscriptionFrame, UserStoppedSpeakingFrame
 from datetime import datetime
 from loguru import logger
@@ -532,19 +532,21 @@ class GreetingGate(FrameProcessor):
     """
     Wyłącza interruptions na czas greeting TTS.
     Po pierwszym BotStoppedSpeakingFrame (= koniec greeting) → włącza z powrotem.
+    Dodatkowo blokuje TranscriptionFrame i UserStoppedSpeakingFrame podczas powitania
+    (zapobiega przetworzeniu przez LLM czegokolwiek co klient powie w tym czasie).
     """
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._greeting_done = False
         self._pipeline_processors = []
-    
+
     def set_processors(self, processors: list):
         self._pipeline_processors = processors
-    
+
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        
+
         if not self._greeting_done and isinstance(frame, BotStoppedSpeakingFrame):
             self._greeting_done = True
             logger.info("🔓 Greeting finished — enabling interruptions")
@@ -554,8 +556,15 @@ class GreetingGate(FrameProcessor):
                     proc._allow_interruptions = True
                     count += 1
             logger.info(f"🔓 Interruptions enabled on {count} processors")
-        
-        await self.push_frame(frame, direction)     
+
+        # Blokuj mowę klienta podczas powitania (downstream) — nie przepuszczaj do LLM
+        if (not self._greeting_done
+                and direction == FrameDirection.DOWNSTREAM
+                and isinstance(frame, (TranscriptionFrame, UserStoppedSpeakingFrame))):
+            logger.debug("🔇 GreetingGate: dropping user frame during greeting")
+            return
+
+        await self.push_frame(frame, direction)
 # ==========================================
 # WEBSOCKET - Główna logika Pipecat
 # ==========================================
@@ -1009,12 +1018,12 @@ async def websocket_endpoint(websocket: WebSocket):
     pipeline_components = [
         transport.input(),
         stt,
+        greeting_gate,           # blokuje user speech podczas powitania
         first_response_filler,
         user_idle,
         context_aggregator.user(),
         llm,
         tts,
-        greeting_gate,
         transport.output(),
         context_aggregator.assistant(),
     ]
