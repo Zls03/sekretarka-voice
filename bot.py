@@ -507,8 +507,8 @@ class FirstResponseFiller(FrameProcessor):
     """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
     
     FILLERS = [
-        "chwileczkę ,",
-        "moment ,",
+        "chwileczkę-",
+        "moment-",
     ]
     
     def __init__(self, **kwargs):
@@ -716,15 +716,19 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     # Nagrywanie przez REST API (TwiML <Start><Recording> nie działa z WebSocket)
-    logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}, tenant_keys={list(tenant.keys())}")
+    logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}, call_account_sid={call_account_sid!r}")
     if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
         try:
             callback_host = _app_host or "localhost"
             # Użyj accountSid z eventu start (właściciel tej konkretnej rozmowy)
             # Token: zawsze z DB tenanta (odszyfrowany), fallback na env var
             _rec_sid   = call_account_sid or tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
-            _rec_token = tenant.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
-            logger.info(f"🎙️ Recording using account: {_rec_sid[:8]}... token_from_db={bool(tenant.get('twilio_auth_token'))}")
+            _rec_token_db = tenant.get("twilio_auth_token") or ""
+            _rec_token = _rec_token_db or TWILIO_AUTH_TOKEN
+            if not _rec_token:
+                logger.error("🎙️ ❌ Brak tokenu Twilio — sprawdź ENCRYPTION_KEY na Railway i konfigurację Twilio w panelu")
+                raise ValueError("No Twilio auth token available")
+            logger.info(f"🎙️ Recording using account: {_rec_sid[:8] if _rec_sid else 'MISSING'}... token_from_db={bool(_rec_token_db)} token_len={len(_rec_token)} callback_host={callback_host}")
             async with httpx.AsyncClient() as _hx:
                 rec_resp = await _hx.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
