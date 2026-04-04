@@ -883,35 +883,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     frame.context.set_messages(new_messages)
                     logger.info(f"✂️ Context truncated: -{dropped} wiadomości (zostało {len(new_messages)})")
 
-                # --- Smart model routing: nano dla FAQ, mini dla booking/contact ---
-                _MAIN_MODEL_NODES = {
-                    "booking_simple", "contact_choice",
-                    "collect_contact_name", "collect_message_content",
-                }
-                try:
-                    _cn = flow_manager.current_node
-                    if isinstance(_cn, dict):
-                        _current_node = _cn.get("name", "")
-                    elif isinstance(_cn, str):
-                        _current_node = _cn
-                    else:
-                        _current_node = ""
-                except Exception:
-                    _current_node = ""
-                _chosen_model = (
-                    "gpt-4.1-mini" if _current_node in _MAIN_MODEL_NODES
-                    else "gpt-4.1-nano"
-                )
-                if llm.model_name != _chosen_model:
-                    logger.info(f"🔀 LLM route: {llm.model_name} → {_chosen_model} (node: {_current_node or 'unknown'})")
-                    llm.set_model_name(_chosen_model)
-
                 # --- LLM start timing ---
                 stt_end = _t_state.get("_stt_end_time") or now
                 wait_ms = (now - stt_end) * 1000
                 _t_state["_llm_start_time"] = now
                 self._tts_audio_seen = False
-                logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT (model: {llm.model_name})")
+                logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT")
 
             await self.push_frame(frame, direction)
 
