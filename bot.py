@@ -902,9 +902,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     "gpt-4.1-mini" if _current_node in _MAIN_MODEL_NODES
                     else "gpt-4.1-nano"
                 )
-                if llm._model != _chosen_model:
-                    logger.info(f"🔀 LLM route: {llm._model} → {_chosen_model} (node: {_current_node or 'unknown'})")
-                    llm._model = _chosen_model
+                if llm.model != _chosen_model:
+                    logger.info(f"🔀 LLM route: {llm.model} → {_chosen_model} (node: {_current_node or 'unknown'})")
+                    llm.model = _chosen_model
 
                 # --- LLM start timing ---
                 stt_end = _t_state.get("_stt_end_time") or now
