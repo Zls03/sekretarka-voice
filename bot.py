@@ -888,10 +888,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     "booking_simple", "contact_choice",
                     "collect_contact_name", "collect_message_content",
                 }
-                _current_node = (
-                    flow_manager.current_node.get("name", "")
-                    if flow_manager.current_node else ""
-                )
+                try:
+                    _cn = flow_manager.current_node
+                    if isinstance(_cn, dict):
+                        _current_node = _cn.get("name", "")
+                    elif isinstance(_cn, str):
+                        _current_node = _cn
+                    else:
+                        _current_node = ""
+                except Exception:
+                    _current_node = ""
                 _chosen_model = (
                     "gpt-4.1-mini" if _current_node in _MAIN_MODEL_NODES
                     else "gpt-4.1-nano"
