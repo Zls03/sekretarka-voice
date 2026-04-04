@@ -539,6 +539,13 @@ def _get_start_booking_function():
 # LEAD QUALIFICATION — zbieranie zgłoszeń serwisowych
 # ============================================================================
 
+def parse_lead_fields(lead_collection: str) -> list:
+    """'opis usterki, marka i model auta, od kiedy problem' → ['opis usterki', 'marka i model auta', 'od kiedy problem']"""
+    if not lead_collection:
+        return []
+    return [f.strip() for f in lead_collection.split(",") if f.strip()]
+
+
 def submit_lead_function(tenant: dict) -> FlowsFunctionSchema:
     """Klient opisuje problem wymagający kontaktu ze specjalistą"""
     return FlowsFunctionSchema(
@@ -565,11 +572,111 @@ async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
 
+    # Sprawdź dodatkowe pola z konfiguracji panelu
+    lead_collection = tenant.get("lead_collection", "").strip()
+    all_fields = parse_lead_fields(lead_collection)
+    extra_fields = all_fields[1:]  # Pierwsze pole = opis problemu (już mamy), reszta do zebrania
+
+    if extra_fields:
+        # Zapisz co już mamy w stanie
+        flow_manager.state["lead_data"] = {
+            "problem": problem,
+            "details": details,
+            "urgency": urgency,
+            "collected_extras": [],  # lista (field_name, value)
+        }
+        logger.info(f"🔧 Lead: będę zbierać dodatkowe pola: {extra_fields}")
+        return (None, create_lead_collection_node(tenant, extra_fields[0], extra_fields))
+
+    # Brak dodatkowych pól → zapisz od razu
+    return await _finalize_lead(flow_manager, tenant, caller_phone, problem, details, urgency)
+
+
+# ============================================================================
+# NODE: Zbieranie dodatkowych pól leadu (marka/model, adres, od kiedy itp.)
+# ============================================================================
+
+def create_lead_collection_node(tenant: dict, field_name: str, remaining_fields: list) -> dict:
+    """Node do zebrania jednego pola leadu. GPT ma tu tylko jedną funkcję — nie może zbłądzić."""
+    question = f"{field_name.capitalize()}?"
+    return {
+        "name": "lead_collection",
+        "pre_actions": [
+            {"type": "tts_say", "text": question}
+        ],
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"Zbierasz od klienta: {field_name}."
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": f"""Klient odpowiada na pytanie o: {field_name}.
+Gdy klient poda odpowiedź → wywołaj provide_lead_detail.
+Gdy mówi "nie wiem", "nie pamiętam", "nie mam" → wywołaj provide_lead_detail z value="brak".
+Gdy prosi o rozmowę z człowiekiem → wywołaj contact_owner.
+Gdy się żegna → wywołaj end_conversation."""
+        }],
+        "functions": [
+            provide_lead_detail_function(tenant, field_name, remaining_fields),
+            contact_owner_function(tenant),
+            _get_end_conversation_function(),
+        ]
+    }
+
+
+def provide_lead_detail_function(tenant: dict, field_name: str, remaining_fields: list) -> FlowsFunctionSchema:
+    return FlowsFunctionSchema(
+        name="provide_lead_detail",
+        description=f"Klient podał wartość dla pola: {field_name}",
+        properties={
+            "value": {"type": "string", "description": f"Odpowiedź klienta na pytanie o: {field_name}"}
+        },
+        required=["value"],
+        handler=lambda args, fm: handle_provide_lead_detail(args, fm, tenant, field_name, remaining_fields),
+    )
+
+
+async def handle_provide_lead_detail(args: dict, flow_manager: FlowManager, tenant: dict, field_name: str, remaining_fields: list):
+    value = args.get("value", "").strip()
+    caller_phone = flow_manager.state.get("caller_phone", "nieznany")
+
+    lead_state = flow_manager.state.get("lead_data", {})
+    collected = lead_state.get("collected_extras", [])
+
+    if value and value.lower() not in ("brak", "nie wiem", "nie pamiętam"):
+        collected.append((field_name, value))
+        logger.info(f"🔧 Lead field: {field_name} = {value[:40]}")
+    else:
+        logger.info(f"🔧 Lead field: {field_name} = brak (klient nie podał)")
+
+    lead_state["collected_extras"] = collected
+    flow_manager.state["lead_data"] = lead_state
+
+    # Następne pole do zebrania (remaining_fields[0] właśnie zebraliśmy)
+    next_fields = remaining_fields[1:]
+    if next_fields:
+        return (None, create_lead_collection_node(tenant, next_fields[0], next_fields))
+
+    # Wszystko zebrane → zapisz
+    problem = lead_state.get("problem", "")
+    details_parts = []
+    if lead_state.get("details"):
+        details_parts.append(lead_state["details"])
+    for fn, fv in collected:
+        details_parts.append(f"{fn}: {fv}")
+    details_final = "; ".join(details_parts)
+    urgency = lead_state.get("urgency", "normal")
+
+    flow_manager.state["lead_data"] = {}
+    return await _finalize_lead(flow_manager, tenant, caller_phone, problem, details_final, urgency)
+
+
+async def _finalize_lead(flow_manager, tenant, caller_phone, problem, details, urgency):
     if urgency == "high":
         confirmation = "To wygląda na pilną sprawę. Przekażę zgłoszenie naszemu specjaliście — oddzwoni jeszcze dziś lub najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
     else:
         confirmation = "Dobrze. Już przekazuję zgłoszenie naszemu specjaliście, który oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
-
     return await _save_and_send_lead(flow_manager, tenant, caller_phone, problem, details, urgency, confirmation)
 
 
@@ -693,4 +800,7 @@ __all__ = [
     "create_collect_contact_name_node",
     "create_collect_message_content_node",
     "submit_lead_function",
+    "parse_lead_fields",
+    "create_lead_collection_node",
+    "provide_lead_detail_function",
 ]
