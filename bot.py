@@ -90,6 +90,11 @@ def _check_twilio_signature(request: Request, form_dict: dict, token: str = "") 
         return True  # nie blokuj — tylko loguj
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host  = request.headers.get("x-forwarded-host", request.headers.get("host", str(request.url.netloc)))
+    # usuń domyślny port — Twilio podpisuje URL bez :443/:80
+    if proto == "https" and host.endswith(":443"):
+        host = host[:-4]
+    elif proto == "http" and host.endswith(":80"):
+        host = host[:-3]
     url   = f"{proto}://{host}{request.url.path}"
     if request.url.query:
         url += f"?{request.url.query}"
@@ -885,7 +890,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 self._tts_audio_seen = False
                 logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT")
 
-            elif isinstance(frame, LLMFullResponseEndFrame):
+            await self.push_frame(frame, direction)
+
+    pipeline_monitor = PipelineMonitor()
+
+    class PostTTSMonitor(FrameProcessor):
+        """Umieszczony za TTS — przechwytuje LLM DONE / TTS START / TTS TTFB."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._tts_audio_seen = False
+
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            now = time.time()
+
+            if isinstance(frame, LLMFullResponseEndFrame):
                 llm_start = _t_state.get("_llm_start_time") or now
                 _t_state["_llm_end_time"] = now
                 logger.info(f"⏱️ [LLM DONE] {(now - llm_start)*1000:.0f}ms")
@@ -893,6 +913,7 @@ async def websocket_endpoint(websocket: WebSocket):
             elif isinstance(frame, TTSStartedFrame):
                 llm_end = _t_state.get("_llm_end_time") or now
                 _t_state["_tts_start_time"] = now
+                self._tts_audio_seen = False
                 logger.info(f"⏱️ [TTS START] +{(now - llm_end)*1000:.0f}ms po LLM")
 
             elif isinstance(frame, TTSAudioRawFrame) and not self._tts_audio_seen:
@@ -901,12 +922,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 stt_end   = _t_state.get("_stt_end_time") or now
                 logger.info(f"⏱️ [TTS TTFB] {(now - tts_start)*1000:.0f}ms")
                 total_ms = (now - stt_end) * 1000
-                icon = '🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'
+                icon = "🟢" if total_ms < 1500 else "🟡" if total_ms < 2500 else "🔴"
                 logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms {icon}")
 
             await self.push_frame(frame, direction)
 
-    pipeline_monitor = PipelineMonitor()
+    post_tts_monitor = PostTTSMonitor()
 
     # ==========================================
     # TIMEOUT HANDLING
@@ -1060,9 +1081,10 @@ async def websocket_endpoint(websocket: WebSocket):
         first_response_filler,
         user_idle,
         context_aggregator.user(),
-        pipeline_monitor,        # context truncation + timing
+        pipeline_monitor,        # context truncation + STT→LLM timing
         llm,
         tts,
+        post_tts_monitor,        # LLM DONE / TTS START / TOTAL timing
         transport.output(),
         context_aggregator.assistant(),
     ]
