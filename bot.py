@@ -4,10 +4,13 @@ PIPECAT FLOWS MIGRATION v1.3
 ============================
 Dodano wybór TTS provider (ElevenLabs / Cartesia) per tenant
 """
-import time 
+import time
 import os
 import sys
 import json
+import hmac
+import hashlib
+import base64
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame
 import asyncio
 import random
@@ -65,6 +68,32 @@ from helpers import get_tenant_by_phone, db, saas_db, get_client_profile
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
 _app_host: str = ""  # ustawiany przy pierwszym żądaniu
+
+# ==========================================
+# TWILIO SIGNATURE VALIDATION
+# ==========================================
+
+def _check_twilio_signature(request: Request, form_dict: dict, token: str = "") -> bool:
+    """Weryfikuje X-Twilio-Signature (HMAC-SHA1) — chroni przed spoofingiem webhooka."""
+    _token = token or TWILIO_AUTH_TOKEN
+    if not _token:
+        return True  # brak tokenu → skip (dev)
+    sig = request.headers.get("X-Twilio-Signature", "")
+    if not sig:
+        logger.warning("⚠️ Twilio: brak nagłówka X-Twilio-Signature")
+        return False
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host  = request.headers.get("x-forwarded-host", request.headers.get("host", str(request.url.netloc)))
+    url   = f"{proto}://{host}{request.url.path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+    s = url + "".join(f"{k}{v}" for k, v in sorted(form_dict.items()))
+    mac = hmac.new(_token.encode(), s.encode(), hashlib.sha1)
+    expected = base64.b64encode(mac.digest()).decode()
+    valid = hmac.compare_digest(sig, expected)
+    if not valid:
+        logger.warning(f"⚠️ Twilio: nieprawidłowy podpis dla {url}")
+    return valid
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -212,7 +241,11 @@ def build_keyterms(tenant: dict) -> list:
 async def twilio_incoming(request: Request):
     """Obsługa połączenia przychodzącego z Twilio"""
     form = await request.form()
-    
+    form_dict = dict(form)
+
+    if not _check_twilio_signature(request, form_dict):
+        return Response(content="Forbidden", status_code=403)
+
     called = form.get("Called", form.get("To", ""))
     caller = form.get("From", "")
     call_sid = form.get("CallSid", "")
@@ -650,23 +683,29 @@ async def websocket_endpoint(websocket: WebSocket):
                                 staff_list = tenant.get("staff", [])
                                 logger.info(f"   staff: {len(staff_list)} (from saas)")
                             else:
-                                # Admin — stara logika
+                                # Admin — batch query zamiast N+1
                                 staff_rows = await db.execute(
                                     "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
                                     [tenant_id]
                                 )
-                                staff_list = []
-                                for s in staff_rows:
-                                    staff_dict = dict(s)
-                                    staff_services = await db.execute(
-                                        """SELECT srv.id, srv.name, srv.duration_minutes, srv.price 
-                                        FROM services srv
-                                        JOIN staff_services ss ON srv.id = ss.service_id
-                                        WHERE ss.staff_id = ?""",
-                                        [s["id"]]
+                                staff_list = [dict(s) for s in staff_rows]
+                                if staff_list:
+                                    placeholders = ",".join("?" * len(staff_list))
+                                    staff_ids = [s["id"] for s in staff_list]
+                                    all_svc_rows = await db.execute(
+                                        f"""SELECT ss.staff_id, srv.id, srv.name, srv.duration_minutes, srv.price
+                                            FROM services srv
+                                            JOIN staff_services ss ON srv.id = ss.service_id
+                                            WHERE ss.staff_id IN ({placeholders})""",
+                                        staff_ids
                                     )
-                                    staff_dict["services"] = [dict(svc) for svc in staff_services]
-                                    staff_list.append(staff_dict)
+                                    svc_by_staff: dict = {}
+                                    for row in all_svc_rows:
+                                        r = dict(row)
+                                        sid = r.pop("staff_id")
+                                        svc_by_staff.setdefault(sid, []).append(r)
+                                    for s in staff_list:
+                                        s["services"] = svc_by_staff.get(s["id"], [])
                                 tenant["staff"] = staff_list
 
                             if not tenant.get("services"):
@@ -781,7 +820,7 @@ async def websocket_endpoint(websocket: WebSocket):
         model="gpt-4.1-mini",
         params=BaseOpenAILLMService.InputParams(
             temperature=0.3,
-            max_completion_tokens=150,
+            max_completion_tokens=250,
         ),
     )
     logger.info("🧠 Using OpenAI gpt-4.1-mini")
@@ -813,6 +852,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
     @llm.event_handler("on_llm_started")
     async def on_llm_started(llm_service):
+        # Context truncation — zapobiega silent token overflow przy długich rozmowach
+        msgs = context.messages
+        non_system = [m for m in msgs if m.get("role") != "system"]
+        if len(non_system) > 40:
+            to_drop = len(non_system) - 30
+            dropped = 0
+            new_messages = []
+            for m in msgs:
+                if m.get("role") != "system" and dropped < to_drop:
+                    dropped += 1
+                    continue
+                new_messages.append(m)
+            context.messages = new_messages
+            logger.info(f"✂️ Context truncated: usunięto {dropped} starych wiadomości (zostało {len(new_messages)})")
+
         stt_end = timing_state.get("_stt_end_time") or time.time()
         wait_ms = (time.time() - stt_end) * 1000
         timing_state["_llm_start_time"] = time.time()
@@ -1240,6 +1294,11 @@ PRICE_PER_MINUTE = 0.39  # zł za minutę rozmowy
 async def twilio_recording(request: Request):
     """Callback od Twilio gdy nagranie jest gotowe — zapisujemy URL do call_logs"""
     form = await request.form()
+    form_dict = dict(form)
+
+    if not _check_twilio_signature(request, form_dict):
+        return Response(content="Forbidden", status_code=403)
+
     call_sid          = form.get("CallSid", "")
     recording_url     = form.get("RecordingUrl", "")
     recording_status  = form.get("RecordingStatus", "")
@@ -1345,6 +1404,10 @@ async def get_recording(call_log_id: str, request: Request):
 @app.post("/twilio/status")
 async def twilio_status(request: Request):
     form = await request.form()
+    form_dict = dict(form)
+
+    if not _check_twilio_signature(request, form_dict):
+        return Response(content="Forbidden", status_code=403)
 
     call_sid = form.get("CallSid", "")
     call_duration = form.get("CallDuration", "0")
@@ -1566,7 +1629,23 @@ async def twilio_after_stream(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "framework": "pipecat", "version": "1.3", "tts_options": ["elevenlabs", "cartesia"]}
+    checks: dict = {"db": "ok", "saas_db": "ok"}
+    try:
+        await db.execute("SELECT 1")
+    except Exception as e:
+        checks["db"] = f"error: {e}"
+    try:
+        await saas_db.execute("SELECT 1")
+    except Exception as e:
+        checks["saas_db"] = f"error: {e}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return {
+        "status": "ok" if all_ok else "degraded",
+        "checks": checks,
+        "framework": "pipecat",
+        "version": "1.3",
+    }
 
 
 # ==========================================

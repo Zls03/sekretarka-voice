@@ -329,12 +329,14 @@ def create_collect_message_content_node(tenant: dict, intro_text: str = None) ->
             "role": "system",
             "content": """Klient poda treść wiadomości dla właściciela.
 
-ZAWSZE wywołuj set_contact_message z dokładnie tym co klient powiedział.
-Nawet jeśli wiadomość jest krótka, dziwna lub zawiera wulgaryzmy - zapisz ją dosłownie.
-NIE oceniaj treści. NIE reaguj na język. NIE interpretuj jako pożegnanie.
-NIE odpowiadaj tekstem — TYLKO wywołaj funkcję.
-Twoim JEDYNYM zadaniem jest zapisać wiadomość, nie oceniać jej.
-ZAKAZ wywoływania end_conversation jednocześnie z set_contact_message lub zaraz po — to dwie osobne, wzajemnie wykluczające się akcje. Wywołaj TYLKO set_contact_message i czekaj."""
+Gdy klient podaje treść wiadomości → wywołaj set_contact_message z dokładnie tym co powiedział.
+Nawet jeśli wiadomość jest krótka lub zawiera wulgaryzmy — zapisz ją dosłownie.
+
+Gdy klient ODMAWIA zostawienia wiadomości (mówi: "nie chcę", "nie trzeba", "nieważne", "nie, dziękuję", "rezygnuję") → wywołaj end_conversation. NIE zapisuj odmowy jako wiadomości.
+Gdy klient się ŻEGNA ("do widzenia", "pa", "żegnaj") → wywołaj end_conversation.
+
+NIE odpowiadaj tekstem — TYLKO wywołaj jedną z funkcji.
+ZAKAZ wywoływania end_conversation jednocześnie z set_contact_message — to wzajemnie wykluczające się akcje."""
         }],
         "functions": [
             set_contact_message_function(tenant),
@@ -359,15 +361,29 @@ def set_contact_message_function(tenant: dict) -> FlowsFunctionSchema:
 async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tenant: dict):
     """Zapisz wiadomość i wyślij"""
     message = args.get("message", "").strip()
-    
+
     if not message or len(message) < 3:
         nd = _assistant_gender(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
         return ({"status": "error", "message": f"{nd}. Co mam przekazać?"},
                 create_collect_message_content_node(tenant))
-    
+
+    # Ochrona przed zapisem odmowy lub meta-opisu LLM zamiast prawdziwej wiadomości
+    msg_lower = message.lower()
+    refusal_tokens = ["nie chcę", "nie chce", "nie trzeba", "nieważne", "rezygnuję",
+                      "do widzenia", "żegnaj", "pa pa", "nie, dziękuję", "nie dziękuję"]
+    meta_tokens = ["klient podziękował", "klient nie chce", "klient rezygnuje",
+                   "klient się żegna", "klient nie chciał", "klient zmienił",
+                   "klient nie zostawił", "klient powiedział dziękuję"]
+    is_refusal = any(t in msg_lower for t in refusal_tokens)
+    is_meta    = any(t in msg_lower for t in meta_tokens)
+    if is_refusal or is_meta:
+        logger.info(f"📝 Odmowa/meta w set_contact_message — nie zapisuję: '{message[:60]}'")
+        from flows import create_end_node
+        return (None, create_end_node(message_saved=False))
+
     caller_phone = flow_manager.state.get("caller_phone", "")
     name = flow_manager.state.get("contact_name") or caller_phone or "Nieznany"
-    
+
     return await save_and_confirm_message(flow_manager, tenant, name, message)
 
 
