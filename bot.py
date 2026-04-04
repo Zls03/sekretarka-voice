@@ -11,11 +11,16 @@ import json
 import hmac
 import hashlib
 import base64
-from pipecat.frames.frames import EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame
+from pipecat.frames.frames import (
+    EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame,
+    TranscriptionFrame, UserStoppedSpeakingFrame,
+    LLMFullResponseStartFrame, LLMFullResponseEndFrame,
+    TTSStartedFrame, TTSAudioRawFrame,
+)
 import asyncio
 import random
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import TranscriptionFrame, UserStoppedSpeakingFrame
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
 from datetime import datetime
 from loguru import logger
 from dotenv import load_dotenv
@@ -831,87 +836,78 @@ async def websocket_endpoint(websocket: WebSocket):
     context_aggregator = llm.create_context_aggregator(context)
 
     # ==========================================
-    # ⏱️ TIMING STATE
+    # ⏱️ TIMING + CONTEXT TRUNCATION (Pipeline Monitor)
     # ==========================================
 
-    timing_state = {
+    _t_state = {
         "_stt_end_time": None,
         "_llm_start_time": None,
         "_llm_end_time": None,
         "_tts_start_time": None,
     }
 
-    @stt.event_handler("on_transcript_complete")
-    async def on_stt_complete(stt_service, transcript):
-        text = ""
-        if hasattr(transcript, 'text'):
-            text = transcript.text
-        elif isinstance(transcript, dict):
-            text = transcript.get("text", "")
-        if text and text.strip():
-            timing_state["_stt_end_time"] = time.time()
-            logger.info(f"⏱️ [STT DONE] '{text[:40]}...'")
+    # STT timing — on_utterance_end jest zarejestrowany gdy utterance_end_ms jest ustawiony
+    @stt.event_handler("on_utterance_end")
+    async def on_utterance_end(stt_service, data):
+        _t_state["_stt_end_time"] = time.time()
+        logger.info("⏱️ [STT END] Koniec wypowiedzi użytkownika")
 
-    @llm.event_handler("on_llm_started")
-    async def on_llm_started(llm_service):
-        # Context truncation — zapobiega silent token overflow przy długich rozmowach
-        msgs = context.messages
-        non_system = [m for m in msgs if m.get("role") != "system"]
-        if len(non_system) > 40:
-            to_drop = len(non_system) - 30
-            dropped = 0
-            new_messages = []
-            for m in msgs:
-                if m.get("role") != "system" and dropped < to_drop:
-                    dropped += 1
-                    continue
-                new_messages.append(m)
-            context.messages = new_messages
-            logger.info(f"✂️ Context truncated: usunięto {dropped} starych wiadomości (zostało {len(new_messages)})")
+    class PipelineMonitor(FrameProcessor):
+        """Intercepts OpenAILLMContextFrame to truncate context + log timing.
+        Umieszczony między context_aggregator.user() a llm."""
 
-        stt_end = timing_state.get("_stt_end_time") or time.time()
-        wait_ms = (time.time() - stt_end) * 1000
-        timing_state["_llm_start_time"] = time.time()
-        logger.info(f"⏱️ [LLM START] Wait from STT: {wait_ms:.0f}ms")
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._tts_audio_seen = False
 
-    @llm.event_handler("on_llm_first_token")
-    async def on_llm_first_token(llm_service):
-        llm_start = timing_state.get("_llm_start_time") or time.time()
-        ttfb_ms = (time.time() - llm_start) * 1000
-        logger.info(f"⏱️ [LLM TTFB] {ttfb_ms:.0f}ms")
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            now = time.time()
 
-    @llm.event_handler("on_llm_completed")
-    async def on_llm_completed(llm_service):
-        llm_start = timing_state.get("_llm_start_time") or time.time()
-        total_ms = (time.time() - llm_start) * 1000
-        timing_state["_llm_end_time"] = time.time()
-        logger.info(f"⏱️ [LLM DONE] Total: {total_ms:.0f}ms")
+            if isinstance(frame, OpenAILLMContextFrame):
+                # --- Context truncation ---
+                msgs = frame.context.messages
+                non_system = [m for m in msgs if m.get("role") != "system"]
+                if len(non_system) > 40:
+                    to_drop = len(non_system) - 30
+                    new_messages, dropped = [], 0
+                    for m in msgs:
+                        if m.get("role") != "system" and dropped < to_drop:
+                            dropped += 1
+                            continue
+                        new_messages.append(m)
+                    frame.context.set_messages(new_messages)
+                    logger.info(f"✂️ Context truncated: -{dropped} wiadomości (zostało {len(new_messages)})")
 
-    @tts.event_handler("on_tts_started")
-    async def on_tts_started(tts_service):
-        llm_end = timing_state.get("_llm_end_time") or time.time()
-        wait_ms = (time.time() - llm_end) * 1000
-        timing_state["_tts_start_time"] = time.time()
-        logger.info(f"⏱️ [TTS START] Wait from LLM: {wait_ms:.0f}ms")
+                # --- LLM start timing ---
+                stt_end = _t_state.get("_stt_end_time") or now
+                wait_ms = (now - stt_end) * 1000
+                _t_state["_llm_start_time"] = now
+                self._tts_audio_seen = False
+                logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT")
 
-    @tts.event_handler("on_tts_first_audio")
-    async def on_tts_first_audio(tts_service):
-        tts_start = timing_state.get("_tts_start_time") or time.time()
-        stt_end = timing_state.get("_stt_end_time") or time.time()
-        tts_ttfb_ms = (time.time() - tts_start) * 1000
-        total_ms = (time.time() - stt_end) * 1000
-        logger.info(f"⏱️ [TTS TTFB] {tts_ttfb_ms:.0f}ms")
-        logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms ({'🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'})")
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                llm_start = _t_state.get("_llm_start_time") or now
+                _t_state["_llm_end_time"] = now
+                logger.info(f"⏱️ [LLM DONE] {(now - llm_start)*1000:.0f}ms")
 
-    @stt.event_handler("on_transcript")
-    async def on_transcript(stt_service, transcript):
-        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
-        is_final = transcript.get("is_final", True) if isinstance(transcript, dict) else True
-        if text.strip():
-            if is_final:
-                logger.info(f"🎤 TRANSCRIPT (final): '{text}'")
-            else:
-                logger.debug(f"🎤 TRANSCRIPT (interim): '{text}'")
+            elif isinstance(frame, TTSStartedFrame):
+                llm_end = _t_state.get("_llm_end_time") or now
+                _t_state["_tts_start_time"] = now
+                logger.info(f"⏱️ [TTS START] +{(now - llm_end)*1000:.0f}ms po LLM")
+
+            elif isinstance(frame, TTSAudioRawFrame) and not self._tts_audio_seen:
+                self._tts_audio_seen = True
+                tts_start = _t_state.get("_tts_start_time") or now
+                stt_end   = _t_state.get("_stt_end_time") or now
+                logger.info(f"⏱️ [TTS TTFB] {(now - tts_start)*1000:.0f}ms")
+                total_ms = (now - stt_end) * 1000
+                icon = '🟢' if total_ms < 1500 else '🟡' if total_ms < 2500 else '🔴'
+                logger.info(f"⏱️ [TOTAL] User→Bot: {total_ms:.0f}ms {icon}")
+
+            await self.push_frame(frame, direction)
+
+    pipeline_monitor = PipelineMonitor()
 
     # ==========================================
     # TIMEOUT HANDLING
@@ -1065,6 +1061,7 @@ async def websocket_endpoint(websocket: WebSocket):
         first_response_filler,
         user_idle,
         context_aggregator.user(),
+        pipeline_monitor,        # context truncation + timing
         llm,
         tts,
         transport.output(),
