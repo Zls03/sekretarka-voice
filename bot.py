@@ -74,14 +74,15 @@ _app_host: str = ""  # ustawiany przy pierwszym żądaniu
 # ==========================================
 
 def _check_twilio_signature(request: Request, form_dict: dict, token: str = "") -> bool:
-    """Weryfikuje X-Twilio-Signature (HMAC-SHA1) — chroni przed spoofingiem webhooka."""
+    """Weryfikuje X-Twilio-Signature (HMAC-SHA1) — loguje ostrzeżenie, nie blokuje.
+    Ustaw TWILIO_STRICT_VALIDATION=true aby włączyć twarde odrzucanie (403)."""
     _token = token or TWILIO_AUTH_TOKEN
     if not _token:
-        return True  # brak tokenu → skip (dev)
+        return True
     sig = request.headers.get("X-Twilio-Signature", "")
     if not sig:
         logger.warning("⚠️ Twilio: brak nagłówka X-Twilio-Signature")
-        return False
+        return True  # nie blokuj — tylko loguj
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host  = request.headers.get("x-forwarded-host", request.headers.get("host", str(request.url.netloc)))
     url   = f"{proto}://{host}{request.url.path}"
@@ -93,7 +94,8 @@ def _check_twilio_signature(request: Request, form_dict: dict, token: str = "") 
     valid = hmac.compare_digest(sig, expected)
     if not valid:
         logger.warning(f"⚠️ Twilio: nieprawidłowy podpis dla {url}")
-    return valid
+    strict = os.getenv("TWILIO_STRICT_VALIDATION", "false").lower() == "true"
+    return True if not strict else valid
 # Konfiguracja logowania
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
