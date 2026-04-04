@@ -846,14 +846,8 @@ async def websocket_endpoint(websocket: WebSocket):
         "_tts_start_time": None,
     }
 
-    # STT timing — on_utterance_end jest zarejestrowany gdy utterance_end_ms jest ustawiony
-    @stt.event_handler("on_utterance_end")
-    async def on_utterance_end(stt_service, data):
-        _t_state["_stt_end_time"] = time.time()
-        logger.info("⏱️ [STT END] Koniec wypowiedzi użytkownika")
-
     class PipelineMonitor(FrameProcessor):
-        """Intercepts OpenAILLMContextFrame to truncate context + log timing.
+        """Intercepts key frames for context truncation and timing.
         Umieszczony między context_aggregator.user() a llm."""
 
         def __init__(self, **kwargs):
@@ -864,7 +858,12 @@ async def websocket_endpoint(websocket: WebSocket):
             await super().process_frame(frame, direction)
             now = time.time()
 
-            if isinstance(frame, OpenAILLMContextFrame):
+            # STT timing — UserStoppedSpeakingFrame przepływa przez user_aggregator
+            if isinstance(frame, UserStoppedSpeakingFrame):
+                _t_state["_stt_end_time"] = now
+                logger.info("⏱️ [STT END] Koniec mówienia")
+
+            elif isinstance(frame, OpenAILLMContextFrame):
                 # --- Context truncation ---
                 msgs = frame.context.messages
                 non_system = [m for m in msgs if m.get("role") != "system"]
