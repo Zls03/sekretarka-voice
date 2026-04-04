@@ -729,6 +729,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.error("🎙️ ❌ Brak tokenu Twilio — sprawdź ENCRYPTION_KEY na Railway i konfigurację Twilio w panelu")
                 raise ValueError("No Twilio auth token available")
             logger.info(f"🎙️ Recording using account: {_rec_sid[:8] if _rec_sid else 'MISSING'}... token_from_db={bool(_rec_token_db)} token_len={len(_rec_token)} callback_host={callback_host}")
+            await asyncio.sleep(1.5)  # Twilio potrzebuje chwili zanim REST API "widzi" połączenie
             async with httpx.AsyncClient() as _hx:
                 rec_resp = await _hx.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
