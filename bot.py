@@ -258,8 +258,15 @@ async def twilio_incoming(request: Request):
     _app_host = host
     logger.info(f"📢 Greeting will play via Pipecat TTS (non-interruptible)")
 
+    recording_twiml = ""
+    if tenant.get("recording_enabled"):
+        recording_twiml = f'''
+    <Start>
+        <Recording statusCallback="https://{host}/twilio/recording" statusCallbackMethod="POST" trim="do-not-trim" />
+    </Start>'''
+
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
+<Response>{recording_twiml}
     <Connect action="https://{host}/twilio/after-stream?callSid={call_sid}">
         <Stream url="wss://{host}/ws">
             <Parameter name="callSid" value="{call_sid}" />
@@ -715,37 +722,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close()
         return
 
-    # Nagrywanie przez REST API (TwiML <Start><Recording> nie działa z WebSocket)
-    logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}, call_account_sid={call_account_sid!r}")
-    if tenant.get("recording_enabled") and call_sid and call_sid != "unknown":
-        try:
-            callback_host = _app_host or "localhost"
-            # Użyj accountSid z eventu start (właściciel tej konkretnej rozmowy)
-            # Token: zawsze z DB tenanta (odszyfrowany), fallback na env var
-            _rec_sid   = call_account_sid or tenant.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
-            _rec_token_db = tenant.get("twilio_auth_token") or ""
-            _rec_token = _rec_token_db or TWILIO_AUTH_TOKEN
-            if not _rec_token:
-                logger.error("🎙️ ❌ Brak tokenu Twilio — sprawdź ENCRYPTION_KEY na Railway i konfigurację Twilio w panelu")
-                raise ValueError("No Twilio auth token available")
-            logger.info(f"🎙️ Recording using account: {_rec_sid[:8] if _rec_sid else 'MISSING'}... token_from_db={bool(_rec_token_db)} token_len={len(_rec_token)} callback_host={callback_host}")
-            await asyncio.sleep(1.5)  # Twilio potrzebuje chwili zanim REST API "widzi" połączenie
-            async with httpx.AsyncClient() as _hx:
-                rec_resp = await _hx.post(
-                    f"https://api.twilio.com/2010-04-01/Accounts/{_rec_sid}/Calls/{call_sid}/Recordings.json",
-                    auth=(_rec_sid, _rec_token),
-                    data={
-                        "RecordingStatusCallback": f"https://{callback_host}/twilio/recording",
-                        "Trim": "do-not-trim",
-                    },
-                    timeout=8.0,
-                )
-            if rec_resp.status_code == 201:
-                logger.info(f"🎙️ Recording started via REST API: {call_sid}")
-            else:
-                logger.warning(f"🎙️ Recording start failed: {rec_resp.status_code} {rec_resp.text[:100]}")
-        except Exception as e:
-            logger.warning(f"🎙️ Recording start error: {e}")
+    # Nagrywanie startuje przez <Start><Recording> w TwiML (patrz /twilio/incoming)
+    logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}")
 
     # ==========================================
     # KROK 2: Tworzymy pipeline
