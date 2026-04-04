@@ -902,16 +902,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     "gpt-4.1-mini" if _current_node in _MAIN_MODEL_NODES
                     else "gpt-4.1-nano"
                 )
-                if llm.model != _chosen_model:
-                    logger.info(f"🔀 LLM route: {llm.model} → {_chosen_model} (node: {_current_node or 'unknown'})")
-                    llm.model = _chosen_model
+                if llm.model_name != _chosen_model:
+                    logger.info(f"🔀 LLM route: {llm.model_name} → {_chosen_model} (node: {_current_node or 'unknown'})")
+                    llm.set_model_name(_chosen_model)
 
                 # --- LLM start timing ---
                 stt_end = _t_state.get("_stt_end_time") or now
                 wait_ms = (now - stt_end) * 1000
                 _t_state["_llm_start_time"] = now
                 self._tts_audio_seen = False
-                logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT (model: {_chosen_model})")
+                logger.info(f"⏱️ [LLM START] +{wait_ms:.0f}ms po STT (model: {llm.model_name})")
 
             await self.push_frame(frame, direction)
 
