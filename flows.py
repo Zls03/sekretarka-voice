@@ -344,6 +344,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
             last_seen = client_profile.get("last_seen", "")
             # Formatuj datę z ISO na czytelny polski string z godziną
             last_seen_fmt = ""
+            is_future_appointment = False
             if last_seen:
                 try:
                     from datetime import timezone
@@ -354,19 +355,48 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
                     MONTHS_GEN = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
                                   "lipca","sierpnia","września","października","listopada","grudnia"]
                     last_seen_fmt = f"{dt.day} {MONTHS_GEN[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}"
+                    is_future_appointment = dt > _dt.now()
                 except Exception:
                     last_seen_fmt = last_seen
-            crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {client_profile.get('visit_count', 1)} raz/razy."
-            if last_seen_fmt:
-                crm_hint += f" Ostatnia wizyta: {last_seen_fmt}."
-            crm_hint += f" Ostatnio korzystał z: {last_svc}"
-            if last_stf_declined:
-                crm_hint += f" u {last_stf_declined}"
-            crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
-            if last_stf_declined:
-                crm_hint += f" u {last_stf_declined}?"
-            crm_hint += "'"
-            crm_hint += f"""
+
+            visit_count = client_profile.get('visit_count', 1)
+            # Jeśli jedynym "wpisem" jest przyszła wizyta, klient jeszcze nie był — nie mów "był"
+            past_visits = max(0, visit_count - 1) if is_future_appointment else visit_count
+
+            if is_future_appointment:
+                # Klient ma zarezerwowaną przyszłą wizytę
+                crm_hint = f"\n\nINFO O KLIENCIE (CRM):"
+                if past_visits > 0:
+                    crm_hint += f" Klient był u nas już {past_visits} raz/razy."
+                else:
+                    crm_hint += f" Klient jest nowy (jeszcze nie był)."
+                if last_seen_fmt:
+                    crm_hint += f" MA ZAREZERWOWANĄ WIZYTĘ na: {last_seen_fmt}."
+                crm_hint += f" Zaplanowana usługa: {last_svc}"
+                if last_stf_declined:
+                    crm_hint += f" u {last_stf_declined}"
+                crm_hint += "."
+                crm_hint += f"""
+
+⚠️ WAŻNE — PRZYSZŁA WIZYTA:
+Klient ma NADCHODZĄCĄ wizytę (jeszcze się nie odbyła).
+Jeśli pyta o termin/wizytę:
+→ Powiedz: "Ma Pan wizytę na {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
+→ NIE mów "ostatnio był Pan u nas" — wizyta jest W PRZYSZŁOŚCI
+Jeśli pyta "kiedy byłem ostatnio?" i były poprzednie wizyty: odpowiedz o nich, ignorując przyszłą rezerwację."""
+            else:
+                # Klient był już u nas (przeszłe wizyty)
+                crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {visit_count} raz/razy."
+                if last_seen_fmt:
+                    crm_hint += f" Ostatnia wizyta: {last_seen_fmt}."
+                crm_hint += f" Ostatnio korzystał z: {last_svc}"
+                if last_stf_declined:
+                    crm_hint += f" u {last_stf_declined}"
+                crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
+                if last_stf_declined:
+                    crm_hint += f" u {last_stf_declined}?"
+                crm_hint += "'"
+                crm_hint += f"""
 
 ⚠️ PYTANIA O HISTORIĘ WIZYT:
 Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy byłem?" itp.:
