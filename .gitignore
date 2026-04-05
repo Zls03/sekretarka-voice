@@ -2,3 +2,7 @@ venv/
 .env
 __pycache__/
 *.pyc
+*.mp3
+*.wav
+demo_scripts/czesc1/
+demo_scripts/czesc2/

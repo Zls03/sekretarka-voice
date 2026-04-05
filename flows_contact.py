@@ -14,6 +14,7 @@ from pipecat_flows import FlowManager, FlowsFunctionSchema
 from loguru import logger
 import asyncio
 from flows_helpers import _assistant_gender
+from constants import Urgency
 
 # ============================================================================
 # HELPER: Streszczenie rozmowy
@@ -560,10 +561,10 @@ NIE używaj gdy klient chce standardowej rezerwacji usługi z cennika.""",
 async def handle_submit_lead(args: dict, flow_manager: FlowManager, tenant: dict):
     problem = args.get("problem", "").strip()
     details = args.get("details", "").strip()
-    urgency = args.get("urgency", "normal")
+    urgency = args.get("urgency", Urgency.NORMAL)
     caller_phone = flow_manager.state.get("caller_phone", "nieznany")
     logger.info(f"🔧 Lead: urgency={urgency}, problem={problem[:60]}")
-    if urgency == "high":
+    if urgency == Urgency.HIGH:
         confirmation = "To wygląda na pilną sprawę. Przekażę zgłoszenie naszemu specjaliście — oddzwoni jeszcze dziś lub najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
     else:
         confirmation = "Dobrze. Już przekazuję zgłoszenie naszemu specjaliście, który oddzwoni najszybciej jak to możliwe. Czy mogę pomóc w czymś jeszcze?"
@@ -610,7 +611,7 @@ async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str,
     now = _dt.now(ZoneInfo("Europe/Warsaw"))
     date_str = now.strftime("%d.%m.%Y, %H:%M")
 
-    is_urgent = urgency == "high"
+    is_urgent = urgency == Urgency.HIGH
     urgency_badge = "🔴 PILNE" if is_urgent else "🟡 Normalne"
     urgency_color = "#dc2626" if is_urgent else "#d97706"
     urgency_bg = "#fef2f2" if is_urgent else "#fefce8"
