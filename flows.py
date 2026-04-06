@@ -294,20 +294,22 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
             if lead_urgency_mode:
                 _urgency_kw = lead_urgency_text or "awaria, nie działa, stoi, wyciek, brak prądu, brak wody, pilne"
                 _urgency_rule = f"\n  Pilność HIGH gdy klient mówi: {_urgency_kw} → ustaw urgency=high"
+            # Rozbij _collection na listę pól do zebrania
+            _collection_items = [x.strip() for x in _collection.replace(';', ',').split(',') if x.strip()]
+            _collection_list = "\n     • " + "\n     • ".join(_collection_items) if _collection_items else f"\n     • {_collection}"
+
             _lead_block = f"""
 - submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
-  Kiedy: {_triggers}
-  Co zebrać: {_collection}{_urgency_rule}
+  Kiedy wywołać: {_triggers}{_urgency_rule}
   ZBIERANIE DANYCH — sekwencyjnie, jedno pytanie na raz:
-  1. Jeśli klient NIE opisał co konkretnie się dzieje → zapytaj TYLKO "Co konkretnie się dzieje?"
-     ⚠️ "nie odpala", "stuka", "wycieka", "skrzypi", "nie działa" → to JUŻ opis → idź dalej
-  2. Zbieraj brakujące pola z "Co zebrać" powyżej — JEDNO pytanie na turę:
-     - Sprawdź co klient już podał (opis, marka, czas trwania, inne szczegóły)
-     - Zapytaj o JEDEN brakujący element, np. "Jakiej marki i modelu jest auto?" lub "Od kiedy to się dzieje?"
-     - Jeśli klient w jednej odpowiedzi podał kilka pól — wyciągnij wszystkie i idź dalej
-  3. Gdy masz opis + wszystkie pola z "Co zebrać" (lub klient odmawia podania) → wywołaj submit_lead
-  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj sekwencyjnie
-  Nie wywołuj submit_lead bez opisu problemu ("mam problem" to za mało)!
+  1. Jeśli klient NIE opisał jeszcze co konkretnie się dzieje → zapytaj naturalnie o szczegóły
+     Jeśli klient opisał sytuację choćby ogólnie → uznaj to za opis i idź do kroku 2
+  2. Zbierz następujące informacje (JEDNO pytanie na turę):{_collection_list}
+     - Sprawdź co klient już powiedział i pytaj tylko o to czego brakuje
+     - Jeśli klient podał kilka rzeczy naraz → wyciągnij wszystkie i idź dalej
+     - Jeśli klient odmawia lub nie wie → pomiń i idź dalej
+  3. Gdy masz opis + zebrane informacje → wywołaj submit_lead
+  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj o JEDNĄ rzecz na raz
   NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
   NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
