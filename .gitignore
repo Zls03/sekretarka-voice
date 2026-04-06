@@ -6,3 +6,6 @@ __pycache__/
 *.wav
 demo_scripts/czesc1/
 demo_scripts/czesc2/
+
+# Claude Code instructions (not for public repo)
+CLAUDE.md
