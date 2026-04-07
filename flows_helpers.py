@@ -64,6 +64,7 @@ def _assistant_gender(assistant_name: str) -> dict:
 
 # URL do panelu Next.js
 PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
+ADMIN_PANEL_API_URL = os.getenv("ADMIN_PANEL_API_URL", PANEL_API_URL)
 PANEL_SLUG = os.getenv("PANEL_SLUG", "")
 
 def format_time_for_tts(time_str: str) -> str:
@@ -340,12 +341,13 @@ async def get_available_slots_from_api(
         logger.warning("⚠️ No panel slug configured")
         return []
     
+    base_url = ADMIN_PANEL_API_URL if tenant.get("source") == "admin" else PANEL_API_URL
     logger.info(f"📅 Fetching fresh slots from API: slug={slug}, staff={staff_id}, date={date_str}")
-    
+
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
-                f"{PANEL_API_URL}/api/panel/{slug}/calendar/slots",
+                f"{base_url}/api/panel/{slug}/calendar/slots",
                 params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
             )
             
@@ -554,8 +556,9 @@ async def save_booking_to_api(
                 }
                 if notes:
                     payload["notes"] = notes
+                base_url = ADMIN_PANEL_API_URL if tenant.get("source") == "admin" else PANEL_API_URL
                 response = await client.post(
-                    f"{PANEL_API_URL}/api/panel/{slug}/bookings",
+                    f"{base_url}/api/panel/{slug}/bookings",
                     json=payload
                 )
                 
