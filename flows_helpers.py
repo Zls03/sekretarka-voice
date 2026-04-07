@@ -340,7 +340,7 @@ async def get_available_slots_from_api(
         logger.warning("⚠️ No panel slug configured")
         return []
     
-    logger.info(f"📅 Fetching fresh slots from API: staff={staff_id}, date={date_str}")
+    logger.info(f"📅 Fetching fresh slots from API: slug={slug}, staff={staff_id}, date={date_str}")
     
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
