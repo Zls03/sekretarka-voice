@@ -9,7 +9,7 @@ System działa w architekturze multi-tenant SaaS — jeden backend obsługuje wi
 ## Jak to działa
 
 ```
-Klient dzwoni na numer Twilio
+Kliient dzwoni na numer Twilio
         │
         ▼
 POST /twilio/incoming          ← Twilio webhook, zwraca TwiML z adresem WebSocket
