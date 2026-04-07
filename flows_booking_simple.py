@@ -474,10 +474,16 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         logger.info(f"⏰ Pending time stored: {time_text}")
 
     # === 1. WALIDACJA USŁUGI ===
-    if service_text and "service" not in state:
-        state.pop("service", None)
+    _current_service_name = state.get("service", {}).get("name", "").strip().lower()
+    _service_changed = service_text and service_text.strip().lower() != _current_service_name
+    if service_text and (("service" not in state) or _service_changed):
         found = next((s for s in services if s["name"].strip().lower() == service_text.strip().lower()), None)
         if found:
+            if _service_changed:
+                # Zmiana usługi — reset pracownika, daty i slotów
+                logger.info(f"🔄 Service changed: {_current_service_name!r} → {found['name']!r} — resetting staff/date/time")
+                for k in ("staff", "date", "time", "available_slots", "_pending_date", "_pending_time", "_last_date_text"):
+                    state.pop(k, None)
             state["service"] = found
             logger.info(f"✅ Service: {found['name']}")
         else:
@@ -491,7 +497,13 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                              flow_manager, tenant, state=state)
     
     # === 2. WALIDACJA PRACOWNIKA ===
-    if staff_text and "staff" not in state:
+    _current_staff_name = state.get("staff", {}).get("name", "")
+    _staff_changed = staff_text and staff_text != _current_staff_name
+    if staff_text and (("staff" not in state) or _staff_changed):
+        if _staff_changed and "staff" in state:
+            logger.info(f"🔄 Staff changed: {_current_staff_name!r} → {staff_text!r} — resetting date/time")
+            for k in ("staff", "date", "time", "available_slots", "_pending_date", "_pending_time", "_last_date_text"):
+                state.pop(k, None)
         if staff_text == "dowolny":
             available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
             if available:
