@@ -568,7 +568,7 @@ def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
     )
 
 async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
-    from flows_contact import save_and_confirm_message, create_contact_choice_node, create_collect_message_content_node
+    from flows_contact import create_contact_choice_node, create_collect_message_content_node
 
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
@@ -581,34 +581,7 @@ async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: d
             "Zmian ani odwołań samodzielnie nie obsługuję — mogę przekazać wiadomość właścicielowi lub połączyć bezpośrednio. Co Pan woli?"
         ))
 
-    # Bez transferu — wyślij informację o odwołaniu automatycznie, jeśli mamy dane wizyty
-    profile = flow_manager.state.get("client_profile") or {}
-    name = profile.get("name") or flow_manager.state.get("caller_phone") or "Klient"
-    service = profile.get("last_service", "")
-    staff = profile.get("last_staff", "")
-    last_seen = profile.get("last_seen", "")
-
-    if service and last_seen:
-        # Mamy dane wizyty — budujemy wiadomość automatycznie
-        try:
-            import re as _re
-            from datetime import datetime as _dt
-            dt_str = _re.sub(r'\.\d+Z?$', '', last_seen).replace('Z', '')
-            dt = _dt.fromisoformat(dt_str)
-            MONTHS = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
-                      "lipca","sierpnia","września","października","listopada","grudnia"]
-            date_str = f"{dt.day} {MONTHS[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}"
-        except Exception:
-            date_str = last_seen
-
-        staff_part = f" u {staff}" if staff else ""
-        auto_message = f"Prośba o odwołanie wizyty: {service}{staff_part}, {date_str}."
-        return await save_and_confirm_message(
-            flow_manager, tenant, name, auto_message,
-            confirmation_text="Przekazałam prośbę o odwołanie — właściciel potwierdzi wkrótce. Miłego dnia!"
-        )
-
-    # Brak danych wizyty — zapytaj o treść (numer telefonu wystarczy jako identyfikator)
+    # Bez transferu — wyjaśnij i zapytaj o treść (bez pytania o imię, numer telefonu wystarczy)
     return (None, create_collect_message_content_node(
         tenant,
         "Zmian samodzielnie nie obsługuję, ale przekażę wiadomość właścicielowi. Co mam przekazać?"
