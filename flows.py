@@ -337,48 +337,73 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
         role_extra = build_business_context(tenant)
         role_extra += f"\n\nPRACOWNICY: {staff_list}"
 
-        # Sugestia "jak ostatnio" dla powracającego klienta
-        if client_profile and client_profile.get("last_service"):
-            from polish_mappings import odmien_imie as _odmien
-            last_svc = client_profile["last_service"]
-            last_stf = client_profile.get("last_staff", "")
-            last_stf_declined = _odmien(last_stf) if last_stf else ""
-            last_seen = client_profile.get("last_seen", "")
-            # Formatuj datę z ISO na czytelny polski string z godziną
-            last_seen_fmt = ""
-            is_future_appointment = False
-            if last_seen:
+        # CRM hint — nadchodzące wizyty i historia
+        if client_profile:
+            from datetime import datetime as _dt
+            import re as _re
+            MONTHS_GEN = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
+                          "lipca","sierpnia","września","października","listopada","grudnia"]
+
+            def _fmt_dt(iso: str) -> str:
                 try:
-                    from datetime import timezone
-                    import re as _re
-                    dt_str = _re.sub(r'\.\d+Z?$', '', last_seen).replace('Z', '')
-                    from datetime import datetime as _dt
+                    dt_str = _re.sub(r'\.\d+Z?$', '', iso).replace('Z', '')
                     dt = _dt.fromisoformat(dt_str)
-                    MONTHS_GEN = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
-                                  "lipca","sierpnia","września","października","listopada","grudnia"]
-                    last_seen_fmt = f"{dt.day} {MONTHS_GEN[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}"
-                    is_future_appointment = dt > _dt.now()
+                    return f"{dt.day} {MONTHS_GEN[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}", dt
                 except Exception:
-                    last_seen_fmt = last_seen
+                    return iso, None
 
-            visit_count = client_profile.get('visit_count', 1)
-            # Jeśli jedynym "wpisem" jest przyszła wizyta, klient jeszcze nie był — nie mów "był"
-            past_visits = max(0, visit_count - 1) if is_future_appointment else visit_count
+            upcoming = client_profile.get("upcoming_visits") or []
+            visit_count = client_profile.get("visit_count", 0)
 
-            if is_future_appointment:
-                # Klient ma zarezerwowaną przyszłą wizytę
-                crm_hint = f"\n\nINFO O KLIENCIE (CRM):"
-                if past_visits > 0:
-                    crm_hint += f" Klient był u nas już {past_visits} raz/razy."
-                else:
-                    crm_hint += f" Klient jest nowy (jeszcze nie był)."
-                if last_seen_fmt:
-                    crm_hint += f" MA ZAREZERWOWANĄ WIZYTĘ na: {last_seen_fmt}."
-                crm_hint += f" Zaplanowana usługa: {last_svc}"
-                if last_stf_declined:
-                    crm_hint += f" u {last_stf_declined}"
-                crm_hint += "."
-                crm_hint += f"""
+            if upcoming:
+                # ── Nowy tryb: lista nadchodzących wizyt ──
+                past_count = max(0, visit_count - len(upcoming))
+                crm_hint = "\n\nINFO O KLIENCIE (CRM):"
+                crm_hint += f" Klient był u nas już {past_count} raz/razy." if past_count > 0 else " Klient jest nowy (jeszcze nie był)."
+
+                from polish_mappings import odmien_imie as _odmien
+                lines = []
+                for uv in upcoming[:3]:
+                    date_fmt, _ = _fmt_dt(uv.get("scheduled_at", ""))
+                    svc = uv.get("service", "")
+                    stf = uv.get("staff", "")
+                    stf_dec = _odmien(stf) if stf else ""
+                    line = f"→ {date_fmt}: {svc}"
+                    if stf_dec:
+                        line += f" u {stf_dec}"
+                    lines.append(line)
+
+                crm_hint += f"\n\nNADCHODZĄCE WIZYTY ({len(upcoming)}):\n" + "\n".join(lines)
+                crm_hint += """
+
+⚠️ WAŻNE — NADCHODZĄCE WIZYTY:
+Jeśli klient pyta o termin/wizytę: wymień WSZYSTKIE nadchodzące wizyty z listy powyżej.
+NIE mów "ostatnio był Pan u nas" o przyszłych wizytach.
+Jeśli pyta "kiedy byłem ostatnio?" — odpowiedz o przeszłych wizytach, ignorując nadchodzące."""
+
+            elif client_profile.get("last_service"):
+                # ── Stary tryb: pojedyncza last_seen ──
+                from polish_mappings import odmien_imie as _odmien
+                last_svc = client_profile["last_service"]
+                last_stf = client_profile.get("last_staff", "")
+                last_stf_declined = _odmien(last_stf) if last_stf else ""
+                last_seen = client_profile.get("last_seen", "")
+                last_seen_fmt = ""
+                is_future = False
+                if last_seen:
+                    last_seen_fmt, dt = _fmt_dt(last_seen)
+                    is_future = dt > _dt.now() if dt else False
+
+                past_visits = max(0, visit_count - 1) if is_future else visit_count
+
+                if is_future:
+                    crm_hint = "\n\nINFO O KLIENCIE (CRM):"
+                    crm_hint += f" Klient był u nas już {past_visits} raz/razy." if past_visits > 0 else " Klient jest nowy (jeszcze nie był)."
+                    crm_hint += f" MA ZAREZERWOWANĄ WIZYTĘ na: {last_seen_fmt}. Zaplanowana usługa: {last_svc}"
+                    if last_stf_declined:
+                        crm_hint += f" u {last_stf_declined}"
+                    crm_hint += "."
+                    crm_hint += f"""
 
 ⚠️ WAŻNE — PRZYSZŁA WIZYTA:
 Klient ma NADCHODZĄCĄ wizytę (jeszcze się nie odbyła).
@@ -386,26 +411,29 @@ Jeśli pyta o termin/wizytę:
 → Powiedz: "Ma Pan wizytę na {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
 → NIE mów "ostatnio był Pan u nas" — wizyta jest W PRZYSZŁOŚCI
 Jeśli pyta "kiedy byłem ostatnio?" i były poprzednie wizyty: odpowiedz o nich, ignorując przyszłą rezerwację."""
-            else:
-                # Klient był już u nas (przeszłe wizyty)
-                crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {visit_count} raz/razy."
-                if last_seen_fmt:
-                    crm_hint += f" Ostatnia wizyta: {last_seen_fmt}."
-                crm_hint += f" Ostatnio korzystał z: {last_svc}"
-                if last_stf_declined:
-                    crm_hint += f" u {last_stf_declined}"
-                crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
-                if last_stf_declined:
-                    crm_hint += f" u {last_stf_declined}?"
-                crm_hint += "'"
-                crm_hint += f"""
+                else:
+                    crm_hint = f"\n\nINFO O KLIENCIE (CRM): Klient był u nas już {visit_count} raz/razy."
+                    if last_seen_fmt:
+                        crm_hint += f" Ostatnia wizyta: {last_seen_fmt}."
+                    crm_hint += f" Ostatnio korzystał z: {last_svc}"
+                    if last_stf_declined:
+                        crm_hint += f" u {last_stf_declined}"
+                    crm_hint += f". Możesz ZAPROPONOWAĆ to samo przy rezerwacji, np.: 'Może znowu {last_svc}?"
+                    if last_stf_declined:
+                        crm_hint += f" u {last_stf_declined}?"
+                    crm_hint += "'"
+                    crm_hint += f"""
 
 ⚠️ PYTANIA O HISTORIĘ WIZYT:
 Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy byłem?" itp.:
 → Odpowiedz BEZPOŚREDNIO z danych CRM powyżej, jednym zdaniem
 → Np. "Ostatnio był Pan u nas {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
 → NIE pytaj o więcej szczegółów — masz wszystkie dane"""
-            role_extra += crm_hint
+            else:
+                crm_hint = ""
+
+            if crm_hint:
+                role_extra += crm_hint
 
         # Instrukcja o godzinach pracowników
         if staff:
