@@ -568,24 +568,51 @@ def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
     )
 
 async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
+    from flows_contact import save_and_confirm_message, create_contact_choice_node, create_collect_message_content_node
+
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
     has_transfer = transfer_enabled and transfer_number
 
     if has_transfer:
-        from flows_contact import create_contact_choice_node
         return (None, create_contact_choice_node(
             tenant,
             "Zmian ani odwołań samodzielnie nie obsługuję — mogę przekazać wiadomość właścicielowi lub połączyć bezpośrednio. Co Pan woli?"
         ))
-    else:
-        from flows_contact import create_collect_contact_name_node
-        # Przekazujemy pełny tekst jako intro_text — node odtworzy go przez pre_actions tts_say (1 raz)
-        return (None, create_collect_contact_name_node(
-            tenant,
-            "Zmian samodzielnie nie obsługuję, ale przekażę wiadomość właścicielowi. Na jakie imię?"
-        ))
+
+    # Bez transferu — wyślij informację o odwołaniu automatycznie, jeśli mamy dane wizyty
+    profile = flow_manager.state.get("client_profile") or {}
+    name = profile.get("name") or flow_manager.state.get("caller_phone") or "Klient"
+    service = profile.get("last_service", "")
+    staff = profile.get("last_staff", "")
+    last_seen = profile.get("last_seen", "")
+
+    if service and last_seen:
+        # Mamy dane wizyty — budujemy wiadomość automatycznie
+        try:
+            import re as _re
+            from datetime import datetime as _dt
+            dt_str = _re.sub(r'\.\d+Z?$', '', last_seen).replace('Z', '')
+            dt = _dt.fromisoformat(dt_str)
+            MONTHS = ["stycznia","lutego","marca","kwietnia","maja","czerwca",
+                      "lipca","sierpnia","września","października","listopada","grudnia"]
+            date_str = f"{dt.day} {MONTHS[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}"
+        except Exception:
+            date_str = last_seen
+
+        staff_part = f" u {staff}" if staff else ""
+        auto_message = f"Prośba o odwołanie wizyty: {service}{staff_part}, {date_str}."
+        return await save_and_confirm_message(
+            flow_manager, tenant, name, auto_message,
+            confirmation_text="Przekazałam prośbę o odwołanie — właściciel potwierdzi wkrótce. Miłego dnia!"
+        )
+
+    # Brak danych wizyty — zapytaj o treść (numer telefonu wystarczy jako identyfikator)
+    return (None, create_collect_message_content_node(
+        tenant,
+        "Zmian samodzielnie nie obsługuję, ale przekażę wiadomość właścicielowi. Co mam przekazać?"
+    ))
 
 # ==========================================
 # NODE: Czy coś jeszcze?
@@ -960,19 +987,21 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     asyncio.create_task(quick_hangup())
     return (None, create_end_node())
 
-def create_end_node(message_saved: bool = False) -> dict:
+def create_end_node(message_saved: bool = False, confirmation_text: str = None) -> dict:
     """
     Node końcowy.
     - Jeśli message_saved=True → mów potwierdzenie i kończyć
     - Jeśli message_saved=False → cichy (pożegnanie już było w handle_end_conversation)
+    - confirmation_text → opcjonalnie nadpisuje domyślny tekst potwierdzenia
     """
     if message_saved:
+        tts_text = confirmation_text or "Już przekazałam — właściciel odezwie się wkrótce. Miłego dnia!"
         # Wiadomość zapisana - powiedz potwierdzenie
         return {
             "name": "end",
             "respond_immediately": False,
             "pre_actions": [
-                {"type": "tts_say", "text": "Już przekazałam — odezwiemy się do Ciebie wkrótce. Miłego dnia!"}
+                {"type": "tts_say", "text": tts_text}
             ],
             "post_actions": [
                 {"type": "end_conversation"}

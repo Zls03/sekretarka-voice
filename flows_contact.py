@@ -389,7 +389,7 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     return await save_and_confirm_message(flow_manager, tenant, name, message)
 
 
-async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str):
+async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name: str, message: str, confirmation_text: str = None):
     """Zapisz wiadomość, wyślij email ze streszczeniem W TLE, potwierdź klientowi I ROZŁĄCZ"""
     from flows import create_end_node, send_message_email
     
@@ -434,7 +434,7 @@ async def save_and_confirm_message(flow_manager: FlowManager, tenant: dict, name
     asyncio.create_task(auto_hangup_after_message())
     
     return (f"Wiadomość przekazana. Właściciel oddzwoni najszybciej jak to możliwe.",
-        create_end_node(message_saved=True))
+        create_end_node(message_saved=True, confirmation_text=confirmation_text))
 # ============================================================================
 async def execute_transfer(flow_manager: FlowManager, tenant: dict):
     """Wykonaj transfer rozmowy do właściciela"""
