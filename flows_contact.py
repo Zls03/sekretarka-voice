@@ -334,7 +334,7 @@ def create_collect_message_content_node(tenant: dict, intro_text: str = None) ->
 Gdy klient podaje treść wiadomości → wywołaj set_contact_message z dokładnie tym co powiedział.
 Nawet jeśli wiadomość jest krótka lub zawiera wulgaryzmy — zapisz ją dosłownie.
 
-Gdy klient ODMAWIA zostawienia wiadomości (mówi: "nie chcę", "nie trzeba", "nieważne", "nie, dziękuję", "rezygnuję") → wywołaj end_conversation. NIE zapisuj odmowy jako wiadomości.
+Gdy klient ODMAWIA zostawienia wiadomości (mówi: "nie chcę", "nie trzeba", "nieważne", "nie, dziękuję", "rezygnuję") → wywołaj decline_message. NIE zapisuj odmowy jako wiadomości.
 Gdy klient się ŻEGNA ("do widzenia", "pa", "żegnaj") → wywołaj end_conversation.
 
 NIE odpowiadaj tekstem — TYLKO wywołaj jedną z funkcji.
@@ -342,10 +342,29 @@ ZAKAZ wywoływania end_conversation jednocześnie z set_contact_message — to w
         }],
         "functions": [
             set_contact_message_function(tenant),
+            _decline_message_function(tenant),
             _get_start_booking_function(),
             _get_end_conversation_function(),
         ]
     }
+
+def _decline_message_function(tenant: dict) -> FlowsFunctionSchema:
+    """Klient rezygnuje z zostawienia wiadomości"""
+    return FlowsFunctionSchema(
+        name="decline_message",
+        description="Klient NIE chce zostawiać wiadomości (mówi: nie chcę, nie trzeba, nieważne, rezygnuję)",
+        properties={},
+        required=[],
+        handler=lambda args, fm: handle_decline_message(args, fm, tenant),
+    )
+
+
+async def handle_decline_message(args: dict, flow_manager: FlowManager, tenant: dict):
+    """Klient zrezygnował — wróć do głównego node'a z pytaniem czy może pomóc w czymś jeszcze"""
+    from flows import create_anything_else_node
+    logger.info("📝 Klient zrezygnował z wiadomości — powrót do anything_else")
+    return (None, create_anything_else_node(tenant))
+
 
 def set_contact_message_function(tenant: dict) -> FlowsFunctionSchema:
     """Zapisz treść wiadomości"""
@@ -380,8 +399,8 @@ async def handle_set_contact_message(args: dict, flow_manager: FlowManager, tena
     is_meta    = any(t in msg_lower for t in meta_tokens)
     if is_refusal or is_meta:
         logger.info(f"📝 Odmowa/meta w set_contact_message — nie zapisuję: '{message[:60]}'")
-        from flows import create_end_node
-        return (None, create_end_node(message_saved=False))
+        from flows import create_anything_else_node
+        return (None, create_anything_else_node(tenant))
 
     caller_phone = flow_manager.state.get("caller_phone", "")
     name = flow_manager.state.get("contact_name") or caller_phone or "Nieznany"
