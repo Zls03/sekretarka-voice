@@ -161,12 +161,13 @@ async def handle_contact_owner(args: dict, flow_manager: FlowManager, tenant: di
 # NODE: Wybór - wiadomość czy połączenie (gdy transfer dostępny)
 # ============================================================================
 
-def create_contact_choice_node(tenant: dict) -> dict:
+def create_contact_choice_node(tenant: dict, intro_text: str = None) -> dict:
     """Pytanie o wybór - DWIE osobne funkcje (prostsze dla GPT)"""
+    tts_text = intro_text if intro_text else "Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Wiadomość czy bezpośrednie połączenie?"
     return {
         "name": "contact_choice",
         "pre_actions": [
-            {"type": "tts_say", "text": "Mogę przekazać wiadomość do właściciela lub połączyć bezpośrednio. Wiadomość czy bezpośrednie połączenie?"}
+            {"type": "tts_say", "text": tts_text}
         ],
         "respond_immediately": False,
         "role_messages": [{

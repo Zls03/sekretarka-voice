@@ -568,25 +568,24 @@ def manage_booking_function(tenant: dict) -> FlowsFunctionSchema:
     )
 
 async def handle_manage_booking(args: dict, flow_manager: FlowManager, tenant: dict):
-    from pipecat.frames.frames import TTSSpeakFrame
-    
     # Sprawdź czy transfer dostępny
     transfer_enabled = tenant.get("transfer_enabled", 0) == 1
     transfer_number = tenant.get("transfer_number", "")
     has_transfer = transfer_enabled and transfer_number
-    
+
     if has_transfer:
         from flows_contact import create_contact_choice_node
-        await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text="Zmian ani odwołań samodzielnie nie obsługuję. Przekazać wiadomość czy połączyć bezpośrednio?")
-        )
-        return (None, create_contact_choice_node(tenant))
+        return (None, create_contact_choice_node(
+            tenant,
+            "Zmian ani odwołań samodzielnie nie obsługuję — mogę przekazać wiadomość właścicielowi lub połączyć bezpośrednio. Co Pan woli?"
+        ))
     else:
         from flows_contact import create_collect_contact_name_node
-        await flow_manager.task.queue_frame(
-            TTSSpeakFrame(text="Zmian samodzielnie nie obsługuję, ale przekażę wiadomość. Na jakie imię?")
-        )
-        return (None, create_collect_contact_name_node(tenant))
+        # Przekazujemy pełny tekst jako intro_text — node odtworzy go przez pre_actions tts_say (1 raz)
+        return (None, create_collect_contact_name_node(
+            tenant,
+            "Zmian samodzielnie nie obsługuję, ale przekażę wiadomość właścicielowi. Na jakie imię?"
+        ))
 
 # ==========================================
 # NODE: Czy coś jeszcze?
