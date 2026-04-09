@@ -414,7 +414,6 @@ class FirstResponseFiller(FrameProcessor):
     
     FILLERS = [
         "już patrzę,",
-        "moment,",
         "już sprawdzam,",
     ]
     
