@@ -316,10 +316,12 @@ Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - start_booking → klient WYRAŹNIE chce się UMÓWIĆ na wizytę
+  ✅ "chcę się umówić do Moniki", "umówię się do Ani", "chciałbym wizytę u lekarza" → start_booking(staff_hint="Monika")
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
-- contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
-  (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem", "proszę kogoś z obsługi")
-  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska
+- contact_owner → klient chce ROZMAWIAĆ z człowiekiem — czyli POROZMAWIAĆ, NIE umówić się
+  (np. "chcę rozmawiać z właścicielem", "proszę połączyć z Moniką", "chcę z pracownikiem", "proszę kogoś z obsługi")
+  ⛔ NIE gdy klient mówi "umówić się do Moniki" — to booking, nie rozmowa!
+  → ZAWSZE wywołaj contact_owner gdy klient prosi o ROZMOWĘ z człowiekiem — niezależnie od stanowiska
   ⛔ NIE używaj gdy klient opisuje ból, dolegliwość lub problem techniczny → wtedy start_lead_collection{_lead_block}
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
@@ -500,7 +502,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
     if booking_enabled:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/usług → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z usługami.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc z wizytą?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu w CENNIKU → powiedz "Nie mam szczegółowych informacji o tej usłudze, ale chętnie umówię wizytę"'
-        zasada_wiele_osob = '- Jeśli klient pyta o umówienie WIELU osób naraz → "Rezerwacje przyjmuję pojedynczo. Umówmy najpierw jedną wizytę, a potem możemy umówić kolejną."'
+        zasada_wiele_osob = '- Jeśli klient pyta o umówienie WIELU osób naraz (np. "ja i mąż", "dla dwóch osób") → "Rezerwacje przyjmuję pojedynczo. Umówmy najpierw jedną wizytę, a potem możemy umówić kolejną."\n- ✅ "umówić się do Moniki / do Ani / do lekarza" = JEDNA rezerwacja → wywołaj start_booking z staff_hint="[imię]" — NIE stosuj zasady wielu osób'
         przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Czy umówić wizytę?", "Coś jeszcze?"'
     else:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/oferty → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z informacjami o firmie.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc w czymś innym?")'

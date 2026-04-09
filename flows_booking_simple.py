@@ -1343,7 +1343,7 @@ def start_booking_function_simple() -> FlowsFunctionSchema:
             },
             "staff_hint": {
                 "type": "string",
-                "description": "Pracownik jeśli klient go podał (np. 'Ania', 'do Ani'). Null jeśli nie podał."
+                "description": "Pracownik jeśli klient go podał — podaj MIANOWNIK imienia (np. 'do Moniki' → 'Monika', 'do Ani' → 'Ania', 'u Pawła' → 'Paweł'). Null jeśli klient nie wspomniał pracownika."
             },
             "date_hint": {
                 "type": "string",
