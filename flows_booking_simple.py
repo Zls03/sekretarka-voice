@@ -121,16 +121,9 @@ def format_availability_message(available_days: List[Dict]) -> str:
     first = available_days[0]
     date_str = format_date_polish(first["date"])
     slots = first["slots"]
-    slots_text = _slots_summary(slots)
+    first_slot = format_hour_polish(slots[0])
 
-    if len(available_days) > 1:
-        other_dates = natural_list([format_date_polish(d["date"]) for d in available_days[1:]])
-        return f"Najbliższy wolny termin to {date_str}: {slots_text}. Wolne też {other_dates}. Który dzień?"
-    else:
-        if len(slots) == 1:
-            return f"Najbliższy wolny termin to {date_str} o {format_hour_polish(slots[0])}. Zapisać?"
-        else:
-            return f"W {date_str} są wolne terminy: {slots_text}. Na którą godzinę?"
+    return f"Najbliższy wolny termin to {date_str} o {first_slot}. Zapisać, czy wolisz inny termin?"
 
 
 # ============================================================================
@@ -415,7 +408,8 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         availability_keywords = [
             "kiedy wolne", "wolny termin", "wolne terminy", "na jaki", "na jaki dzień",
             "kiedy można", "kiedy dostępn", "jaki termin", "najbliższy termin",
-            "najszybciej", "jest wolny", "są wolne", "macie wolne"
+            "najszybciej", "jest wolny", "są wolne", "macie wolne",
+            "najbliższ", "jakie terminy", "wolne godziny", "kiedy wolna",
         ]
         
         is_availability_question = any(kw in question_lower for kw in availability_keywords)
@@ -436,12 +430,11 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             )
 
             if available_days:
+                # Zawsze zapisz pierwszy slot jako pending — gdy user powie "tak/ok/pasuje"
+                # bez podawania daty/godziny, handler użyje tych wartości
+                state["_pending_date"] = available_days[0]["date"].strftime("%Y-%m-%d")
+                state["_pending_time"] = available_days[0]["slots"][0]
                 message = format_availability_message(available_days)
-                # Jeśli jest tylko 1 dzień — bot pyta "Pasuje?" o konkretny slot,
-                # zapisz go jako pending żeby user nie musiał powtarzać po potwierdzeniu
-                if len(available_days) == 1:
-                    state["_pending_date"] = available_days[0]["date"].strftime("%Y-%m-%d")
-                    state["_pending_time"] = available_days[0]["slots"][0]
                 return await _respond(message, flow_manager, tenant, state=state)
             else:
                 return await _respond(
@@ -614,7 +607,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                         first = available_days[0]
                         state["_pending_date"] = first["date"].strftime("%Y-%m-%d")
                         state["_pending_time"] = first["slots"][0]
-                        suggestion = f"Najbliższy dostępny termin u {staff_name} to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Zapisać?"
+                        suggestion = f"Najbliższy dostępny termin u {staff_name} to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Zapisać, czy wolisz inny termin?"
                         return await _respond(suggestion, flow_manager, tenant, state=state)
                     else:
                         return await _respond(constraint_msg, flow_manager, tenant, state=state)
@@ -1439,7 +1432,7 @@ async def _suggest_nearest_slot_start(tenant: Dict, staff: Dict, service: Dict, 
         first_slot = format_hour_polish(first_day["slots"][0])
         booking["_pending_date"] = first_day["date"].strftime("%Y-%m-%d")
         booking["_pending_time"] = first_day["slots"][0]
-        return f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. Zapisać?"
+        return f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. Zapisać, czy wolisz inny termin?"
     else:
         max_days = int(staff.get("max_booking_days") or 14)
         return (f"U {staff_name} w najbliższych {max_days} dniach nie ma wolnych terminów. "

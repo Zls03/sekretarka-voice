@@ -646,7 +646,7 @@ async def _send_lead_report_email(tenant: dict, caller_phone: str, problem: str,
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #1a1a2e; color: white; padding: 20px 25px; border-radius: 12px 12px 0 0;">
-            <h2 style="margin: 0; font-size: 18px;">🔧 Nowe zgłoszenie serwisowe</h2>
+            <h2 style="margin: 0; font-size: 18px;">Nowe zgłoszenie</h2>
             <p style="margin: 5px 0 0; opacity: 0.8; font-size: 13px;">{business_name} • {date_str}</p>
         </div>
         <div style="background: white; padding: 25px; border: 1px solid #e5e7eb; border-top: none;">
