@@ -274,7 +274,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     
     # Różne funkcje i instrukcje w zależności od trybu
     if booking_enabled:
-        from flows_contact import submit_lead_function as _submit_lead_fn
+        from flows_contact import start_lead_collection_function as _start_lead_fn
         functions = [
             start_booking_function(),
             check_availability_function(tenant),
@@ -283,35 +283,24 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
             end_conversation_function(),
         ]
         if lead_mode:
-            functions.insert(2, _submit_lead_fn(tenant))
+            functions.insert(2, _start_lead_fn(tenant))
 
         # Buduj blok lead do task_content
         _lead_block = ""
         if lead_mode:
-            _triggers = lead_triggers or "klient opisuje problem, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej pracy"
-            _collection = lead_collection or "opis problemu i ewentualne szczegóły (marka/model, adres, od kiedy)"
+            _triggers = lead_triggers or "klient opisuje problem, dolegliwość, ból, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej pracy"
             _urgency_rule = ""
             if lead_urgency_mode:
                 _urgency_kw = lead_urgency_text or "awaria, nie działa, stoi, wyciek, brak prądu, brak wody, pilne"
                 _urgency_rule = f"\n  Pilność HIGH gdy klient mówi: {_urgency_kw} → ustaw urgency=high"
-            # Rozbij _collection na listę pól do zebrania
-            _collection_items = [x.strip() for x in _collection.replace(';', ',').split(',') if x.strip()]
-            _collection_list = "\n     • " + "\n     • ".join(_collection_items) if _collection_items else f"\n     • {_collection}"
 
             _lead_block = f"""
-- submit_lead → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
+- start_lead_collection → klient opisuje PROBLEM lub SPRAWĘ wymagającą kontaktu ze specjalistą:
   Kiedy wywołać: {_triggers}{_urgency_rule}
-  ZBIERANIE DANYCH — sekwencyjnie, jedno pytanie na raz:
-  1. Jeśli klient NIE opisał jeszcze co konkretnie się dzieje → zapytaj naturalnie o szczegóły
-     Jeśli klient opisał sytuację choćby ogólnie → uznaj to za opis i idź do kroku 2
-  2. Zbierz następujące informacje (JEDNO pytanie na turę):{_collection_list}
-     - Sprawdź co klient już powiedział i pytaj tylko o to czego brakuje
-     - Jeśli klient podał kilka rzeczy naraz → wyciągnij wszystkie i idź dalej
-     - Jeśli klient odmawia lub nie wie → pomiń i idź dalej
-  3. Gdy masz opis + zebrane informacje → wywołaj submit_lead
-  ⛔ NIGDY nie łącz 2 pytań w jednym zdaniu — pytaj o JEDNĄ rzecz na raz
-  NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
-  NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
+  Wywołaj NATYCHMIAST gdy klient zaczyna opisywać problem — przekaż w 'description' co klient powiedział
+  System sam zbierze resztę danych — NIE pytaj samodzielnie przed wywołaniem funkcji
+  ⛔ NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
+  ⛔ NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner"""
 
         task_content = f"""Klient USŁYSZAŁ już powitanie "Dzień dobry, {business_name}...".
 NIE witaj się ponownie - NIE mów "dzień dobry"! Odpowiadaj od razu na temat.
@@ -330,7 +319,8 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
 - contact_owner → klient chce ROZMAWIAĆ z jakąkolwiek osobą z firmy LUB zostawić wiadomość
   (np. "chcę z właścicielem", "mogę z Moniką?", "połącz z fryzjerką", "chcę z pracownikiem", "proszę kogoś z obsługi")
-  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska{_lead_block}
+  → ZAWSZE wywołaj contact_owner gdy klient prosi o rozmowę z człowiekiem — niezależnie od stanowiska
+  ⛔ NIE używaj gdy klient opisuje ból, dolegliwość lub problem techniczny → wtedy start_lead_collection{_lead_block}
 - end_conversation → klient się ŻEGNA (do widzenia, dziękuję, to wszystko)"""
 
         # Pełny kontekst biznesowy (cennik, FAQ, adres, godziny, additional_info)

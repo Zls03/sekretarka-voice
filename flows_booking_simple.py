@@ -255,11 +255,11 @@ def book_appointment_function(tenant: Dict) -> FlowsFunctionSchema:
             },
             "date_text": {
                 "type": "string",
-                "description": "Data DOKŁADNIE jak klient powiedział (np. 'jutro', 'w piątek') lub null"
+                "description": "Data w formacie YYYY-MM-DD. Przetłumacz co klient powiedział na ISO używając daty DZIŚ z role_messages. Np. 'jutro' → jutrzejsza data, 'w piątek' → data najbliższego piątku, 'dwudziestego maja' → '2026-05-20', '3 maja' → '2026-05-03'. Null jeśli klient nie podał daty."
             },
             "time_text": {
                 "type": "string",
-                "description": "Godzina w formacie HH:MM (np. '11:30', '14:00'). Zamień słowa klienta na cyfry: 'na trzynastą' → '13:00', 'wpół do dwunastej' → '11:30', 'jedenasta trzydzieści' → '11:30', 'czternasta zero' → '14:00'"
+                "description": "Godzina w formacie HH:MM (np. '11:30', '14:00'). Zamień słowa klienta na cyfry: 'na trzynastą' → '13:00', 'wpół do dwunastej' → '11:30', 'jedenasta trzydzieści' → '11:30', 'czternasta zero' → '14:00', 'kurnasta' → '15:00'. Null jeśli klient nie podał godziny."
             },
             "customer_name": {
                 "type": "string",
@@ -583,8 +583,9 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             # Sprawdź czy salon otwarty
             weekday = parsed_date.weekday()
             if get_opening_hours(tenant, weekday) is None:
+                date_label = format_date_polish(parsed_date).capitalize()
                 return await _respond(
-                    f"W {POLISH_DAYS[weekday]} jesteśmy zamknięci. Proszę wybrać inny dzień.",
+                    f"{date_label} to {POLISH_DAYS[weekday]} — jesteśmy zamknięci. Na kiedy?",
                     flow_manager, tenant, state=state)
 
             # Walidacja min/max ograniczeń pracownika — pomijamy gdy data z naszego systemu
@@ -599,18 +600,28 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                     except Exception:
                         pass
                     staff_name = odmien_imie(state["staff"]["name"])
+                    max_days_val = int(state["staff"].get("max_booking_days") or 14)
                     available_days = await get_next_available_days(
                         tenant, state["staff"], state["service"],
-                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=1
+                        max_days=max_days_val, limit=1
                     )
+                    date_label = format_date_polish(parsed_date)
                     if available_days:
                         first = available_days[0]
                         state["_pending_date"] = first["date"].strftime("%Y-%m-%d")
                         state["_pending_time"] = first["slots"][0]
-                        suggestion = f"Najbliższy dostępny termin u {staff_name} to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Zapisać, czy wolisz inny termin?"
+                        suggestion = (
+                            f"Rezerwacje przyjmujemy maksymalnie {max_days_val} dni naprzód — "
+                            f"{date_label} to za daleko. Najbliższy wolny termin u {staff_name} "
+                            f"to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Pasuje?"
+                        )
                         return await _respond(suggestion, flow_manager, tenant, state=state)
                     else:
-                        return await _respond(constraint_msg, flow_manager, tenant, state=state)
+                        return await _respond(
+                            f"Rezerwacje przyjmujemy maksymalnie {max_days_val} dni naprzód — "
+                            f"{date_label} to za daleko. Niestety w tym oknie nie ma wolnych terminów.",
+                            flow_manager, tenant, state=state
+                        )
             
             # 🔥 WALIDACJA SLOTÓW - świeże dane!
             try:
@@ -650,11 +661,21 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             
             state["date"] = parsed_date
             state["available_slots"] = slots
+            state.pop("_retry_date", None)
             logger.info(f"✅ Date: {parsed_date.strftime('%Y-%m-%d')}, slots: {len(slots)}")
         else:
+            state["_retry_date"] = state.get("_retry_date", 0) + 1
+            if state["_retry_date"] >= 3:
+                # Auto-reset daty, zachowaj service/staff/name
+                for k in ("date", "time", "available_slots", "_pending_date", "_pending_time", "_retry_date", "_last_date_text"):
+                    state.pop(k, None)
+                flow_manager.state["booking"] = state
+                return await _respond(
+                    "Przepraszam za kłopot. Na jaki dzień szukamy terminu? Proszę powiedzieć np. 'jutro' lub '15 maja'.",
+                    flow_manager, tenant, state=state
+                )
             return await _respond(
-                f"Nie rozumiem daty '{date_text}'. "
-                f"Proszę powiedzieć np. 'jutro', 'w piątek', '15 lutego'.",
+                "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
                 flow_manager, tenant, state=state)
     
     if "date" not in state:
@@ -748,6 +769,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             
             if is_available:
                 state["time"] = parsed_time
+                state.pop("_retry_time", None)
                 time_just_set = True
                 state["available_slots"] = current_slots  # Odśwież listę
                 logger.info(f"✅ Time: {parsed_time}")
@@ -806,9 +828,19 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                             "Na ten dzień nie ma już wolnych terminów i w najbliższych dniach też jest pełny grafik.",
                             flow_manager, tenant, state=state)
         else:
+            state["_retry_time"] = state.get("_retry_time", 0) + 1
+            if state["_retry_time"] >= 3:
+                for k in ("time", "_pending_time", "_retry_time"):
+                    state.pop(k, None)
+                flow_manager.state["booking"] = state
+                slots_text = _slots_summary(state.get("available_slots", []))
+                return await _respond(
+                    f"Przepraszam za kłopot. Dostępne godziny: {slots_text}. Którą wybrać?",
+                    flow_manager, tenant, state=state
+                )
             slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
             return await _respond(
-                f"Nie rozumiem godziny '{time_text}'. Wolne są: {slots_text}.",
+                f"Nie rozumiem godziny. Dostępne są: {slots_text}.",
                 flow_manager, tenant, state=state)
     
     if "time" not in state:
@@ -1222,6 +1254,11 @@ def create_booking_node(tenant: Dict) -> Dict:
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
+    tomorrow_iso = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    day_after_iso = (now + timedelta(days=2)).strftime('%Y-%m-%d')
+    # Najbliższy piątek
+    days_to_friday = (4 - now.weekday()) % 7 or 7
+    next_friday_iso = (now + timedelta(days=days_to_friday)).strftime('%Y-%m-%d')
 
     return {
         "name": "booking_simple",
@@ -1258,22 +1295,31 @@ Przykłady dopasowania:
 - "strzyżenie z brodą" → service="Strzyżenie plus broda"  
 - "do Ani" → staff="Ania"
 - "do Anny" → staff="Ania"
-- "jutro" → date_text="jutro"
+DATY — zawsze przetłumacz na YYYY-MM-DD (DZIŚ={now.strftime('%Y-%m-%d')}):
+- "jutro" → date_text="{tomorrow_iso}"
+- "pojutrze" → date_text="{day_after_iso}"
+- "w piątek" → date_text="{next_friday_iso}"
+- "dwudziestego maja" → date_text="2026-05-20"
+- "3 maja" → date_text="2026-05-03"
+- "za tydzień" → date_text="{(now + timedelta(days=7)).strftime('%Y-%m-%d')}"
+
+GODZINY — zawsze przetłumacz na HH:MM:
 - "na trzynastą" → time_text="13:00"
 - "na jedenastą trzydzieści" → time_text="11:30"
 - "wpół do dwunastej" → time_text="11:30"
 - "czternasta zero" → time_text="14:00"
 - "o piętnastej trzydzieści" → time_text="15:30"
+- "kurnasta" → time_text="15:00"
+
+INNE:
 - "tak, potwierdzam" → confirmation="yes"
 - "nie, dziękuję" → confirmation="no"
 - "chcę zmienić" → confirmation="change"
 - "kiedy macie wolne?" → question="kiedy macie wolne?"
-- "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="jutro", time_text="14:00"
-- "do Ani w piątek rano" → staff="Ania", date_text="w piątek", time_text="rano"
-- "tak pasuje" (po propozycji "piątek o 10:00") → date_text="piątek", time_text="10:00"
-- "dobra, ten termin" → date_text=<ostatnio wymieniona data>, time_text=<ostatnio wymieniona godzina>
-WAŻNE: Gdy klient akceptuje zaproponowany termin (np. "tak", "pasuje", "dobra") → wpisz zaproponowaną datę i godzinę w pola date_text i time_text.
-WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie tylko jedno! """
+- "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="{tomorrow_iso}", time_text="14:00"
+- "tak pasuje" (po propozycji terminu) → date_text=<ostatnio wymieniona data ISO>, time_text=<ostatnio wymieniona godzina HH:MM>
+WAŻNE: Gdy klient akceptuje zaproponowany termin (np. "tak", "pasuje", "dobra") → wpisz zaproponowaną datę ISO i godzinę HH:MM.
+WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie tylko jedno!"""
         }],
         
         "functions": [

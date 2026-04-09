@@ -560,6 +560,86 @@ def _get_start_booking_function():
 # LEAD QUALIFICATION — zbieranie zgłoszeń serwisowych
 # ============================================================================
 
+def start_lead_collection_function(tenant: dict) -> FlowsFunctionSchema:
+    """Trigger: LLM wykrywa temat leadowy i przeskakuje do dedykowanego node"""
+    lead_triggers = tenant.get("lead_triggers", "").strip()
+    _triggers = lead_triggers or "klient opisuje problem, dolegliwość, ból, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej pracy"
+    lead_urgency_mode = tenant.get("lead_urgency_mode", 0) == 1
+    lead_urgency_text = tenant.get("lead_urgency_text", "").strip()
+    _urgency_rule = ""
+    if lead_urgency_mode:
+        _urgency_kw = lead_urgency_text or "awaria, nie działa, stoi, wyciek, brak prądu, brak wody, pilne"
+        _urgency_rule = f" Pilność HIGH gdy klient mówi: {_urgency_kw}."
+
+    return FlowsFunctionSchema(
+        name="start_lead_collection",
+        description=f"""Klient opisuje problem wymagający kontaktu ze specjalistą.
+Użyj gdy: {_triggers}.{_urgency_rule}
+⛔ NIE używaj gdy klient chce standardowej rezerwacji z cennika → wtedy start_booking
+⛔ NIE używaj gdy klient prosi o rozmowę z człowiekiem → wtedy contact_owner""",
+        properties={
+            "description": {
+                "type": "string",
+                "description": "Co klient opisał do tej pory (opis problemu/dolegliwości)"
+            },
+            "urgency": {
+                "type": "string",
+                "enum": ["high", "normal"],
+                "description": "high = awaria/pilne/nie działa wcale, normal = standardowe zgłoszenie"
+            },
+        },
+        required=[],
+        handler=lambda args, fm: handle_start_lead_collection(args, fm, tenant),
+    )
+
+
+async def handle_start_lead_collection(args: dict, flow_manager: FlowManager, tenant: dict):
+    description = args.get("description", "").strip()
+    urgency = args.get("urgency", "normal")
+    flow_manager.state["lead_description"] = description
+    flow_manager.state["lead_urgency"] = urgency
+    logger.info(f"🔧 Lead collection started: urgency={urgency}, desc={description[:60]}")
+    return (None, create_collect_lead_node(tenant, description, urgency))
+
+
+def create_collect_lead_node(tenant: dict, initial_description: str = "", urgency: str = "normal") -> dict:
+    """Dedykowany node do zbierania danych leadowych — bez contact_owner"""
+    lead_collection = tenant.get("lead_collection", "").strip()
+    _collection = lead_collection or "opis problemu i ewentualne szczegóły (od kiedy, okoliczności)"
+    _collection_items = [x.strip() for x in _collection.replace(';', ',').split(',') if x.strip()]
+    _collection_list = "\n- " + "\n- ".join(_collection_items) if _collection_items else f"\n- {_collection}"
+
+    context_part = f"\nKlient opisał już: {initial_description}" if initial_description else ""
+    urgency_note = "\n⚠️ Klient sygnalizuje pilność — zbierz dane szybko." if urgency == "high" else ""
+
+    return {
+        "name": "collect_lead",
+        "respond_immediately": False,
+        "role_messages": [{
+            "role": "system",
+            "content": f"Zbierasz zgłoszenie od klienta wymagające kontaktu ze specjalistą.{context_part}"
+        }],
+        "task_messages": [{
+            "role": "system",
+            "content": f"""Klient opisał sprawę wymagającą kontaktu ze specjalistą.{context_part}{urgency_note}
+
+Zbierz brakujące informacje (JEDNO pytanie na turę):{_collection_list}
+
+- Sprawdź co klient już powiedział i pytaj TYLKO o to czego brakuje
+- Jeśli klient podał kilka rzeczy naraz → wyciągnij wszystkie i idź dalej
+- Jeśli klient odmawia lub nie wie → pomiń i idź dalej
+- Gdy masz wystarczające dane → wywołaj submit_lead
+⛔ NIE zadawaj dwóch pytań naraz
+⛔ NIE wracaj do pytań już zadanych
+Gdy klient WYRAŹNIE rezygnuje ("nie chcę", "nieważne", "zapomnij o tym") → wywołaj end_conversation."""
+        }],
+        "functions": [
+            submit_lead_function(tenant),
+            _get_end_conversation_function(),
+        ]
+    }
+
+
 def submit_lead_function(tenant: dict) -> FlowsFunctionSchema:
     """Klient opisuje problem wymagający kontaktu ze specjalistą"""
     return FlowsFunctionSchema(
@@ -711,4 +791,6 @@ __all__ = [
     "create_collect_contact_name_node",
     "create_collect_message_content_node",
     "submit_lead_function",
+    "start_lead_collection_function",
+    "create_collect_lead_node",
 ]
