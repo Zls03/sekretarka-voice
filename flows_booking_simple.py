@@ -545,10 +545,14 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
     
         # === 3. WALIDACJA DATY ===
     # Użyj date_text z aktualnego wywołania LUB z pending (zapisanego wcześniej)
+    _date_from_system = False  # Domyślnie: data od klienta → waliduj
     if not date_text:
-        date_text = state.pop("_pending_date", None)
+        pending = state.pop("_pending_date", None)
+        if pending:
+            date_text = pending
+            _date_from_system = True  # Data pochodzi z naszego systemu → była już sprawdzona
     elif "_pending_date" in state:
-        state.pop("_pending_date")  # Wyczyść pending bo mamy świeżą datę
+        state.pop("_pending_date")  # Wyczyść pending bo mamy świeżą datę od klienta
 
     if date_text and ("date" not in state or date_text != state.get("_last_date_text")):
         state["_last_date_text"] = date_text
@@ -557,12 +561,10 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         state.pop("available_slots", None)
 
         date_text_clean = preprocess_date_text(date_text)
-        logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}'")
+        logger.info(f"📅 Date preprocessing: '{date_text}' → '{date_text_clean}' | from_system={_date_from_system}")
 
         # ISO format (YYYY-MM-DD) — parsuj bezpośrednio, dateparser z pl może dać zły wynik
-        # Flaga: data pochodzi z naszego systemu (_pending_date) → była już sprawdzona przy propozycji
         _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
-        _date_from_system = bool(_iso)  # ISO = z naszego systemu, nie od klienta
         if _iso:
             parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3)))
         else:
