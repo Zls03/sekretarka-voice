@@ -160,7 +160,8 @@ def create_tts_service(tenant: dict):
         from pipecat.services.google.tts import GoogleTTSService
         import tempfile
         google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
-        logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice}")
+        speaking_rate = float(tenant.get('speaking_rate') or 1.06)
+        logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice} | rate: {speaking_rate}")
         creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         creds_dict = json.loads(creds_json)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -173,7 +174,7 @@ def create_tts_service(tenant: dict):
                 sample_rate=8000,
                 params=GoogleTTSService.InputParams(
                     language=Language.PL_PL,
-                    speaking_rate=1.07,
+                    speaking_rate=speaking_rate,
                 ),
             )
         finally:
@@ -183,7 +184,8 @@ def create_tts_service(tenant: dict):
 
     # ElevenLabs (domyślny)
     voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
-    logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id}")
+    speaking_rate = float(tenant.get('speaking_rate') or 1.1)
+    logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id} | speed: {speaking_rate}")
     tts = ElevenLabsTTSService(
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=voice_id,
@@ -191,7 +193,7 @@ def create_tts_service(tenant: dict):
         output_format="pcm_16000",
         stability=0.6,
         similarity_boost=0.75,
-        speed=1.1,
+        speed=speaking_rate,
     )
     tts.add_text_transformer(_expand_abbreviations)
     return tts
