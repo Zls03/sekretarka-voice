@@ -1377,13 +1377,14 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
             booking["service"] = found
             logger.info(f"✅ Start: pre-filled service={found['name']}")
 
-    # Pre-fill pracownika (tylko jeśli mamy usługę)
+    # Pre-fill pracownika — nawet bez usługi, żeby filtrować listę usług
     staff_hint = args.get("staff_hint")
-    if staff_hint and "service" in booking:
+    if staff_hint:
         found_staff = fuzzy_match_staff(staff_hint, staff_list)
-        if found_staff and staff_can_do_service(found_staff, booking["service"]):
-            booking["staff"] = found_staff
-            logger.info(f"✅ Start: pre-filled staff={found_staff['name']}")
+        if found_staff:
+            if "service" not in booking or staff_can_do_service(found_staff, booking["service"]):
+                booking["staff"] = found_staff
+                logger.info(f"✅ Start: pre-filled staff={found_staff['name']}")
 
     # Pre-fill daty i godziny jako pending (wymagają async walidacji)
     if args.get("date_hint") and "date" not in booking:
@@ -1398,7 +1399,12 @@ async def handle_start_booking_simple(args: Dict, flow_manager: FlowManager):
     # Odpowiedź zależna od tego co już wiemy
     from pipecat.frames.frames import TTSSpeakFrame
     if "service" not in booking:
-        names = natural_list([s["name"] for s in services])
+        if "staff" in booking:
+            # Klient podał pracownika — pokaż tylko jego usługi
+            staff_services = [s for s in services if staff_can_do_service(booking["staff"], s)]
+            names = natural_list([s["name"] for s in staff_services]) if staff_services else natural_list([s["name"] for s in services])
+        else:
+            names = natural_list([s["name"] for s in services])
         msg = f"Chętnie pomogę umówić wizytę. Na jaką usługę? Mamy {names}."
     elif "staff" not in booking:
         available = [s for s in staff_list if staff_can_do_service(s, booking["service"])]
