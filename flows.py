@@ -19,10 +19,12 @@ async def play_snippet(flow_manager, category: str):
     try:
         from pipecat.frames.frames import TTSSpeakFrame
         
-        if category == "checking":
+        if category == "checking_calendar":
+            phrases = ["Już patrzę w kalendarz.", "Zerknę w grafik.", "Sprawdzam dostępne terminy."]
+        elif category == "checking":
             phrases = ["Chwileczkę.", "Moment, sprawdzam.", "Już sprawdzam."]
         else:  # saving
-            phrases = ["Już zapisuję.", "Zapisuję termin.", "Rezerwuję."]
+            phrases = ["Wpisuję do kalendarza.", "Zapisuję.", "Rezerwuję."]
         
         phrase = random.choice(phrases)
         await flow_manager.task.queue_frame(TTSSpeakFrame(text=phrase))
@@ -129,7 +131,7 @@ async def handle_check_availability(args: dict, flow_manager: FlowManager, tenan
     # Sprawdź kalendarz
     try:
         from flows import play_snippet
-        await play_snippet(flow_manager, "checking")
+        await play_snippet(flow_manager, "checking_calendar")
     except:
         pass
     
@@ -311,8 +313,9 @@ Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto 
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
 ⚠️ PO KAŻDEJ ODPOWIEDZI:
-Zawsze kończ KRÓTKIM pytaniem, np: "Czy mogę w czymś jeszcze pomóc?", "Czy to wszystko?", "Mogę jeszcze doradzić?"
-Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
+Zawsze kończ KRÓTKIM pytaniem. Używaj naturalnych, niepowtarzalnych wariantów:
+"Coś jeszcze?", "Mogę jeszcze coś sprawdzić?", "W czymś jeszcze pomóc?", "Coś do wyjaśnienia?"
+NIE używaj "Czy mogę w czymś jeszcze pomóc?" — za formalne. Używaj RÓŻNYCH zakończeń za każdym razem!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - start_booking → klient WYRAŹNIE chce się UMÓWIĆ na wizytę
@@ -485,8 +488,9 @@ Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?"
 → ODPOWIEDZ BEZPOŚREDNIO z informacji które masz!
 
 ⚠️ PO KAŻDEJ ODPOWIEDZI:
-Zawsze kończ KRÓTKIM pytaniem, np: "Czy mogę w czymś jeszcze pomóc?", "Czy to wszystko?", "Mogę jeszcze doradzić?"
-Używaj RÓŻNYCH zakończeń - nie powtarzaj tego samego dwa razy pod rząd!
+Zawsze kończ KRÓTKIM pytaniem. Używaj naturalnych, niepowtarzalnych wariantów:
+"Coś jeszcze?", "Coś do wyjaśnienia?", "Mogę pomóc w czymś innym?", "Coś jeszcze na temat oferty?"
+NIE używaj "Czy mogę w czymś jeszcze pomóc?" — za formalne. Używaj RÓŻNYCH zakończeń za każdym razem!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
 - manage_booking → klient chce PRZEŁOŻYĆ lub ODWOŁAĆ wizytę
@@ -625,7 +629,7 @@ def create_anything_else_node(tenant: dict) -> dict:
             "content": f"""Jesteś {assistant_name}, {g['role_noun']} {business_name}.
 Mów KRÓTKO, naturalnie, {g['gender_short']}. Używaj formy bezpłciowej — NIE pisz Pan/Pani."."""
         }],
-        "task_messages": [{"role": "system", "content": "Klient właśnie usłyszał potwierdzenie. NIE powtarzaj szczegółów wizyty. Zapytaj TYLKO: 'Czy mogę jeszcze w czymś pomóc?' lub podobne KRÓTKIE pytanie."}],
+        "task_messages": [{"role": "system", "content": "Klient właśnie zarezerwował wizytę. Zapytaj JEDNYM krótkim zdaniem, np: 'Coś jeszcze?', 'Umówić kogoś bliskiego?', 'Mogę jeszcze coś sprawdzić?'. NIE powtarzaj szczegółów wizyty. Mów naturalnie, bez formalizmów."}],
         "functions": [
             need_more_help_function(tenant),
             contact_owner_function(tenant),
@@ -914,17 +918,33 @@ def end_conversation_function() -> FlowsFunctionSchema:
     )
 
 
+_GOODBYES_BOOKING = [
+    "Wszystko gotowe. Do zobaczenia!",
+    "Super, czekamy. Miłego dnia!",
+    "Zapisane. Do zobaczenia!",
+]
+
+_GOODBYES_GENERIC = [
+    "Miłego dnia!",
+    "Do zobaczenia!",
+    "Wszystkiego dobrego!",
+    "Miłego dnia, do widzenia!",
+    "Do usłyszenia!",
+]
+
+
 async def handle_end_conversation(args: dict, flow_manager: FlowManager):
     """Handler: zakończenie rozmowy - z ochroną potwierdzonej rezerwacji"""
-    
+
     # 🛡️ OCHRONA 1: Jeśli rezerwacja POTWIERDZONA - nie anuluj!
     if flow_manager.state.get("booking_confirmed"):
         logger.info("✅ Booking was confirmed - clean exit (no cancel)")
         flow_manager.state["conversation_ended"] = True
-        
+
         from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-        await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
-        
+        goodbye = random.choice(_GOODBYES_BOOKING)
+        await flow_manager.task.queue_frame(TTSSpeakFrame(text=goodbye))
+
         async def quick_hangup():
             await asyncio.sleep(1.8)
             try:
@@ -932,17 +952,17 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
                 logger.info("🔚 EndFrame sent")
             except Exception as e:
                 logger.error(f"Error sending EndFrame: {e}")
-        
+
         asyncio.create_task(quick_hangup())
         return (None, create_end_node())
-    
+
     # 🛡️ OCHRONA 2: Rezerwacja W TRAKCIE (nie potwierdzona) - anuluj
     current_step = flow_manager.state.get("current_step", "")
     has_service = flow_manager.state.get("selected_service") is not None
-    
+
     if has_service and current_step in ["SERVICE", "STAFF", "DATE", "TIME", "NAME", "CONFIRM"]:
         logger.warning(f"⚠️ end_conversation during booking (step={current_step}) - cancelling")
-        
+
         # Reset state
         flow_manager.state["selected_service"] = None
         flow_manager.state["selected_staff"] = None
@@ -951,23 +971,24 @@ async def handle_end_conversation(args: dict, flow_manager: FlowManager):
         flow_manager.state["customer_name"] = None
         flow_manager.state["available_slots"] = []
         flow_manager.state["current_step"] = ""
-        
+
         tenant = flow_manager.state.get("tenant", {})
-        
+
         from pipecat.frames.frames import TTSSpeakFrame
         await flow_manager.task.queue_frame(TTSSpeakFrame(text="Jasne, anulujemy."))
-        
+
         return (
             {"cancelled": True, "reason": "end_conversation_during_booking"},
             create_anything_else_node(tenant)
         )
-    
+
     # Normalny flow - zakończ rozmowę
     logger.info("👋 Ending conversation (no active booking)")
     flow_manager.state["conversation_ended"] = True
-    
+
     from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-    await flow_manager.task.queue_frame(TTSSpeakFrame(text="Dziękuję za kontakt, do widzenia!"))
+    goodbye = random.choice(_GOODBYES_GENERIC)
+    await flow_manager.task.queue_frame(TTSSpeakFrame(text=goodbye))
     
     async def quick_hangup():
         await asyncio.sleep(1.8)
