@@ -17,7 +17,7 @@ import hashlib
 import base64
 from pipecat.frames.frames import (
     EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame,
-    TranscriptionFrame, UserStoppedSpeakingFrame,
+    TranscriptionFrame, InterimTranscriptionFrame, UserStoppedSpeakingFrame,
     LLMFullResponseStartFrame, LLMFullResponseEndFrame,
     TTSStartedFrame, TTSAudioRawFrame,
 )
@@ -427,7 +427,7 @@ class FirstResponseFiller(FrameProcessor):
         await super().process_frame(frame, direction)
         
         if (not self._first_done
-            and isinstance(frame, UserStoppedSpeakingFrame)):
+            and isinstance(frame, InterimTranscriptionFrame)):
 
             self._first_done = True
             filler = random.choice(self.FILLERS)
@@ -468,7 +468,7 @@ class GreetingGate(FrameProcessor):
         # Blokuj mowę klienta podczas powitania (downstream) — nie przepuszczaj do LLM
         if (not self._greeting_done
                 and direction == FrameDirection.DOWNSTREAM
-                and isinstance(frame, (TranscriptionFrame, UserStoppedSpeakingFrame))):
+                and isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame, UserStoppedSpeakingFrame))):
             logger.debug("🔇 GreetingGate: dropping user frame during greeting")
             return
 
@@ -673,8 +673,8 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=1000,
-            endpointing=300,
+            utterance_end_ms=700,
+            endpointing=200,
             keyterm=tenant_keyterms,
         )
     )
@@ -928,11 +928,13 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
 
     greeting_gate = GreetingGate()
+    first_response_filler = FirstResponseFiller()
 
     pipeline_components = [
         transport.input(),
         stt,
         greeting_gate,           # blokuje user speech podczas powitania
+        first_response_filler,   # filler na pierwszym interim transcript usera
         user_idle,
         context_aggregator.user(),
         pipeline_monitor,        # context truncation + STT→LLM timing
