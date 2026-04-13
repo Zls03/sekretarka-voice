@@ -658,15 +658,38 @@ async def websocket_endpoint(websocket: WebSocket):
     tts = create_tts_service(tenant)
 
 
-    llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4.1-mini",
-        params=BaseOpenAILLMService.InputParams(
-            temperature=0.3,
-            max_completion_tokens=250,
-        ),
-    )
-    logger.info("🧠 Using OpenAI gpt-4.1-mini")
+    llm_provider = tenant.get("llm_provider", "openai")
+    if llm_provider == "cerebras":
+        llm = CerebrasLLMService(
+            api_key=os.getenv("CEREBRAS_API_KEY"),
+            model="llama-3.3-70b",
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info("🧠 Using Cerebras llama-3.3-70b")
+    elif llm_provider == "groq":
+        llm_model = tenant.get("llm_model") or "llama-3.3-70b-versatile"
+        llm = GroqLLMService(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model=llm_model,
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info(f"🧠 Using Groq {llm_model}")
+    else:
+        llm = OpenAILLMService(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model="gpt-4.1-mini",
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info("🧠 Using OpenAI gpt-4.1-mini")
 
     context = OpenAILLMContext()
     context_aggregator = llm.create_context_aggregator(context)

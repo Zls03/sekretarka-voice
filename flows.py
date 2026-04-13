@@ -926,10 +926,10 @@ _GOODBYES_BOOKING = [
 
 _GOODBYES_GENERIC = [
     "Miłego dnia!",
-    "Do zobaczenia!",
-    "Wszystkiego dobrego!",
-    "Miłego dnia, do widzenia!",
     "Do usłyszenia!",
+    "Miłego dnia, do usłyszenia!",
+    "Wszystkiego dobrego, do usłyszenia!",
+    "Do usłyszenia, miłego dnia!",
 ]
 
 
