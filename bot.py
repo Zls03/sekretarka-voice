@@ -662,13 +662,13 @@ async def websocket_endpoint(websocket: WebSocket):
     if llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
-            model="llama-3.3-70b",
+            model="llama3.3-70b",
             params=BaseOpenAILLMService.InputParams(
                 temperature=0.3,
                 max_completion_tokens=250,
             ),
         )
-        logger.info("🧠 Using Cerebras llama-3.3-70b")
+        logger.info("🧠 Using Cerebras llama3.3-70b")
     elif llm_provider == "groq":
         llm_model = tenant.get("llm_model") or "llama-3.3-70b-versatile"
         llm = GroqLLMService(
