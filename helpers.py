@@ -370,6 +370,8 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "lead_urgency_mode":   int(firm.get("lead_urgency_mode") or 0),
         "lead_urgency_text":   firm.get("lead_urgency_text") or "",
         "recording_enabled":   int(firm.get("recording_enabled") or 0),
+        "llm_provider":        firm.get("llm_provider") or "openai",
+        "llm_model":           firm.get("llm_model") or "",
 
         "services":      services,
         "working_hours": working_hours,
