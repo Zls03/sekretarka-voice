@@ -116,11 +116,12 @@ def create_tts_service(tenant: dict):
     tts_provider = tenant.get('tts_provider', 'elevenlabs')
 
     if tts_provider == TTSProvider.CARTESIA:
-        logger.info("🎙️ Using Cartesia TTS | voice: 575a5d29")
+        cartesia_voice = tenant.get('azure_voice_id') or '575a5d29-1fdc-4d4e-9afa-5a9a71759864'
+        logger.info(f"🎙️ Using Cartesia TTS | voice: {cartesia_voice}")
         tts = CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
-            voice_id="575a5d29-1fdc-4d4e-9afa-5a9a71759864",
-            model_id="sonic-hd",
+            voice_id=cartesia_voice,
+            model_id="sonic-2",
             language="pl",
             sample_rate=8000,
             speed=1.0,
