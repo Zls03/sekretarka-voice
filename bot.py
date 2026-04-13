@@ -17,7 +17,7 @@ import hashlib
 import base64
 from pipecat.frames.frames import (
     EndFrame, TTSSpeakFrame, BotStoppedSpeakingFrame,
-    TranscriptionFrame, InterimTranscriptionFrame, UserStoppedSpeakingFrame,
+    TranscriptionFrame, UserStoppedSpeakingFrame,
     LLMFullResponseStartFrame, LLMFullResponseEndFrame,
     TTSStartedFrame, TTSAudioRawFrame,
 )
@@ -409,32 +409,6 @@ from services.tts_factory import create_tts_service, DEFAULT_ELEVENLABS_VOICE_ID
 # PIPELINE PROCESSORS
 # ==========================================
 
-class FirstResponseFiller(FrameProcessor):
-    """Puszcza krótki filler TTS przy pierwszej wypowiedzi usera po greeting."""
-    
-    FILLERS = [
-        "chwileczkę,",
-        "momencik,",
-        "sekundkę,",
-        "oczywiście,",
-    ]
-    
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._first_done = False
-    
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        
-        if (not self._first_done
-            and isinstance(frame, InterimTranscriptionFrame)):
-
-            self._first_done = True
-            filler = random.choice(self.FILLERS)
-            logger.info(f"🎯 First response filler: '{filler}'")
-            await self.push_frame(TTSSpeakFrame(text=filler))
-        
-        await self.push_frame(frame, direction)
 
 class GreetingGate(FrameProcessor):
     """
@@ -468,7 +442,7 @@ class GreetingGate(FrameProcessor):
         # Blokuj mowę klienta podczas powitania (downstream) — nie przepuszczaj do LLM
         if (not self._greeting_done
                 and direction == FrameDirection.DOWNSTREAM
-                and isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame, UserStoppedSpeakingFrame))):
+                and isinstance(frame, (TranscriptionFrame, UserStoppedSpeakingFrame))):
             logger.debug("🔇 GreetingGate: dropping user frame during greeting")
             return
 
@@ -928,13 +902,11 @@ async def websocket_endpoint(websocket: WebSocket):
     # ==========================================
 
     greeting_gate = GreetingGate()
-    first_response_filler = FirstResponseFiller()
 
     pipeline_components = [
         transport.input(),
         stt,
         greeting_gate,           # blokuje user speech podczas powitania
-        first_response_filler,   # filler na pierwszym interim transcript usera
         user_idle,
         context_aggregator.user(),
         pipeline_monitor,        # context truncation + STT→LLM timing
