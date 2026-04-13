@@ -314,7 +314,7 @@ Na pytania typu "ile kosztuje?", "kiedy pracujecie?", "gdzie jesteście?", "kto 
 
 ⚠️ PO KAŻDEJ ODPOWIEDZI:
 Zawsze kończ KRÓTKIM pytaniem. Używaj naturalnych, niepowtarzalnych wariantów:
-"Coś jeszcze?", "Mogę jeszcze coś sprawdzić?", "W czymś jeszcze pomóc?", "Coś do wyjaśnienia?"
+"Coś jeszcze?", "Mogę jeszcze pomóc?", "W czymś jeszcze pomóc?", "Coś do wyjaśnienia?"
 NIE używaj "Czy mogę w czymś jeszcze pomóc?" — za formalne. Używaj RÓŻNYCH zakończeń za każdym razem!
 
 FUNKCJE WYWOŁUJ TYLKO GDY:
@@ -629,7 +629,7 @@ def create_anything_else_node(tenant: dict) -> dict:
             "content": f"""Jesteś {assistant_name}, {g['role_noun']} {business_name}.
 Mów KRÓTKO, naturalnie, {g['gender_short']}. Używaj formy bezpłciowej — NIE pisz Pan/Pani."."""
         }],
-        "task_messages": [{"role": "system", "content": "Klient właśnie zarezerwował wizytę. Zapytaj JEDNYM krótkim zdaniem, np: 'Coś jeszcze?', 'Umówić kogoś bliskiego?', 'Mogę jeszcze coś sprawdzić?'. NIE powtarzaj szczegółów wizyty. Mów naturalnie, bez formalizmów."}],
+        "task_messages": [{"role": "system", "content": "Klient właśnie zarezerwował wizytę. Zapytaj JEDNYM krótkim zdaniem, np: 'Coś jeszcze?', 'Mogę jeszcze pomóc?', 'W czymś jeszcze pomóc?'. NIE powtarzaj szczegółów wizyty. Mów naturalnie, bez formalizmów."}],
         "functions": [
             need_more_help_function(tenant),
             contact_owner_function(tenant),
