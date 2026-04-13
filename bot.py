@@ -640,6 +640,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
+        base_url=os.getenv("DEEPGRAM_BASE_URL", ""),  # ustaw "api.eu.deepgram.com" dla EU
         live_options=LiveOptions(
             model="nova-3",
             language="pl",
@@ -648,7 +649,7 @@ async def websocket_endpoint(websocket: WebSocket):
             numerals=True,
             interim_results=True,
             utterance_end_ms=1000,
-            endpointing=200,
+            endpointing=300,
             keyterm=tenant_keyterms,
         )
     )

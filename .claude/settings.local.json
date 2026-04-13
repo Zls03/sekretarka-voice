@@ -6,7 +6,10 @@
       "Bash(python -c \"from pipecat.frames.frames import UserStoppedSpeakingFrame; print\\(''ok''\\)\")",
       "Bash(python -c \"import flows; import flows_contact; import helpers; print\\(''OK''\\)\")",
       "Bash(python -c \"import flows_booking_simple; print\\(''OK''\\)\")",
-      "Bash(python -c \"import flows_contact; print\\(''OK''\\)\")"
+      "Bash(python -c \"import flows_contact; print\\(''OK''\\)\")",
+      "Bash(pip show:*)",
+      "Bash(python -c \"import pipecat.services.deepgram.stt as d; import inspect; print\\(inspect.getsource\\(d.DeepgramSTTService.__init__\\)\\)\")",
+      "Bash(python:*)"
     ]
   }
 }
