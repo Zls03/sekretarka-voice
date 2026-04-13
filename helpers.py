@@ -307,6 +307,9 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     elif raw_provider in azure_voices:
         actual_provider = "azure"
         actual_voice_id = raw_provider
+    elif raw_provider == "cartesia":
+        actual_provider = "cartesia"
+        actual_voice_id = firm.get("azure_voice_id") or "575a5d29-1fdc-4d4e-9afa-5a9a71759864"
     elif raw_voice_id in google_voices:
         # voice_id wskazuje na głos Google — wymuś google niezależnie od tts_provider
         actual_provider = "google"
