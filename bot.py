@@ -673,7 +673,7 @@ async def websocket_endpoint(websocket: WebSocket):
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=700,
+            utterance_end_ms=1000,
             endpointing=200,
             keyterm=tenant_keyterms,
         )
