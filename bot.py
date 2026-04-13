@@ -680,6 +680,18 @@ async def websocket_endpoint(websocket: WebSocket):
             ),
         )
         logger.info(f"🧠 Using Groq {llm_model}")
+    elif llm_provider == "gemini":
+        gemini_model = tenant.get("llm_model") or "gemini-2.5-flash"
+        llm = OpenAILLMService(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            model=gemini_model,
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info(f"🧠 Using Gemini {gemini_model}")
     else:
         llm = OpenAILLMService(
             api_key=os.getenv("OPENAI_API_KEY"),
