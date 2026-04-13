@@ -615,7 +615,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                         suggestion = (
                             f"Rezerwacje przyjmujemy maksymalnie {max_days_val} dni naprzód — "
                             f"{date_label} to za daleko. Najbliższy wolny termin u {staff_name} "
-                            f"to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Pasuje?"
+                            f"to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Czy zapisać na ten termin?"
                         )
                         return await _respond(suggestion, flow_manager, tenant, state=state)
                     else:
