@@ -1288,7 +1288,7 @@ ZASADY:
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
 WYJĄTEK (end_conversation): TYLKO gdy klient WPROST rezygnuje: "nieważne", "rezygnuję", "nie chcę", "do widzenia", "dziękuję nie".
-ZAKAZ end_conversation: "tak", "tak jest", "zgadza się", "dobrze", "ok", "pasuje" — to ZAWSZE book_appointment(confirmation="yes")!
+ZAKAZ end_conversation: "tak", "tak jest", "zgadza się", "dobrze", "ok", "pasuje", "oczywiście", "jasne", "pewnie", "właśnie", "naturalnie", "super", "świetnie", "dokładnie" — to ZAWSZE book_appointment(confirmation="yes")!
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
@@ -1315,7 +1315,7 @@ GODZINY — zawsze przetłumacz na HH:MM:
 - "kurnasta" → time_text="15:00"
 
 INNE:
-- "tak" / "tak jest" / "zgadza się" / "tak potwierdzam" → book_appointment(confirmation="yes")
+- "tak" / "tak jest" / "zgadza się" / "tak potwierdzam" / "oczywiście" / "jasne" / "pewnie" / "naturalnie" / "super" / "świetnie" / "dokładnie" / "właśnie" / "dobra" → book_appointment(confirmation="yes")
 - "nie, dziękuję" / "nie chcę" → book_appointment(confirmation="no")
 - "chcę zmienić" → book_appointment(confirmation="change")
 - "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
