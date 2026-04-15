@@ -919,17 +919,17 @@ def end_conversation_function() -> FlowsFunctionSchema:
 
 
 _GOODBYES_BOOKING = [
-    "Wszystko gotowe. Do zobaczenia!",
-    "Super, czekamy. Miłego dnia!",
-    "Zapisane. Do zobaczenia!",
+    "Dziękuję, do zobaczenia!",
+    "Dziękuję, czekamy. Miłego dnia!",
+    "Dziękuję, wszystko gotowe. Do zobaczenia!",
 ]
 
 _GOODBYES_GENERIC = [
-    "Miłego dnia!",
-    "Do usłyszenia!",
-    "Miłego dnia, do usłyszenia!",
-    "Wszystkiego dobrego, do usłyszenia!",
-    "Do usłyszenia, miłego dnia!",
+    "Dziękuję, miłego dnia!",
+    "Dziękuję, do usłyszenia!",
+    "Dziękuję za kontakt, miłego dnia!",
+    "Dziękuję, wszystkiego dobrego!",
+    "Dziękuję, do usłyszenia. Miłego dnia!",
 ]
 
 
