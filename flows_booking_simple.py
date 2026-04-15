@@ -1328,6 +1328,7 @@ WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie t
 
         "functions": [
             book_appointment_function(tenant),
+            _end_conversation_fn(),
         ]
     }
 
