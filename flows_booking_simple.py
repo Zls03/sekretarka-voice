@@ -889,7 +889,15 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
 
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
-        if confirmation == "yes" and not name_just_collected and not time_just_set:
+        # Jeśli nie pobieraliśmy właśnie imienia/godziny i klient nie rezygnuje/nie zmienia → traktuj jako potwierdzenie.
+        # Handler nie zależy od LLM że wpisze "yes" — każda odpowiedź nie będąca "no"/"change" = zgoda.
+        is_confirming = (
+            confirmation not in ("no", "change")
+            and not name_just_collected
+            and not time_just_set
+            and not question
+        )
+        if is_confirming:
             state["confirmed"] = True
         else:
             staff_name = odmien_imie(state['staff']['name'])
@@ -1287,8 +1295,6 @@ ZASADY:
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
-WYJĄTEK (end_conversation): TYLKO gdy klient WPROST rezygnuje: "nieważne", "rezygnuję", "nie chcę", "do widzenia", "dziękuję nie".
-ZAKAZ end_conversation: "tak", "tak jest", "zgadza się", "dobrze", "ok", "pasuje", "oczywiście", "jasne", "pewnie", "właśnie", "naturalnie", "super", "świetnie", "dokładnie" — to ZAWSZE book_appointment(confirmation="yes")!
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
@@ -1314,20 +1320,14 @@ GODZINY — zawsze przetłumacz na HH:MM:
 - "o piętnastej trzydzieści" → time_text="15:30"
 - "kurnasta" → time_text="15:00"
 
-INNE:
-- "tak" / "tak jest" / "zgadza się" / "tak potwierdzam" / "oczywiście" / "jasne" / "pewnie" / "naturalnie" / "super" / "świetnie" / "dokładnie" / "właśnie" / "dobra" → book_appointment(confirmation="yes")
-- "nie, dziękuję" / "nie chcę" → book_appointment(confirmation="no")
-- "chcę zmienić" → book_appointment(confirmation="change")
-- "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
-- "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="{tomorrow_iso}", time_text="14:00"
+POTWIERDZENIE: klient wyraża zgodę ("tak", "oczywiście", "jasne", itp.) → confirmation="yes"; klient rezygnuje → confirmation="no"; klient chce zmienić → confirmation="change".
 - "tak pasuje" (po propozycji terminu) → date_text=<ostatnio wymieniona data ISO>, time_text=<ostatnio wymieniona godzina HH:MM>
-WAŻNE: Gdy klient akceptuje zaproponowany termin (np. "tak", "pasuje", "dobra") → wpisz zaproponowaną datę ISO i godzinę HH:MM.
+WAŻNE: Gdy klient akceptuje zaproponowany termin → wpisz zaproponowaną datę ISO i godzinę HH:MM.
 WAŻNE: Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu — nie tylko jedno!"""
         }],
-        
+
         "functions": [
             book_appointment_function(tenant),
-            _end_conversation_fn(),
         ]
     }
 
