@@ -1287,14 +1287,15 @@ ZASADY:
             "content": f"""ZAWSZE wywołuj book_appointment z tym co klient powiedział.
 NIGDY nie odpowiadaj tekstem i jednocześnie nie wywołuj funkcji - TYLKO jedno albo drugie!
 Jeśli wywołujesz book_appointment, NIE dodawaj żadnej odpowiedzi tekstowej.
-WYJĄTEK: jeśli klient REZYGNUJE z rezerwacji ("nieważne", "rezygnuję", "nie chcę", "dziękuję nie") → wywołaj end_conversation.
+WYJĄTEK (end_conversation): TYLKO gdy klient WPROST rezygnuje: "nieważne", "rezygnuję", "nie chcę", "do widzenia", "dziękuję nie".
+ZAKAZ end_conversation: "tak", "tak jest", "zgadza się", "dobrze", "ok", "pasuje" — to ZAWSZE book_appointment(confirmation="yes")!
 
 USŁUGI DO WYBORU: {", ".join(s["name"] for s in services)}
 PRACOWNICY DO WYBORU: {", ".join(s["name"] for s in staff_list)} lub dowolny
 
 Przykłady dopasowania:
 - "strzyżenie plus broda" → service="Strzyżenie plus broda"
-- "strzyżenie z brodą" → service="Strzyżenie plus broda"  
+- "strzyżenie z brodą" → service="Strzyżenie plus broda"
 - "do Ani" → staff="Ania"
 - "do Anny" → staff="Ania"
 DATY — zawsze przetłumacz na YYYY-MM-DD (DZIŚ={now.strftime('%Y-%m-%d')}):
@@ -1314,10 +1315,10 @@ GODZINY — zawsze przetłumacz na HH:MM:
 - "kurnasta" → time_text="15:00"
 
 INNE:
-- "tak, potwierdzam" → confirmation="yes"
-- "nie, dziękuję" → confirmation="no"
-- "chcę zmienić" → confirmation="change"
-- "kiedy macie wolne?" → question="kiedy macie wolne?"
+- "tak" / "tak jest" / "zgadza się" / "tak potwierdzam" → book_appointment(confirmation="yes")
+- "nie, dziękuję" / "nie chcę" → book_appointment(confirmation="no")
+- "chcę zmienić" → book_appointment(confirmation="change")
+- "kiedy macie wolne?" → book_appointment(question="kiedy macie wolne?")
 - "strzyżenie jutro o 14" → service="Strzyżenie męskie", date_text="{tomorrow_iso}", time_text="14:00"
 - "tak pasuje" (po propozycji terminu) → date_text=<ostatnio wymieniona data ISO>, time_text=<ostatnio wymieniona godzina HH:MM>
 WAŻNE: Gdy klient akceptuje zaproponowany termin (np. "tak", "pasuje", "dobra") → wpisz zaproponowaną datę ISO i godzinę HH:MM.
