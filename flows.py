@@ -506,7 +506,7 @@ FUNKCJE WYWOŁUJ TYLKO GDY:
     if booking_enabled:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/usług → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z usługami.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc z wizytą?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu w CENNIKU → powiedz "Nie mam szczegółowych informacji o tej usłudze, ale chętnie umówię wizytę"'
-        zasada_wiele_osob = '- Jeśli klient pyta o umówienie WIELU osób naraz (np. "ja i mąż", "dla dwóch osób") → "Rezerwacje przyjmuję pojedynczo. Umówmy najpierw jedną wizytę, a potem możemy umówić kolejną."\n- ✅ "umówić się do Moniki / do Ani / do lekarza" = JEDNA rezerwacja → wywołaj start_booking z staff_hint="[imię]" — NIE stosuj zasady wielu osób'
+        zasada_wiele_osob = ''
         przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Czy umówić wizytę?", "Coś jeszcze?"'
     else:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/oferty → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z informacjami o firmie.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc w czymś innym?")'
