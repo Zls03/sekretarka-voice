@@ -165,7 +165,7 @@ def create_tts_service(tenant: dict):
         logger.info(f"🎙️ Using Gemini Flash TTS | voice: {google_voice}")
         tts = GeminiTTSService(
             credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"),
-            model="gemini-2.5-flash-tts",
+            model="gemini-3.1-flash-tts-preview",
             voice_id=google_voice,
             params=GeminiTTSService.InputParams(
                 language=Language.PL_PL,
