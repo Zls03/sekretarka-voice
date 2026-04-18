@@ -158,20 +158,28 @@ def create_tts_service(tenant: dict):
         return tts
 
     if tts_provider == TTSProvider.GOOGLE:
-        from pipecat.services.google.tts import GeminiTTSService
-        raw_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
-        # strip old Chirp3-HD prefix if still stored in DB
-        google_voice = raw_voice.split('Chirp3-HD-')[-1] if 'Chirp3-HD-' in raw_voice else raw_voice
-        logger.info(f"🎙️ Using Gemini Flash TTS | voice: {google_voice}")
-        tts = GeminiTTSService(
-            credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"),
-            model="gemini-3.1-flash-tts-preview",
-            voice_id=google_voice,
-            params=GeminiTTSService.InputParams(
-                language=Language.PL_PL,
-                prompt="Mów naturalnie i uprzejmie po polsku.",
-            ),
-        )
+        from pipecat.services.google.tts import GoogleTTSService
+        import tempfile
+        google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
+        speaking_rate = float(tenant.get('speaking_rate') or 1.06)
+        logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice} | rate: {speaking_rate}")
+        creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        creds_dict = json.loads(creds_json)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(creds_dict, f)
+            creds_path = f.name
+        try:
+            tts = GoogleTTSService(
+                credentials_path=creds_path,
+                voice_id=google_voice,
+                sample_rate=8000,
+                params=GoogleTTSService.InputParams(
+                    language=Language.PL_PL,
+                    speaking_rate=speaking_rate,
+                ),
+            )
+        finally:
+            os.unlink(creds_path)
         tts.add_text_transformer(_expand_abbreviations)
         return tts
 
