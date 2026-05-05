@@ -694,10 +694,14 @@ def build_business_context(tenant: dict) -> str:
         if services:
             svc_lines = []
             for s in services:
-                price = s.get('price', 'cena do uzgodnienia')
+                price_text = (s.get('price_text') or '').strip()
+                duration_text = (s.get('duration_text') or '').strip()
+                price = s.get('price', '')
                 duration = s.get('duration_minutes', 30)
                 description = s.get("description", "").strip() if s.get("description") else ""
-                line = f"• {s['name']} = {price} zł ({duration} min)"
+                price_display = price_text if price_text else (f"{price} zł" if price else "cena do uzgodnienia")
+                duration_display = duration_text if duration_text else f"{duration} min"
+                line = f"• {s['name']} = {price_display} ({duration_display})"
                 if description:
                     line += f". Opis: {description}"
                 svc_lines.append(line)
@@ -712,14 +716,20 @@ def build_business_context(tenant: dict) -> str:
             svc_lines = []
             for s in info_services:
                 name = s.get('name', '')
+                price_text = (s.get('price_text') or '').strip()
+                duration_text = (s.get('duration_text') or '').strip()
                 price = s.get('price', '')
                 duration = s.get('duration_minutes', '')
                 description = s.get('description', '').strip() if s.get('description') else ''
 
                 line = f"• {name}"
-                if price:
+                if price_text:
+                    line += f" {price_text}"
+                elif price:
                     line += f" = {price} zł"
-                if duration:
+                if duration_text:
+                    line += f". Czas: {duration_text}"
+                elif duration:
                     line += f" (Trwa {duration} min)"
                 if description:
                     line += f". Opis: {description}"

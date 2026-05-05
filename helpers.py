@@ -230,7 +230,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     firm_id = firm["id"]
 
     services = await saas_db.execute(
-        "SELECT id, name, duration_minutes, price, description FROM services WHERE firm_id = ?",
+        "SELECT id, name, duration_minutes, price, description, price_text, duration_text FROM services WHERE firm_id = ?",
         [firm_id]
     )
 
