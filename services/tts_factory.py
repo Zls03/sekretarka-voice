@@ -121,7 +121,7 @@ def create_tts_service(tenant: dict):
         tts = CartesiaTTSService(
             api_key=os.getenv("CARTESIA_API_KEY"),
             voice_id=cartesia_voice,
-            model_id="sonic-2",
+            model_id="sonic-3.5",
             language="pl",
             sample_rate=8000,
             speed=1.0,
