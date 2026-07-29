@@ -593,7 +593,7 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             # Walidacja min/max ograniczeń pracownika — pomijamy gdy data z naszego systemu
             # (była już sprawdzona podczas get_next_available_days przy propozycji slotu)
             if not _date_from_system:
-                is_valid, constraint_msg = validate_date_constraints(parsed_date, tenant, state["staff"])
+                is_valid, constraint_msg = validate_max_days_ahead(parsed_date, tenant, state["staff"])
                 if not is_valid:
                     # Zamiast odrzucać sucho — zaproponuj najbliższy dostępny termin
                     try:
@@ -613,15 +613,15 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
                         state["_pending_date"] = first["date"].strftime("%Y-%m-%d")
                         state["_pending_time"] = first["slots"][0]
                         suggestion = (
-                            f"Rezerwacje przyjmujemy maksymalnie {max_days_val} dni naprzód — "
-                            f"{date_label} to za daleko. Najbliższy wolny termin u {staff_name} "
+                            f"{constraint_msg} {date_label.capitalize()} to za daleko. "
+                            f"Najbliższy wolny termin u {staff_name} "
                             f"to {format_date_polish(first['date'])} o {format_hour_polish(first['slots'][0])}. Czy zapisać na ten termin?"
                         )
                         return await _respond(suggestion, flow_manager, tenant, state=state)
                     else:
                         return await _respond(
-                            f"Rezerwacje przyjmujemy maksymalnie {max_days_val} dni naprzód — "
-                            f"{date_label} to za daleko. Niestety w tym oknie nie ma wolnych terminów.",
+                            f"{constraint_msg} {date_label.capitalize()} to za daleko. "
+                            f"Niestety w tym oknie nie ma wolnych terminów.",
                             flow_manager, tenant, state=state
                         )
             
@@ -764,6 +764,16 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
         parsed_time = _parse_time(time_text)
         
         if parsed_time:
+            # 🔥 NOWE: Walidacja min. wyprzedzenia — teraz mamy PEŁNY datetime (data + godzina)
+            _h, _m = (int(x) for x in parsed_time.split(":"))
+            requested_datetime = state["date"].replace(hour=_h, minute=_m, second=0, microsecond=0)
+            is_advance_valid, advance_msg = validate_min_advance_hours(requested_datetime, tenant, state["staff"])
+            if not is_advance_valid:
+                slots_text = _slots_summary(state.get("available_slots", []))
+                return await _respond(
+                    f"{advance_msg} Wolne są: {slots_text}.",
+                    flow_manager, tenant, state=state)
+
             # 🔥 WALIDACJA - sprawdź czy slot nadal wolny!
             is_available, current_slots = await validate_slot_available(
                 tenant, state["staff"], state["service"], state["date"], parsed_time

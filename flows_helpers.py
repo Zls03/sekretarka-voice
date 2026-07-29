@@ -321,6 +321,38 @@ def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tupl
     
     return (True, "")
 
+
+def validate_max_days_ahead(date: datetime, tenant: dict, staff: dict) -> tuple[bool, str]:
+    """Sprawdza TYLKO max dni w przód — do użycia gdy znamy jeszcze tylko datę (bez godziny wizyty)."""
+    now = datetime.now()
+    try:
+        max_days_ahead = int(staff.get("max_days_ahead") or staff.get("max_booking_days") or 14)
+    except (ValueError, TypeError):
+        max_days_ahead = 14
+
+    max_date = now + timedelta(days=max_days_ahead)
+
+    if date > max_date:
+        return (False, f"Rezerwacje można składać maksymalnie {max_days_ahead} dni w przód.")
+
+    return (True, "")
+
+
+def validate_min_advance_hours(date_with_time: datetime, tenant: dict, staff: dict) -> tuple[bool, str]:
+    """Sprawdza min. wyprzedzenie godzinowe — wywołuj gdy mamy już PEŁNY datetime (data + godzina wizyty)."""
+    now = datetime.now()
+    try:
+        min_advance_hours = int(staff.get("min_advance_hours") or staff.get("min_booking_hours") or 12)
+    except (ValueError, TypeError):
+        min_advance_hours = 12
+
+    min_booking_time = now + timedelta(hours=min_advance_hours)
+
+    if date_with_time < min_booking_time:
+        return (False, f"Rezerwacje przyjmujemy z minimum {min_advance_hours} godzinnym wyprzedzeniem.")
+
+    return (True, "")
+
 # ==========================================
 # API - KALENDARZ
 # ==========================================
