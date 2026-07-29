@@ -190,9 +190,9 @@ def create_tts_service(tenant: dict):
     tts = ElevenLabsTTSService(
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=voice_id,
-        model="eleven_turbo_v2_5",
+        model="eleven_flash_v2_5",
         output_format="pcm_16000",
-        stability=0.6,
+        stability=0.55,
         similarity_boost=0.75,
         speed=speaking_rate,
     )
