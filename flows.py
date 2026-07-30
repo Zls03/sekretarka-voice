@@ -206,6 +206,7 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
     today_info = f"DZIŚ: {now.strftime('%d.%m.%Y')} ({POLISH_DAYS[now.weekday()]})"
+    crm_hint = ""  # zmienne dane per-klient — dopisywane na SAMYM KOŃCU promptu (nie psuje cache OpenAI)
 
     # Usługi z kalendarza lub info_services - Z CENAMI!
     if booking_enabled:
@@ -427,8 +428,7 @@ Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy
             else:
                 crm_hint = ""
 
-            if crm_hint:
-                role_extra += crm_hint
+            # crm_hint zostaje jako osobna zmienna — dołączana na końcu promptu, nie tutaj
 
         # Instrukcja o godzinach pracowników
         if staff:
@@ -569,7 +569,7 @@ PRZYKŁAD STYLU ODPOWIEDZI:
 - NIGDY nie wymyślaj cen, godzin, adresów ani innych faktów
 - Jeśli NIE ZNASZ opisu usługi → "Nie mam szczegółowych informacji o tej usłudze"
 - NIE opisuj usług na podstawie ogólnej wiedzy — tylko to co masz w CENNIKU
-- Lepiej przyznać że nie wiesz niż zmyślić"""
+- Lepiej przyznać że nie wiesz niż zmyślić{crm_hint}"""
         }],
         "task_messages": [{
             "role": "system",
