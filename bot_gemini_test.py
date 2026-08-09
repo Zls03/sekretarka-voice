@@ -322,12 +322,24 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
             break
 
 
-def build_realtime_llm(system_prompt: str, tools: list | None = None):
+def build_realtime_llm(
+    system_prompt: str,
+    tools: list | None = None,
+    voice: str | None = None,
+    speed: float | None = None,
+):
     """Buduje OpenAIRealtimeLLMService + parę context aggregatorów.
 
     tools: lista FunctionSchema (z handler ustawionym na schemacie — LLMService
-    rejestruje je automatycznie z LLMContext, bez osobnego register_function)."""
-    logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={OPENAI_REALTIME_VOICE}")
+    rejestruje je automatycznie z LLMContext, bez osobnego register_function).
+
+    voice/speed: per-tenant, NIE globalne — patrz wywołanie w websocket handlerach
+    (czytane z tenant.get("realtime_voice")/tenant.get("speaking_rate"), z fallbackiem
+    na OPENAI_REALTIME_VOICE/domyślne API gdy tenant jeszcze nic nie ustawił — to
+    pozwala docelowo wybierać głos/tempo w panelu per-firma, tak jak już działa dla
+    cascade, zamiast na sztywno w kodzie/zmiennej środowiskowej dla całego serwisu)."""
+    resolved_voice = voice or OPENAI_REALTIME_VOICE
+    logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={resolved_voice}, speed={speed or 'domyślne API'}")
     llm = OpenAIRealtimeLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAIRealtimeLLMService.Settings(
@@ -339,7 +351,7 @@ def build_realtime_llm(system_prompt: str, tools: list | None = None):
             temperature=0.6,
             session_properties=SessionProperties(
                 audio=AudioConfiguration(
-                    output=AudioOutput(voice=OPENAI_REALTIME_VOICE),
+                    output=AudioOutput(voice=resolved_voice, speed=speed),
                     # Transkrypcja usera domyślnie WYŁĄCZONA w OpenAI — bez tego
                     # UserTranscriptMonitor nigdy nie widzi TranscriptionFrame.
                     # language="pl" wymuszony, bo auto-detekcja na krótkich,
@@ -490,7 +502,14 @@ async def websocket_gemini_test(websocket: WebSocket):
         # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(system_prompt, tools=tools)
+    # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
+    # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
+    # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
+    realtime_voice = (tenant.get("realtime_voice") or "").strip() or None
+    realtime_speed = float(tenant["speaking_rate"]) if tenant.get("speaking_rate") else None
+    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(
+        system_prompt, tools=tools, voice=realtime_voice, speed=realtime_speed
+    )
     context_box["context"] = llm_context
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
@@ -682,7 +701,14 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(system_prompt, tools=tools)
+    # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
+    # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
+    # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
+    realtime_voice = (tenant.get("realtime_voice") or "").strip() or None
+    realtime_speed = float(tenant["speaking_rate"]) if tenant.get("speaking_rate") else None
+    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(
+        system_prompt, tools=tools, voice=realtime_voice, speed=realtime_speed
+    )
     context_box["context"] = llm_context
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
