@@ -122,7 +122,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "nova")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "Cedar")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
@@ -746,7 +746,13 @@ async def vonage_answer(request: Request):
         return JSONResponse(ncco)
 
     host = request.headers.get("host", "localhost")
-    ws_uri = f"wss://{host}/ws-gemini-test-vonage?tenantId={tenant['id']}&callerPhone={from_number}"
+    # Przekazujemy phone_number zamiast tenantId — mamy go już w `tenant` z lookupu
+    # wyżej, więc websocket handler może wywołać get_tenant_by_phone() od razu,
+    # zamiast najpierw robić ekstra round-trip do bazy żeby ten numer odzyskać z ID
+    # (tak było wcześniej: tenantId -> SELECT phone_number -> get_tenant_by_phone,
+    # czyli ten sam tenant ładowany DWA razy — to ~1-2s czystej straty na starcie
+    # każdego połączenia, widoczne w logach jako drugie "Found firm").
+    ws_uri = f"wss://{host}/ws-gemini-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}"
 
     ncco = [
         {
@@ -779,37 +785,32 @@ async def vonage_events(request: Request):
 
 @app.websocket("/ws-gemini-test-vonage")
 async def websocket_gemini_test_vonage(websocket: WebSocket):
-    tenant_id = websocket.query_params.get("tenantId")
+    tenant_phone = websocket.query_params.get("phone")
     caller_phone = websocket.query_params.get("callerPhone", "nieznany")
-    if not tenant_id:
-        logger.error("❌ [REALTIME TEST/VONAGE] Brak tenantId w query params — zamykam")
+    if not tenant_phone:
+        logger.error("❌ [REALTIME TEST/VONAGE] Brak phone w query params — zamykam")
         await websocket.close()
         return
 
     await websocket.accept()
-    logger.info(f"🔌 [REALTIME TEST/VONAGE] WebSocket connected, tenant_id={tenant_id}")
+    logger.info(f"🔌 [REALTIME TEST/VONAGE] WebSocket connected, phone={tenant_phone}")
 
-    is_saas = tenant_id.startswith("firm_")
-    if is_saas:
-        rows = await saas_db.execute("SELECT phone_number FROM firms WHERE id = ?", [tenant_id])
-    else:
-        rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [tenant_id])
-
-    if not rows or not rows[0].get("phone_number"):
-        logger.error("❌ [REALTIME TEST/VONAGE] Nie znaleziono tenanta — zamykam")
-        await websocket.close()
-        return
-
-    tenant = await get_tenant_by_phone(rows[0]["phone_number"])
+    # Jeden lookup zamiast dwóch (patrz komentarz w vonage_answer) — /vonage/answer
+    # już raz przeszedł przez get_tenant_by_phone, tu robimy to drugi i OSTATNI raz
+    # (żeby dostać PEŁNE, aktualne dane tenanta — usługi/godziny/FAQ), zamiast
+    # najpierw doszukiwać się phone_number po tenantId.
+    tenant = await get_tenant_by_phone(tenant_phone)
     if not tenant:
+        logger.error("❌ [REALTIME TEST/VONAGE] Nie znaleziono tenanta — zamykam")
         await websocket.close()
         return
 
     logger.info(f"✅ [REALTIME TEST/VONAGE] Tenant: {tenant.get('name')}")
 
-    client_profile = await get_client_profile(tenant.get("id", ""), caller_phone)
-    if client_profile:
-        logger.info(f"👤 [REALTIME TEST/VONAGE] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
+    # CRM lookup (~1-2s, HTTP do panelu) odpalamy w tle RÓWNOLEGLE z budową transportu
+    # (ładowanie Silero VAD itd.) zamiast czekać na niego sekwencyjnie przed
+    # jakąkolwiek inną robotą — o tyle krócej klient czeka w ciszy po odebraniu.
+    client_profile_task = asyncio.create_task(get_client_profile(tenant.get("id", ""), caller_phone))
 
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
@@ -825,6 +826,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
             ),
         ),
     )
+
+    client_profile = await client_profile_task
+    if client_profile:
+        logger.info(f"👤 [REALTIME TEST/VONAGE] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
 
     system_prompt = build_realtime_instructions(tenant, client_profile)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
