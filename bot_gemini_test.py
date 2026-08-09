@@ -108,7 +108,8 @@ from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import (
-    EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame, TTSStoppedFrame,
+    EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
+    TTSStartedFrame, TTSStoppedFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
@@ -128,11 +129,11 @@ from pipecat.services.openai.realtime.events import (
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
 # patrz docstring wyżej po co ten podział.
-from helpers import get_tenant_by_phone, get_client_profile, db
+from helpers import get_tenant_by_phone, get_client_profile, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
-    maybe_send_call_summary,
+    maybe_send_call_summary, save_call_transcript, apply_call_charge,
 )
 
 logger.remove()
@@ -205,18 +206,24 @@ class UserTranscriptMonitor(FrameProcessor):
 
 class BotAudioMonitor(FrameProcessor):
     """Łapie pierwszą ramkę audio bota (downstream, za LLM-em), liczy deltę od
-    końca wypowiedzi usera, i resetuje zegar ciszy na koniec KAŻDEJ prawdziwej
-    wypowiedzi bota (powitanie, odpowiedź) — po niej realnie czekamy na klienta,
-    więc to naturalny start odliczania.
+    końca wypowiedzi usera, i resetuje zegar ciszy na START i KONIEC KAŻDEJ prawdziwej
+    wypowiedzi bota (powitanie, odpowiedź).
 
-    ⚠️ WYJĄTEK: automatyczne dopytanie/pożegnanie z say_now() (monitor_call_health)
-    jest OZNACZONE flagą `call_state["suppress_idle_reset"]`, więc TO konkretnie
-    NIE resetuje zegara — inaczej własne "Halo? Czy mnie słyszysz?" bota resetowałoby
-    zegar który ma doprowadzić do rozłączenia, i bot pytałby w kółko bez końca
-    (dokładnie to się stało w poprzedniej wersji, gdzie w ogóle nie resetowałem na
-    mowę bota — ale to poszło za daleko: wtedy też PRAWDZIWE powitanie/odpowiedzi nie
-    resetowały zegara, więc licznik ciszy leciał od momentu POŁĄCZENIA, nie od końca
-    powitania — "Halo?" potrafiło wystrzelić prawie natychmiast po przywitaniu)."""
+    ⚠️ RESET NA START JEST KRYTYCZNY, nie kosmetyczny — bug znaleziony na żywym telefonie:
+    długa odpowiedź bota (np. 12 sekund ciągłego mówienia — TTFB + generowanie + odtwarzanie)
+    NIE resetowała zegara dopóki się nie skończyła, więc licznik ciszy dalej liczył od
+    momentu kiedy KLIENT ostatnio przestał mówić — i zdążył przekroczyć próg 10s ZANIM bot
+    w ogóle skończył swoją odpowiedź, mimo że przez cały ten czas bot był w pełni aktywny,
+    zero prawdziwej ciszy. Efekt: "Halo? Czy mnie słyszysz?" wystrzeliwało zaraz po tym jak
+    bot skończył mówić, i potrafiło "zjeść" pytanie klienta który akurat wszedł w słowo.
+    Reset na START chroni cały czas trwania odpowiedzi bota, niezależnie jak długa.
+
+    ⚠️ WYJĄTEK: automatyczne dopytanie/pożegnanie z say_now() (monitor_call_health) jest
+    OZNACZONE flagą `call_state["suppress_idle_reset"]` — ANI start, ANI koniec TEJ
+    konkretnej wypowiedzi nie rusza zegara (inaczej własne "Halo?" bota resetowałoby zegar
+    który ma doprowadzić do rozłączenia, i bot pytałby w kółko bez końca — dokładniej opisane
+    w monitor_call_health). Flaga jest czyszczona dopiero na Stopped, więc zostaje aktywna
+    przez całą wypowiedź nudge'a (Started + Stopped), nie tylko pierwszą napotkaną ramkę."""
 
     def __init__(self, state: dict):
         super().__init__()
@@ -226,6 +233,9 @@ class BotAudioMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, TTSTextFrame) and frame.text:
             logger.info(f"⏱️ [BOT] mówi: {frame.text!r}")
+        if isinstance(frame, TTSStartedFrame):
+            if not self._state.get("suppress_idle_reset"):
+                self._state["idle_since"] = time.time()
         if isinstance(frame, TTSStoppedFrame):
             if self._state.get("suppress_idle_reset"):
                 self._state["suppress_idle_reset"] = False
@@ -437,6 +447,7 @@ async def websocket_gemini_test(websocket: WebSocket):
     stream_sid = None
     tenant = None
     caller_phone = "nieznany"
+    call_sid = None
 
     try:
         while True:
@@ -453,6 +464,7 @@ async def websocket_gemini_test(websocket: WebSocket):
                 custom_params = start_data.get("customParameters", {})
                 tenant_phone = custom_params.get("phone")
                 caller_phone = custom_params.get("callerPhone", "nieznany")
+                call_sid = custom_params.get("callSid")
 
                 if tenant_phone:
                     tenant = await get_tenant_by_phone(tenant_phone)
@@ -562,6 +574,10 @@ async def websocket_gemini_test(websocket: WebSocket):
             await maybe_send_call_summary(tenant, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[REALTIME TEST] Call summary error: {e}")
+        try:
+            await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST] Call transcript error: {e}")
 
 
 @app.get("/health-gemini-test")
@@ -589,6 +605,7 @@ więc nie trzeba parsować żadnego eventu "start" jak w Twilio.
 async def vonage_answer(request: Request):
     to_number = request.query_params.get("to", "")
     from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
     logger.info(f"📞 [REALTIME TEST/VONAGE] Answer: {from_number} → {to_number}")
 
     # Numer Vonage jest nowy i nie ma go w bazie tenantów — na czas testu
@@ -613,7 +630,7 @@ async def vonage_answer(request: Request):
     # (tak było wcześniej: tenantId -> SELECT phone_number -> get_tenant_by_phone,
     # czyli ten sam tenant ładowany DWA razy — to ~1-2s czystej straty na starcie
     # każdego połączenia, widoczne w logach jako drugie "Found firm").
-    ws_uri = f"wss://{host}/ws-gemini-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}"
+    ws_uri = f"wss://{host}/ws-gemini-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}&callSid={call_uuid}"
 
     ncco = [
         {
@@ -632,15 +649,70 @@ async def vonage_answer(request: Request):
 
 @app.api_route("/vonage/events", methods=["GET", "POST"])
 async def vonage_events(request: Request):
+    """Status callback od Vonage — aktualizuje call_logs i nalicza minuty/kredyty.
+    1:1 z bot.py::vonage_events (sama logika, port). Samodzielnie ustala tenanta po
+    numerze "to" — NIE polega na tym że call_logs już istnieje, bo save_call_transcript()
+    (koniec pipeline'u) i ten webhook to dwa niezależne w czasie zdarzenia, ten webhook
+    może przyjść pierwszy.
+
+    Vonage wysyła "completed" osobno dla KAŻDEJ nogi połączenia (inbound i outbound,
+    ten sam numer "to", różne uuid) — przetwarzamy TYLKO direction=inbound, inaczej
+    naliczylibyśmy podwójnie."""
     try:
         if request.method == "POST":
             data = await request.json()
-            logger.info(f"[VONAGE EVENT] {data.get('status', data)}")
         else:
-            status = request.query_params.get("status", "")
-            logger.info(f"[VONAGE EVENT] status={status}")
+            data = dict(request.query_params)
     except Exception:
-        pass
+        data = dict(request.query_params)
+
+    status = data.get("status", "")
+    call_uuid = data.get("uuid", "")
+    duration_str = data.get("duration", "0")
+    to_number = data.get("to", "")
+    direction = data.get("direction", "")
+
+    logger.info(f"[VONAGE EVENT] {call_uuid} | {status} | {duration_str}s | direction={direction}")
+
+    if status != "completed" or not call_uuid:
+        return Response(content="", status_code=200)
+
+    if direction and direction != "inbound":
+        logger.info(f"[VONAGE EVENT] Pomijam noga={direction} (liczymy tylko inbound)")
+        return Response(content="", status_code=200)
+
+    try:
+        duration = int(duration_str) if duration_str else 0
+
+        tenant = await get_tenant_by_phone(to_number) if to_number else None
+        if not tenant:
+            logger.warning(f"⚠️ [REALTIME TEST/VONAGE] Nie znaleziono tenanta dla {to_number}")
+            return Response(content="", status_code=200)
+
+        tenant_id = tenant["id"]
+        is_saas_tenant = tenant.get("source") == "saas"
+        target_db = saas_db if is_saas_tenant else db
+
+        existing = await target_db.execute("SELECT id FROM call_logs WHERE call_sid = ?", [call_uuid])
+        if existing:
+            await target_db.execute(
+                "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?",
+                [duration, status, call_uuid],
+            )
+            logger.info(f"📊 [REALTIME TEST/VONAGE] Updated call log: {call_uuid} → {duration}s")
+        else:
+            await target_db.execute(
+                """INSERT INTO call_logs
+                   (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                [f"call_{int(time.time())}", tenant_id, call_uuid, "nieznany", duration, status],
+            )
+            logger.info(f"📊 [REALTIME TEST/VONAGE] Created call log: {call_uuid} → {duration}s")
+
+        await apply_call_charge(tenant_id, is_saas_tenant, call_uuid, status, duration)
+    except Exception as e:
+        logger.error(f"[REALTIME TEST/VONAGE] vonage_events error: {e}")
+
     return Response(content="", status_code=200)
 
 
@@ -648,6 +720,7 @@ async def vonage_events(request: Request):
 async def websocket_gemini_test_vonage(websocket: WebSocket):
     tenant_phone = websocket.query_params.get("phone")
     caller_phone = websocket.query_params.get("callerPhone", "nieznany")
+    call_sid = websocket.query_params.get("callSid")
     if not tenant_phone:
         logger.error("❌ [REALTIME TEST/VONAGE] Brak phone w query params — zamykam")
         await websocket.close()
@@ -759,6 +832,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
             await maybe_send_call_summary(tenant, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[REALTIME TEST/VONAGE] Call summary error: {e}")
+        try:
+            await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST/VONAGE] Call transcript error: {e}")
 
 
 if __name__ == "__main__":

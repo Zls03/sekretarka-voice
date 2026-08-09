@@ -32,6 +32,8 @@ samym polem co w cascade (bot.py, sekcja "Lead email po rozmowie"): `lead_email_
 checkbox "Raport z rozmowy na email" w panelu, więc zero nowej konfiguracji potrzebne."""
 
 import os
+import time
+import uuid
 import asyncio
 
 from loguru import logger
@@ -41,6 +43,12 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.function_schema import FunctionSchema
+
+# db/saas_db — bezpieczny import wprost, helpers.py nie ma zależności od pipecat
+# (patrz docstring bot_gemini_test.py po pełne wyjaśnienie tego wzorca).
+from helpers import db, saas_db
+
+PRICE_PER_MINUTE = 0.39  # zł/min — MUSI być zsynchronizowane z bot.py::PRICE_PER_MINUTE
 
 
 async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str) -> bool:
@@ -103,11 +111,24 @@ def _looks_like_vague_meta_message(message: str) -> bool:
     """Wykrywa dwa warianty śmieciowej wiadomości: (1) GPT pisze O kliencie w trzeciej
     osobie zamiast treści OD klienta (meta-opis), (2) wiadomość jest za krótka/pusta
     żeby cokolwiek znaczyć. Nie jest to dowód matematyczny — heurystyka, tak jak
-    w cascade, tylko z dodatkowymi wzorcami z realnego, obserwowanego przypadku."""
+    w cascade, tylko z dodatkowymi wzorcami z realnego, obserwowanego przypadku.
+
+    ⚠️ TYLKO dla contact_owner (pole `message` = treść DO przekazania). NIE używać dla
+    submit_lead (`problem` = opis SPRAWY klienta, gdzie "Klient chce X" jest normalną,
+    poprawną frazą, nie oznaką pustki) — patrz _looks_too_short() niżej. Pomylenie tych
+    dwóch odrzucało w praktyce poprawne, konkretne zgłoszenia (obserwowane na żywym
+    telefonie: "Klient chce pomocy w sprawie legalizacji pobytu, dotyczącej wizy."
+    zostało odrzucone tylko dlatego że zaczynało się od "Klient chce")."""
     m = message.lower().strip()
     if len(m) < 10:
         return True
     return any(m.startswith(p) for p in _VAGUE_MESSAGE_STARTS)
+
+
+def _looks_too_short(text: str) -> bool:
+    """Łagodniejszy filtr dla submit_lead::problem — tylko długość, bez czarnej listy
+    fraz (te są legalne we frazowaniu opisu sprawy w trzeciej osobie)."""
+    return len((text or "").strip()) < 10
 
 
 def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, call_state: dict) -> FunctionSchema:
@@ -382,10 +403,12 @@ _URGENCY_LABELS = {"high": "🔴 PILNE", "normal": "Standardowe"}
 
 
 async def send_lead_email(
-    tenant: dict, caller_phone: str, problem: str, details: str, urgency: str,
+    tenant: dict, caller_phone: str, customer_name: str, problem: str, details: str, urgency: str,
     to_email: str, conversation_summary: str = "",
 ) -> bool:
-    """Strukturalny email ze zgłoszeniem. 1:1 z flows_contact.py::_send_lead_report_email."""
+    """Strukturalny email ze zgłoszeniem. Uniwersalny szablon (nie branżowy — pasuje pod
+    kancelarię tak samo jak pod hydraulika), 1:1 z flows_contact.py::_send_lead_report_email
+    pod względem treści/pól."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam zgłoszenia")
@@ -393,24 +416,29 @@ async def send_lead_email(
 
     business_name = tenant.get("name", "Firma")
     urgency_label = _URGENCY_LABELS.get(urgency, urgency)
+    name_row = f"""
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Od:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{customer_name}</td></tr>
+    """ if customer_name else ""
     details_html = f"""
-        <p><strong>📝 Szczegóły:</strong></p>
+        <p><strong>Szczegóły:</strong></p>
         <p style="background: #f5f5f5; padding: 15px; border-radius: 5px;">{details}</p>
     """ if details else ""
     summary_html = f"""
-        <p><strong>📋 Kontekst rozmowy:</strong></p>
+        <p><strong>Kontekst rozmowy:</strong></p>
         <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; font-style: italic;">{conversation_summary}</p>
     """ if conversation_summary else ""
 
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px;">
-        <h2 style="color: #333;">🛠️ Nowe zgłoszenie — {urgency_label}</h2>
+        <h2 style="color: #333;">📨 Nowe zgłoszenie — {urgency_label}</h2>
         <p style="color: #666; margin-top: -10px;">{business_name}</p>
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            {name_row}
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
         </table>
-        <p><strong>🔧 Problem:</strong></p>
+        <p><strong>Opis sprawy:</strong></p>
         <p style="background: #fff3e0; padding: 15px; border-radius: 5px;">{problem}</p>
         {details_html}
         {summary_html}
@@ -427,7 +455,7 @@ async def send_lead_email(
                 json={
                     "from": "Voice AI <noreply@bizvoice.pl>",
                     "to": [to_email],
-                    "subject": f"🛠️ {urgency_label} zgłoszenie — {business_name}",
+                    "subject": f"Nowe zgłoszenie ({urgency_label}) — {business_name}",
                     "html": html_content,
                 },
                 timeout=10.0,
@@ -465,12 +493,13 @@ def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -
         urgency_rule = f'\nPilność HIGH gdy klient mówi: {urgency_kw}. W innym wypadku NORMAL.'
 
     async def handle_submit_lead(params: FunctionCallParams):
+        customer_name = (params.arguments.get("customer_name") or "").strip()
         problem = (params.arguments.get("problem") or "").strip()
         details = (params.arguments.get("details") or "").strip()
         urgency = params.arguments.get("urgency") or "normal"
         logger.info(f"🛠️ [REALTIME TEST] submit_lead: urgency={urgency} — {problem[:60]!r}")
 
-        if not problem or _looks_like_vague_meta_message(problem):
+        if _looks_too_short(problem):
             logger.warning(f"🛠️ [REALTIME TEST] submit_lead: za mało konkretu, odrzucam: {problem[:60]!r}")
             await params.result_callback({"status": "error", "reason": "problem_too_vague"})
             return
@@ -487,7 +516,7 @@ def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -
             summary = await generate_conversation_summary(ctx) if ctx else ""
             if summary == "Brak treści rozmowy.":
                 summary = ""
-            await send_lead_email(tenant, caller_phone, problem, details, urgency, owner_email, summary)
+            await send_lead_email(tenant, caller_phone, customer_name, problem, details, urgency, owner_email, summary)
 
         asyncio.create_task(send_with_summary())
 
@@ -504,13 +533,169 @@ proszenia wprost o rozmowę z kimś (to byłoby contact_owner). Użyj gdy: {trig
    jeszcze w czymś pomóc — rozmowa NIE kończy się automatycznie po tym wywołaniu
 ⛔ NIE używaj gdy klient chce standardowej rezerwacji z cennika
 ⛔ NIE używaj gdy klient WPROST prosi o rozmowę z człowiekiem/właścicielem → wtedy contact_owner
-Jeśli wynik to status="error", reason="problem_too_vague" — opis był za ogólny, dopytaj
+Jeśli wynik to status="error", reason="problem_too_vague" — opis był za krótki/pusty, dopytaj
 klienta WPROST o konkret sprawy i wywołaj ponownie.""",
         properties={
-            "problem": {"type": "string", "description": "Konkretny opis sprawy/problemu klienta (1-2 zdania)"},
+            "customer_name": {"type": "string", "description": "Imię klienta, jeśli je podał (opcjonalne)"},
+            "problem": {"type": "string", "description": "Konkretny opis sprawy/problemu klienta (1-2 zdania) — naturalne sformułowanie w trzeciej osobie, np. 'Klient chce X' jest OK"},
             "details": {"type": "string", "description": "Dodatkowe szczegóły zebrane od klienta (opcjonalne)"},
             "urgency": {"type": "string", "enum": ["high", "normal"], "description": "high = pilne/awaria, normal = standardowe"},
         },
         required=["problem"],
         handler=handle_submit_lead,
     )
+
+
+# ==========================================
+# TRANSKRYPT + NALICZANIE MINUT (reszta Fazy 5)
+# ==========================================
+#
+# 1:1 z cascade (bot.py::save_call_log + bot.py::apply_call_charge) — te same tabele
+# (call_logs, call_transcripts), te same kolumny, ta sama logika naliczania. Dzięki temu
+# zakładka "Logi połączeń" w panelu pokazuje rozmowy Realtime BEZ ŻADNYCH zmian w UI —
+# panel nie wie i nie musi wiedzieć że to inny silnik pod spodem.
+#
+# Dwie fazy zapisu, tak jak w cascade:
+#   1. save_call_transcript() — wołane w finally: websocket handlera (ma dostęp do
+#      LLMContext z pełną rozmową). Tworzy wiersz call_logs (duration=0, status='in_progress')
+#      + wszystkie wiersze call_transcripts.
+#   2. apply_call_charge() — wołane z /vonage/events gdy Vonage potwierdzi realny czas
+#      trwania połączenia (UPDATE tego samego wiersza call_logs + odjęcie kredytów/minut).
+#   Rozdzielone bo to dwa różne, niezależne od siebie w czasie zdarzenia (koniec pipeline'u
+#   vs. webhook od Vonage) — dokładnie tak jak w cascade, nie uproszczenie.
+
+async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, context: LLMContext) -> None:
+    """Zapisuje wiersz call_logs (in_progress) + transkrypt do call_transcripts.
+    1:1 z bot.py::save_call_log, tylko czyta LLMContext zamiast flow_manager.get_current_context()."""
+    if not call_sid:
+        logger.warning("📊 [REALTIME TEST] Brak call_sid — pomijam zapis transkryptu/logu")
+        return
+    tenant_id = tenant.get("id", "")
+    if not tenant_id:
+        return
+
+    is_saas = tenant_id.startswith("firm_")
+    target_db = saas_db if is_saas else db
+
+    try:
+        existing = await target_db.execute("SELECT id FROM call_logs WHERE call_sid = ?", [call_sid])
+        if not existing:
+            await target_db.execute(
+                """INSERT INTO call_logs
+                   (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                   VALUES (?, ?, ?, ?, 0, 'in_progress', datetime('now'))""",
+                [f"call_{int(time.time())}", tenant_id, call_sid, caller_phone],
+            )
+            logger.info(f"📊 [REALTIME TEST] Call log created: {call_sid} ({'saas' if is_saas else 'admin'})")
+    except Exception as e:
+        logger.error(f"[REALTIME TEST] Call log create error: {e}")
+        return
+
+    try:
+        messages = context.get_messages() if context else []
+        saved_contents = set()
+        saved_count = 0
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            if role not in ("user", "assistant") or not content:
+                continue
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("text")
+                )
+            content = (content or "").strip()
+            if len(content) < 2:
+                continue
+            content_key = f"{role}:{content[:100]}"
+            if content_key in saved_contents:
+                continue
+            saved_contents.add(content_key)
+
+            transcript_id = f"tr_{uuid.uuid4().hex[:12]}"
+            await target_db.execute(
+                """INSERT INTO call_transcripts
+                   (id, tenant_id, call_sid, role, content, created_at)
+                   VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+                [transcript_id, tenant_id, call_sid, role, content[:500]],
+            )
+            saved_count += 1
+        logger.info(f"📝 [REALTIME TEST] Transcript saved: {saved_count} messages")
+    except Exception as e:
+        logger.error(f"[REALTIME TEST] Transcript save error: {e}")
+
+
+async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str, call_status: str, duration: int) -> None:
+    """Nalicza minuty/kredyty za zakończoną rozmowę. 1:1 port bot.py::apply_call_charge
+    (sama logika finansowa, bez zmian) — wołane z /vonage/events poniżej."""
+    duration_minutes = duration / 60.0
+
+    if call_status != "completed" or duration <= 0:
+        return
+
+    if is_saas_tenant:
+        saas_row = await saas_db.execute("SELECT user_id FROM firms WHERE id = ?", [tenant_id])
+        saas_user_id = saas_row[0]["user_id"] if saas_row else None
+        if not saas_user_id:
+            logger.warning(f"⚠️ [REALTIME TEST] No user_id for SaaS firm {tenant_id} — can't charge")
+            return
+
+        cost = round(duration_minutes * PRICE_PER_MINUTE, 4)
+
+        await saas_db.execute(
+            "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?",
+            [duration_minutes, tenant_id],
+        )
+        await saas_db.execute(
+            """UPDATE credits
+               SET balance = balance - ?,
+                   total_spent = total_spent + ?
+               WHERE user_id = ?""",
+            [cost, cost, saas_user_id],
+        )
+        logger.info(f"📊 [REALTIME TEST] SaaS: -{cost:.4f} zł ({duration_minutes:.2f} min) for user {saas_user_id}")
+
+        credits = await saas_db.execute("SELECT balance FROM credits WHERE user_id = ?", [saas_user_id])
+        if credits:
+            balance = float(credits[0].get("balance") or 0)
+            if balance < PRICE_PER_MINUTE:
+                await saas_db.execute("UPDATE firms SET is_blocked = 1 WHERE id = ?", [tenant_id])
+                logger.warning(f"⚠️ [REALTIME TEST] SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
+
+        firm_data = await saas_db.execute(
+            "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?", [tenant_id]
+        )
+        if firm_data:
+            used = float(firm_data[0].get("minutes_used") or 0)
+            limit = int(firm_data[0].get("minutes_limit") or 0)
+            if limit > 0 and used >= limit * 0.99:
+                await saas_db.execute("UPDATE firms SET is_blocked = 1 WHERE id = ?", [tenant_id])
+                logger.warning(f"⚠️ [REALTIME TEST] SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min")
+
+        await saas_db.execute(
+            """INSERT INTO transactions
+               (id, user_id, type, amount, description, created_at)
+               VALUES (?, ?, 'usage', ?, ?, datetime('now'))""",
+            [
+                f"tx_{call_sid[:12]}",
+                saas_user_id,
+                -cost,
+                f"Rozmowa {duration}s ({duration_minutes:.2f} min) [Realtime test]",
+            ],
+        )
+    else:
+        await db.execute(
+            "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
+            [duration_minutes, tenant_id],
+        )
+        logger.info(f"📊 [REALTIME TEST] Admin: +{duration_minutes:.2f} min for {tenant_id}")
+
+        tenant_data = await db.execute(
+            "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?", [tenant_id]
+        )
+        if tenant_data:
+            used = float(tenant_data[0].get("minutes_used", 0))
+            limit = int(tenant_data[0].get("minutes_limit", 100))
+            if used >= limit * 0.99:
+                await db.execute("UPDATE tenants SET is_blocked = 1 WHERE id = ?", [tenant_id])
+                logger.warning(f"⚠️ [REALTIME TEST] Admin tenant {tenant_id} BLOCKED - limit reached")
