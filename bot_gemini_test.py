@@ -82,7 +82,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.frames.frames import EndFrame, TranscriptionFrame, TTSAudioRawFrame
+from pipecat.frames.frames import EndFrame, TranscriptionFrame, TTSAudioRawFrame, UserStoppedSpeakingFrame
 from pipecat.processors.frame_processor import FrameProcessor
 
 # Pipecat >=1.2 przeniósł Gemini Live pod nową nazwę/ścieżkę (bez "Multimodal")
@@ -118,16 +118,21 @@ _t_state = {"last_user_frame": None, "waiting_for_bot_audio": False}
 
 
 class UserTranscriptMonitor(FrameProcessor):
-    """Łapie transkrypcję usera. UWAGA: usługi realtime (Gemini/OpenAI) pushują
-    TranscriptionFrame w kierunku UPSTREAM (do context aggregatora), nie downstream
-    do transportu — dlatego ten processor musi siedzieć MIĘDZY user_aggregator a llm,
-    a nie za LLM-em (tam by nigdy tej ramki nie zobaczył — tak było w poprzednich testach)."""
+    """Mierzy koniec tury usera. UWAGA (nauczone na własnym błędzie): pierwotnie mierzyliśmy
+    to na TranscriptionFrame, ale to jest ASYNCHRONICZNY side-channel (Whisper transkrybuje
+    audio NIEZALEŻNIE od głównej odpowiedzi modelu) — może przyjść spóźniony, czasem długo PO
+    tym jak bot już zaczął/skończył mówić, co dawało fałszywie niskie wyniki (76-340ms — mniej
+    niż samo TTFB, co jest fizycznie niemożliwe). Poprawny anchor to UserStoppedSpeakingFrame:
+    dla OpenAI to prawdziwy sygnał serwerowego VAD (input_audio_buffer.speech_stopped),
+    dla Gemini to lokalny Silero VAD z transportu — oba biją w moment realnego końca mowy.
+    TranscriptionFrame zostaje tylko do logowania TEKSTU, nie do pomiaru czasu."""
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame):
+        if isinstance(frame, UserStoppedSpeakingFrame):
             _t_state["last_user_frame"] = asyncio.get_event_loop().time()
             _t_state["waiting_for_bot_audio"] = True
+        if isinstance(frame, TranscriptionFrame):
             logger.info(f"⏱️ [USER] transkrypcja: {frame.text!r}")
         await self.push_frame(frame, direction)
 
@@ -172,7 +177,10 @@ def build_realtime_llm(system_prompt: str):
                         # jej automatycznie jak Gemini) — bez tego nasz UserTranscriptMonitor
                         # nigdy nie widzi TranscriptionFrame i pomiar ⏱️ się nie uruchamia
                         # (tak było w teście z voice=marin powyżej — same TTFB z biblioteki).
-                        input=AudioInput(transcription=InputAudioTranscription()),
+                        # language="pl" wymuszony: bez tego Whisper auto-detekcja
+                        # potrafi rozpoznać hiszpański/japoński zamiast polskiego na
+                        # krótkich, telefonicznych próbkach (patrz log z pierwszego testu).
+                        input=AudioInput(transcription=InputAudioTranscription(language="pl")),
                     )
                 ),
             ),
