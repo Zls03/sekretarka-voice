@@ -88,6 +88,7 @@ from pipecat.processors.frame_processor import FrameProcessor
 # Pipecat >=1.2 przeniósł Gemini Live pod nową nazwę/ścieżkę (bez "Multimodal")
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
+from pipecat.services.openai.realtime.events import AudioConfiguration, AudioOutput, SessionProperties
 
 # Reużywamy Twoich istniejących modułów TYLKO do odczytu danych firmy
 from helpers import get_tenant_by_phone, db, saas_db
@@ -99,6 +100,12 @@ app = FastAPI()
 
 REALTIME_PROVIDER = os.getenv("REALTIME_PROVIDER", "google").lower()  # "google" | "openai"
 OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
+# OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
+# uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. Jakości
+# polskiego akcentu nie da się zweryfikować bez żywego testu — stąd zmienna env,
+# żeby dało się to przełączać bez zmian w kodzie. "marin" to obecnie flagowy,
+# najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę — może się zmienić).
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "marin")
 
 # prosty stoper do zmierzenia całościowego opóźnienia user->bot
 _t_state = {"last_user_frame": None, "waiting_for_bot_audio": False}
@@ -144,11 +151,18 @@ def build_realtime_llm(system_prompt: str):
     poniżej o audio-input / history-recall).
     """
     if REALTIME_PROVIDER == "openai":
-        logger.info(f"🧠 REALTIME_PROVIDER=openai, model={OPENAI_REALTIME_MODEL}")
+        logger.info(
+            f"🧠 REALTIME_PROVIDER=openai, model={OPENAI_REALTIME_MODEL}, voice={OPENAI_REALTIME_VOICE}"
+        )
         llm = OpenAIRealtimeLLMService(
             api_key=os.getenv("OPENAI_API_KEY"),
             model=OPENAI_REALTIME_MODEL,
-            settings=OpenAIRealtimeLLMService.Settings(system_instruction=system_prompt),
+            settings=OpenAIRealtimeLLMService.Settings(
+                system_instruction=system_prompt,
+                session_properties=SessionProperties(
+                    audio=AudioConfiguration(output=AudioOutput(voice=OPENAI_REALTIME_VOICE))
+                ),
+            ),
         )
     else:
         logger.info("🧠 REALTIME_PROVIDER=google (Gemini Live)")
