@@ -61,13 +61,13 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.serializers.vonage import VonageFrameSerializer
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import EndFrame, TranscriptionFrame, TTSAudioRawFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
-# Gemini Multimodal Live — ścieżka importu może się różnić między wersjami pipecat,
-# sprawdź w swoim środowisku (pip show pipecat-ai) jeśli import się wywali.
-from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
+# Pipecat >=1.2 przeniósł Gemini Live pod nową nazwę/ścieżkę (bez "Multimodal")
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 
 # Reużywamy Twoich istniejących modułów TYLKO do odczytu danych firmy
 from helpers import get_tenant_by_phone, db, saas_db
@@ -238,7 +238,7 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     system_prompt = build_system_prompt(tenant)
 
-    llm = GeminiMultimodalLiveLLMService(
+    llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj aktualną nazwę
         voice_id="Aoede",
@@ -247,17 +247,17 @@ async def websocket_gemini_test(websocket: WebSocket):
         transcribe_model_audio=True,
     )
 
-    context = OpenAILLMContext()
-    context_aggregator = llm.create_context_aggregator(context)
+    context = LLMContext()
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
     latency_monitor = LatencyMonitor()
 
     pipeline = Pipeline([
         transport.input(),
-        context_aggregator.user(),
+        user_aggregator,
         llm,
         latency_monitor,
         transport.output(),
-        context_aggregator.assistant(),
+        assistant_aggregator,
     ])
 
     task = PipelineTask(
@@ -410,7 +410,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
 
     system_prompt = build_system_prompt(tenant)
 
-    llm = GeminiMultimodalLiveLLMService(
+    llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj nazwę modelu
         voice_id="Aoede",
@@ -419,17 +419,17 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         transcribe_model_audio=True,
     )
 
-    context = OpenAILLMContext()
-    context_aggregator = llm.create_context_aggregator(context)
+    context = LLMContext()
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
     latency_monitor = LatencyMonitor()
 
     pipeline = Pipeline([
         transport.input(),
-        context_aggregator.user(),
+        user_aggregator,
         llm,
         latency_monitor,
         transport.output(),
-        context_aggregator.assistant(),
+        assistant_aggregator,
     ])
 
     task = PipelineTask(

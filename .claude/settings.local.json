@@ -9,7 +9,12 @@
       "Bash(python -c \"import flows_contact; print\\(''OK''\\)\")",
       "Bash(pip show:*)",
       "Bash(python -c \"import pipecat.services.deepgram.stt as d; import inspect; print\\(inspect.getsource\\(d.DeepgramSTTService.__init__\\)\\)\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pip index *)",
+      "Bash(cd /tmp)",
+      "Bash(rm -rf pcinspect)",
+      "Bash(mkdir pcinspect *)",
+      "Bash(pip install *)"
     ]
   }
 }
