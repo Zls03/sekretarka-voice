@@ -248,7 +248,7 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
-        model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj aktualną nazwę
+        model="models/gemini-2.5-flash-native-audio-preview-12-2025",  # stary "preview-native-audio-dialog" zwracał 404 (wycofany)
         voice_id="Aoede",
         system_instruction=system_prompt,
         # transcribe_user_audio/transcribe_model_audio usunięte w pipecat 1.x —
@@ -424,7 +424,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
 
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
-        model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj nazwę modelu
+        model="models/gemini-2.5-flash-native-audio-preview-12-2025",  # stary "preview-native-audio-dialog" zwracał 404 (wycofany)
         voice_id="Aoede",
         system_instruction=system_prompt,
     )
