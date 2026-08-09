@@ -1,0 +1,25 @@
+# Wymagania dla bot_gemini_test.py — IZOLOWANY test Gemini Live.
+#
+# WAŻNE: pipecat-ai jest tu przypięty na 1.4.0 (nowe API: LLMContext,
+# LLMContextAggregatorPair, GeminiLiveLLMService). To CELOWO inna wersja
+# niż w requirements.txt (0.0.104), której nadal używa produkcyjny bot.py
+# ze starym API (OpenAILLMContext, create_context_aggregator).
+#
+# NIE instaluj tego pliku w tym samym środowisku/serwisie co bot.py —
+# podbicie pipecat-ai wywali produkcję. Ten plik ma sens tylko jako
+# requirements dla OSOBNEGO serwisu Railway, który uruchamia
+# `uvicorn bot_gemini_test:app`.
+
+pipecat-ai[google]==1.4.0
+
+# Server
+fastapi
+uvicorn[standard]
+python-dotenv
+python-multipart
+
+# HTTP (helpers.py gada z Turso po HTTP API)
+httpx
+
+# Reużywane przez helpers.py
+cryptography

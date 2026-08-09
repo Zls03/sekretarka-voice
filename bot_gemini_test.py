@@ -24,9 +24,17 @@ URUCHOMIENIE OBOK ISTNIEJĄCEGO bot.py:
   ale na start bezpieczniej jest mieć to jako kompletnie osobny proces/deploy,
   żeby nic nie mogło wywrócić produkcji.
 
+WYMAGANY PIPECAT: >=1.4.0 (NIE ten sam pin co bot.py, który siedzi na 0.0.104
+  i używa starego OpenAILLMContext API). Ten plik musi być zainstalowany z
+  osobnego pliku wymagań — patrz requirements-gemini-test.txt — i wdrożony
+  jako OSOBNY serwis Railway z własnym build commandem, inaczej podbicie
+  pipecat-ai w requirements.txt wywali produkcyjny bot.py (patrz sekcja niżej).
+
 UWAGI / RZECZY DO SPRAWDZENIA W TEŚCIE:
   - Nazwa modelu "gemini-2.5-flash-preview-native-audio-dialog" może się zmienić
     — sprawdź aktualną listę modeli Live API w Google AI Studio przed testem.
+    (domyślny model w pipecat 1.4.0 to "gemini-2.5-flash-native-audio-preview-12-2025"
+    — jeśli Twój model zwróci błąd 404 od Google, spróbuj tego).
   - Gemini Live generuje audio natywnie w 24kHz, Twilio streamuje 8kHz mu-law.
     Pipecat powinien to resamplować automatycznie w transporcie, ale posłuchaj
     uważnie czy nie ma artefaktów/przycięć w głosie — to częsty problem na starcie.
@@ -243,12 +251,16 @@ async def websocket_gemini_test(websocket: WebSocket):
         model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj aktualną nazwę
         voice_id="Aoede",
         system_instruction=system_prompt,
-        transcribe_user_audio=True,
-        transcribe_model_audio=True,
+        # transcribe_user_audio/transcribe_model_audio usunięte w pipecat 1.x —
+        # transkrypcja wejścia i wyjścia jest teraz zawsze włączona wewnątrz usługi.
     )
 
     context = LLMContext()
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
+    # realtime_service_mode=True: Gemini Live nie emituje UserStarted/StoppedSpeakingFrame,
+    # więc zapisy do kontekstu muszą iść w trybie "trailing" zamiast czekać na te ramki.
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+        context, realtime_service_mode=True
+    )
     latency_monitor = LatencyMonitor()
 
     pipeline = Pipeline([
@@ -415,12 +427,12 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         model="models/gemini-2.5-flash-preview-native-audio-dialog",  # zweryfikuj nazwę modelu
         voice_id="Aoede",
         system_instruction=system_prompt,
-        transcribe_user_audio=True,
-        transcribe_model_audio=True,
     )
 
     context = LLMContext()
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+        context, realtime_service_mode=True
+    )
     latency_monitor = LatencyMonitor()
 
     pipeline = Pipeline([
