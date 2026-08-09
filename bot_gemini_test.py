@@ -70,7 +70,7 @@ from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
 
 # Reużywamy Twoich istniejących modułów TYLKO do odczytu danych firmy
-from helpers import get_tenant_by_phone, db
+from helpers import get_tenant_by_phone, db, saas_db
 
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -316,7 +316,17 @@ async def vonage_answer(request: Request):
     from_number = request.query_params.get("from", "")
     logger.info(f"📞 [VONAGE TEST] Answer: {from_number} → {to_number}")
 
-    tenant = await get_tenant_by_phone(to_number)
+    # Numer Vonage jest nowy i nie ma go w bazie tenantów — na czas testu
+    # ładujemy istniejącego tenanta na sztywno przez zmienną środowiskową,
+    # zamiast szukać po numerze (który i tak nie pasowałby do żadnego wpisu).
+    forced_tenant_id = os.getenv("TEST_TENANT_ID", "")
+    if forced_tenant_id:
+        rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [forced_tenant_id])
+        tenant = await get_tenant_by_phone(rows[0]["phone_number"]) if rows else None
+        logger.info(f"📞 [VONAGE TEST] Using forced tenant_id={forced_tenant_id} -> {tenant.get('name') if tenant else 'NOT FOUND'}")
+    else:
+        tenant = await get_tenant_by_phone(to_number)
+
     if not tenant:
         ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
         return JSONResponse(ncco)
@@ -339,11 +349,15 @@ async def vonage_answer(request: Request):
     return JSONResponse(ncco)
 
 
-@app.post("/vonage/events")
+@app.api_route("/vonage/events", methods=["GET", "POST"])
 async def vonage_events(request: Request):
     try:
-        data = await request.json()
-        logger.info(f"[VONAGE EVENT] {data.get('status', data)}")
+        if request.method == "POST":
+            data = await request.json()
+            logger.info(f"[VONAGE EVENT] {data.get('status', data)}")
+        else:
+            status = request.query_params.get("status", "")
+            logger.info(f"[VONAGE EVENT] status={status}")
     except Exception:
         pass
     return Response(content="", status_code=200)
@@ -360,7 +374,13 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     await websocket.accept()
     logger.info(f"🔌 [VONAGE TEST] WebSocket connected, tenant_id={tenant_id}")
 
-    rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [tenant_id])
+    rows = None
+    is_saas = tenant_id.startswith("firm_")
+    if is_saas:
+        rows = await saas_db.execute("SELECT phone_number FROM firms WHERE id = ?", [tenant_id])
+    else:
+        rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [tenant_id])
+
     if not rows or not rows[0].get("phone_number"):
         logger.error("❌ [VONAGE TEST] Nie znaleziono tenanta — zamykam")
         await websocket.close()
