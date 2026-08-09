@@ -90,7 +90,7 @@ from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import (
-    EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
+    EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame, TTSStoppedFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
@@ -104,6 +104,7 @@ from pipecat.services.openai.realtime.events import (
     ResponseCreateEvent,
     ResponseProperties,
     SessionProperties,
+    SessionUpdateEvent,
 )
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM) i
@@ -122,7 +123,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "coral")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "shimmer")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
@@ -148,7 +149,12 @@ def make_call_state() -> dict:
     return {
         "last_user_frame": None,       # event-loop time, tylko do pomiaru TTFB
         "waiting_for_bot_audio": False,
-        "idle_since": now,             # wall-clock, do wykrywania ciszy
+        "idle_since": now,             # wall-clock, do wykrywania ciszy — nadpisywany
+                                        # ponownie w monitor_call_health() przy starcie,
+                                        # żeby nie liczyć czasu setupu (CRM, VAD, connect)
+                                        # jako "ciszy klienta"
+        "suppress_idle_reset": False,  # True = kolejny TTSStoppedFrame to say_now()
+                                        # (dopytanie/pożegnanie), nie prawdziwa tura bota
         "ended": False,
     }
 
@@ -177,15 +183,19 @@ class UserTranscriptMonitor(FrameProcessor):
 
 
 class BotAudioMonitor(FrameProcessor):
-    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em) i liczy deltę od
-    końca wypowiedzi usera.
+    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em), liczy deltę od
+    końca wypowiedzi usera, i resetuje zegar ciszy na koniec KAŻDEJ prawdziwej
+    wypowiedzi bota (powitanie, odpowiedź) — po niej realnie czekamy na klienta,
+    więc to naturalny start odliczania.
 
-    ⚠️ CELOWO nie rusza `idle_since` na mowę bota (TTSStarted/StoppedFrame) — pierwsza
-    wersja to robiła i to był bug: własne dopytanie bota "Halo? Czy mnie słyszysz?"
-    resetowało zegar ciszy, więc nigdy nie dochodziło do progu rozłączenia (bot pytał
-    w kółko co ~15s zamiast eskalować do hangupu). 1:1 z cascade (bot.py): tam licznik
-    ciszy siedzi WYŁĄCZNIE na `_stt_end_time` (koniec mowy KLIENTA) — mowa bota nigdy
-    go nie dotyka. `idle_since` jest resetowany tylko w UserTranscriptMonitor."""
+    ⚠️ WYJĄTEK: automatyczne dopytanie/pożegnanie z say_now() (monitor_call_health)
+    jest OZNACZONE flagą `call_state["suppress_idle_reset"]`, więc TO konkretnie
+    NIE resetuje zegara — inaczej własne "Halo? Czy mnie słyszysz?" bota resetowałoby
+    zegar który ma doprowadzić do rozłączenia, i bot pytałby w kółko bez końca
+    (dokładnie to się stało w poprzedniej wersji, gdzie w ogóle nie resetowałem na
+    mowę bota — ale to poszło za daleko: wtedy też PRAWDZIWE powitanie/odpowiedzi nie
+    resetowały zegara, więc licznik ciszy leciał od momentu POŁĄCZENIA, nie od końca
+    powitania — "Halo?" potrafiło wystrzelić prawie natychmiast po przywitaniu)."""
 
     def __init__(self, state: dict):
         super().__init__()
@@ -195,6 +205,11 @@ class BotAudioMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, TTSTextFrame) and frame.text:
             logger.info(f"⏱️ [BOT] mówi: {frame.text!r}")
+        if isinstance(frame, TTSStoppedFrame):
+            if self._state.get("suppress_idle_reset"):
+                self._state["suppress_idle_reset"] = False
+            else:
+                self._state["idle_since"] = time.time()
         if isinstance(frame, TTSAudioRawFrame) and self._state["waiting_for_bot_audio"]:
             self._state["waiting_for_bot_audio"] = False
             start = self._state.get("last_user_frame")
@@ -214,12 +229,16 @@ IDLE_HANGUP_SECONDS = 20    # tyle ciszy (10s po dopytaniu) -> kończymy połąc
 MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
 
 
-async def say_now(llm: OpenAIRealtimeLLMService, text: str):
+async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
     """Każe modelowi Realtime powiedzieć DOKŁADNIE ten tekst, jako jednorazową
     odpowiedź (response.create z instructions), bez dopisywania niczego do historii
     rozmowy. Odpowiednik TTSSpeakFrame z cascade — TTSSpeakFrame/LLMMessagesAppendFrame
     NIE działają z OpenAIRealtimeLLMService (brak osobnego stopnia TTS w pipeline,
-    a _handle_messages_append to w pipecat 1.4.0 wciąż pusty stub)."""
+    a _handle_messages_append to w pipecat 1.4.0 wciąż pusty stub).
+
+    Ustawia suppress_idle_reset, żeby BotAudioMonitor NIE zresetował zegara ciszy
+    na tę wypowiedź — to automatyczne dopytanie/pożegnanie, nie prawdziwa tura bota."""
+    call_state["suppress_idle_reset"] = True
     await llm.send_client_event(
         ResponseCreateEvent(
             response=ResponseProperties(
@@ -235,6 +254,11 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
     równoległych (UserIdleProcessor + osobny silence-check) jak w cascade — to
     duplikowało się tam bez wyraźnego powodu, tu wystarczy jeden zegar idle_since."""
     call_start = time.time()
+    # Nadpisujemy idle_since dopiero TERAZ (nie w make_call_state()) — inaczej cały
+    # czas setupu przed tym momentem (CRM, ładowanie VAD, connect do modelu, TTFB
+    # powitania) liczyłby się jako "cisza klienta", i "Halo?" mogło wystrzelić
+    # prawie natychmiast po przywitaniu, zanim klient zdążył cokolwiek powiedzieć.
+    call_state["idle_since"] = call_start
     idle_warning_given = False
     duration_warning_given = False
 
@@ -251,7 +275,7 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
         if silence > IDLE_HANGUP_SECONDS:
             logger.warning(f"🔇 [REALTIME TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
             call_state["ended"] = True
-            await say_now(llm, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
+            await say_now(llm, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
             await asyncio.sleep(3.0)
             await task.queue_frame(EndFrame())
             break
@@ -259,19 +283,19 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
         if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
             logger.warning(f"🔇 [REALTIME TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
             idle_warning_given = True
-            await say_now(llm, "Halo? Czy mnie słyszysz?")
+            await say_now(llm, call_state, "Halo? Czy mnie słyszysz?")
         elif silence < IDLE_WARNING_SECONDS:
             idle_warning_given = False
 
         if elapsed > MAX_CALL_DURATION - 30 and not duration_warning_given:
             duration_warning_given = True
             logger.warning(f"⚠️ [REALTIME TEST] Zbliża się limit czasu: {elapsed:.0f}s/{MAX_CALL_DURATION}s")
-            await say_now(llm, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
+            await say_now(llm, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
 
         if elapsed > MAX_CALL_DURATION:
             logger.warning(f"🛑 [REALTIME TEST] Limit czasu osiągnięty ({elapsed:.0f}s) — kończę połączenie")
             call_state["ended"] = True
-            await say_now(llm, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
+            await say_now(llm, call_state, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
             await asyncio.sleep(3.0)
             await task.queue_frame(EndFrame())
             break
@@ -522,16 +546,25 @@ PRZYKŁAD STYLU ODPOWIEDZI:
 - Lepiej przyznać że nie wiesz niż zmyślić{crm_hint}"""
 
 
-def build_realtime_instructions(tenant: dict, client_profile: dict = None) -> str:
+def build_realtime_instructions(tenant: dict, client_profile: dict = None, include_greeting: bool = True) -> str:
     """system_instruction dla OpenAI Realtime: rola+styl+biznes+CRM (jak w cascade) plus
-    krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy)."""
-    greeting_text = build_greeting_message(tenant, client_profile)
+    krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy).
+
+    include_greeting=False: bez bloku "zacznij rozmowę mówiąc dokładnie...". Używane gdy
+    dosyłamy zaktualizowany prompt (np. CRM doszedł już PO starcie rozmowy przez
+    session.update) — z tą instrukcją model mógłby zinterpretować aktualizację jako
+    polecenie przywitania się jeszcze raz."""
     role_content = build_role_prompt(tenant, client_profile)
 
-    addendum = f"""
+    greeting_block = ""
+    if include_greeting:
+        greeting_text = build_greeting_message(tenant, client_profile)
+        greeting_block = f"""
 
 ROZPOCZĘCIE ROZMOWY:
-Zacznij rozmowę od razu, mówiąc dokładnie: "{greeting_text}" — nic nie dodawaj przed tym zdaniem, nie witaj się drugi raz później.
+Zacznij rozmowę od razu, mówiąc dokładnie: "{greeting_text}" — nic nie dodawaj przed tym zdaniem, nie witaj się drugi raz później."""
+
+    addendum = f"""{greeting_block}
 
 STYL ODPOWIEDZI:
 - Na proste pytania (cennik, godziny, adres, FAQ) odpowiadaj OD RAZU z informacji które masz powyżej
@@ -550,6 +583,21 @@ Jeśli klient chce się umówić lub porozmawiać z kimś z firmy — powiedz ż
 i zaproponuj kontakt w standardowy sposób później. NIE obiecuj że coś zapiszesz ani że kogoś przekażesz."""
 
     return role_content + addendum
+
+
+async def apply_crm_when_ready(llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task) -> dict | None:
+    """Powitanie leci OD RAZU z generycznym promptem (bez czekania na CRM, ~2-3s HTTP
+    do panelu) — ta funkcja czeka na wynik w tle i, jeśli okaże się że dzwoni znany
+    klient, dosyła zaktualizowany prompt (session.update) w trakcie rozmowy, żeby
+    dane CRM (historia wizyt) były dostępne gdy klient o nie zapyta. include_greeting=False
+    (patrz build_realtime_instructions) — bez tego model mógłby zrozumieć aktualizację
+    jako polecenie przywitania się jeszcze raz."""
+    client_profile = await client_profile_task
+    if client_profile:
+        logger.info(f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
+        updated_prompt = build_realtime_instructions(tenant, client_profile, include_greeting=False)
+        await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
+    return client_profile
 
 
 # ==========================================
@@ -633,7 +681,9 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     logger.info(f"✅ [REALTIME TEST] Tenant: {tenant.get('name')}")
 
-    # CRM lookup w tle równolegle z budową transportu — patrz komentarz w wersji Vonage.
+    # CRM lookup w tle — NIE czekamy na niego przed powitaniem (patrz apply_crm_when_ready
+    # niżej): powitanie leci od razu generyczne, a jeśli CRM znajdzie znanego klienta,
+    # prompt jest dosyłany w trakcie rozmowy (session.update).
     client_profile_task = asyncio.create_task(get_client_profile(tenant.get("id", ""), caller_phone))
 
     transport = FastAPIWebsocketTransport(
@@ -651,11 +701,7 @@ async def websocket_gemini_test(websocket: WebSocket):
         ),
     )
 
-    client_profile = await client_profile_task
-    if client_profile:
-        logger.info(f"👤 [REALTIME TEST] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
-
-    system_prompt = build_realtime_instructions(tenant, client_profile)
+    system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
     call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
@@ -688,6 +734,7 @@ async def websocket_gemini_test(websocket: WebSocket):
         # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu.
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
+        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
@@ -809,9 +856,9 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
 
     logger.info(f"✅ [REALTIME TEST/VONAGE] Tenant: {tenant.get('name')}")
 
-    # CRM lookup (~1-2s, HTTP do panelu) odpalamy w tle RÓWNOLEGLE z budową transportu
-    # (ładowanie Silero VAD itd.) zamiast czekać na niego sekwencyjnie przed
-    # jakąkolwiek inną robotą — o tyle krócej klient czeka w ciszy po odebraniu.
+    # CRM lookup w tle — NIE czekamy na niego przed powitaniem (patrz apply_crm_when_ready
+    # wyżej w pliku): powitanie leci od razu generyczne, a jeśli CRM znajdzie znanego
+    # klienta, prompt jest dosyłany w trakcie rozmowy (session.update).
     client_profile_task = asyncio.create_task(get_client_profile(tenant.get("id", ""), caller_phone))
 
     transport = FastAPIWebsocketTransport(
@@ -829,11 +876,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         ),
     )
 
-    client_profile = await client_profile_task
-    if client_profile:
-        logger.info(f"👤 [REALTIME TEST/VONAGE] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
-
-    system_prompt = build_realtime_instructions(tenant, client_profile)
+    system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
     call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
@@ -864,6 +907,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         logger.info("🎤 [REALTIME TEST/VONAGE] Klient połączony — wybudzam Realtime do przywitania")
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
+        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
