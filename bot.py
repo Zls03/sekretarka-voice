@@ -37,7 +37,7 @@ from flows_contact import contact_owner_function
 _rejected_calls: set = set()
 # FastAPI
 from fastapi import FastAPI, WebSocket, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 
 # Pipecat core
 from pipecat.pipeline.pipeline import Pipeline
@@ -50,6 +50,7 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.services.openai.base_llm import BaseOpenAILLMService
 
 # Pipecat services
@@ -247,6 +248,109 @@ def build_keyterms(tenant: dict) -> list:
     logger.info(f"🎤 Built {len(result)} keyterms for {tenant.get('name', 'unknown')}")
     logger.debug(f"🎤 Keyterms sample: {result[:15]}...")
     return result
+
+
+# ==========================================
+# WSPÓLNE ŁADOWANIE TENANTA (Twilio + Vonage)
+# ==========================================
+
+async def load_tenant_full(tenant_id: str) -> dict | None:
+    """Ładuje pełne dane tenanta (staff, usługi, working_hours, booking_enabled...)
+    po tenant_id. Wspólne dla Twilio (/ws) i Vonage (/ws-vonage) — identyczna
+    logika co wcześniej była inline w websocket_endpoint."""
+    if not tenant_id:
+        return None
+
+    is_saas = tenant_id.startswith("firm_")
+
+    if is_saas:
+        rows = await saas_db.execute(
+            "SELECT phone_number, tts_provider FROM firms WHERE id = ?",
+            [tenant_id]
+        )
+    else:
+        rows = await db.execute(
+            "SELECT phone_number, tts_provider FROM tenants WHERE id = ?",
+            [tenant_id]
+        )
+
+    if not rows or not rows[0].get("phone_number"):
+        return None
+
+    tenant = await get_tenant_by_phone(rows[0]["phone_number"])
+    if not tenant:
+        return None
+
+    raw_tts = dict(rows[0]).get('tts_provider')
+    logger.info(f"🔍 Raw tts_provider from DB: '{raw_tts}'")
+    if not is_saas:
+        tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
+
+    if is_saas:
+        staff_list = tenant.get("staff", [])
+        logger.info(f"   staff: {len(staff_list)} (from saas)")
+    else:
+        staff_rows = await db.execute(
+            "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
+            [tenant_id]
+        )
+        staff_list = [dict(s) for s in staff_rows]
+        if staff_list:
+            placeholders = ",".join("?" * len(staff_list))
+            staff_ids = [s["id"] for s in staff_list]
+            all_svc_rows = await db.execute(
+                f"""SELECT ss.staff_id, srv.id, srv.name, srv.duration_minutes, srv.price
+                    FROM services srv
+                    JOIN staff_services ss ON srv.id = ss.service_id
+                    WHERE ss.staff_id IN ({placeholders})""",
+                staff_ids
+            )
+            svc_by_staff: dict = {}
+            for row in all_svc_rows:
+                r = dict(row)
+                sid = r.pop("staff_id")
+                svc_by_staff.setdefault(sid, []).append(r)
+            for s in staff_list:
+                s["services"] = svc_by_staff.get(s["id"], [])
+        tenant["staff"] = staff_list
+
+    if not tenant.get("services"):
+        all_services = {}
+        for s in staff_list:
+            for svc in s.get("services", []):
+                svc_id = svc.get("id")
+                if svc_id and svc_id not in all_services:
+                    all_services[svc_id] = svc
+        tenant["services"] = list(all_services.values())
+        if tenant["services"]:
+            logger.info(f"   services: {len(tenant['services'])} (built from staff)")
+        else:
+            logger.warning(f"   ⚠️ No services found!")
+    else:
+        logger.info(f"   services: {len(tenant['services'])} (from DB)")
+
+    logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
+    logger.info(f"   tts_provider: {tenant.get('tts_provider')}")
+    logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
+    # Auto-tryb informacyjny gdy brak pracownika z kalendarzem
+    if tenant.get('booking_enabled') == 1:
+        has_ready_staff = any(
+            s.get('google_connected') and
+            len(s.get('services', [])) > 0
+            for s in tenant.get('staff', [])
+        )
+        if not has_ready_staff:
+            tenant['booking_enabled'] = 0
+            logger.warning(f"⚠️ booking_enabled forced to 0 — no staff with calendar+services")
+    logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
+    logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
+    logger.info(f"   transfer_enabled: {tenant.get('transfer_enabled')}")
+    logger.info(f"   transfer_number: {tenant.get('transfer_number')}")
+    for st in staff_list:
+        svc_names = [svc['name'] for svc in st.get('services', [])]
+        logger.info(f"   Staff {st['name']}: {svc_names if svc_names else 'wszystkie usługi'}")
+
+    return tenant
 
 
 # ==========================================
@@ -493,98 +597,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"📋 Call: {call_sid}, tenant: {tenant_id}")
 
                 if tenant_id:
-                    # Wykryj źródło po prefiksie ID
-                    is_saas = tenant_id.startswith("firm_")
-
-                    if is_saas:
-                        # Baza SaaS — czytaj z tabeli firms
-                        rows = await saas_db.execute(
-                            "SELECT phone_number, tts_provider FROM firms WHERE id = ?",
-                            [tenant_id]
-                        )
-                    else:
-                        # Baza admina — stara logika bez zmian
-                        rows = await db.execute(
-                            "SELECT phone_number, tts_provider FROM tenants WHERE id = ?",
-                            [tenant_id]
-                        )
-
-                    if rows and rows[0].get("phone_number"):
-                        tenant = await get_tenant_by_phone(rows[0]["phone_number"])
-
-                        if tenant:
-                            raw_tts = dict(rows[0]).get('tts_provider')
-                            logger.info(f"🔍 Raw tts_provider from DB: '{raw_tts}'")
-                            # Dla SaaS — nie nadpisuj, helpers.py już poprawnie zmapował provider
-                            if not is_saas:
-                                tenant['tts_provider'] = raw_tts if raw_tts else 'elevenlabs'
-                            # Dla SaaS tts_provider już jest ustawiony przez _get_tenant_from_saas
-
-                            if is_saas:
-                                # SaaS — staff już załadowany przez get_tenant_by_phone
-                                staff_list = tenant.get("staff", [])
-                                logger.info(f"   staff: {len(staff_list)} (from saas)")
-                            else:
-                                # Admin — batch query zamiast N+1
-                                staff_rows = await db.execute(
-                                    "SELECT * FROM staff WHERE tenant_id = ? AND is_active = 1",
-                                    [tenant_id]
-                                )
-                                staff_list = [dict(s) for s in staff_rows]
-                                if staff_list:
-                                    placeholders = ",".join("?" * len(staff_list))
-                                    staff_ids = [s["id"] for s in staff_list]
-                                    all_svc_rows = await db.execute(
-                                        f"""SELECT ss.staff_id, srv.id, srv.name, srv.duration_minutes, srv.price
-                                            FROM services srv
-                                            JOIN staff_services ss ON srv.id = ss.service_id
-                                            WHERE ss.staff_id IN ({placeholders})""",
-                                        staff_ids
-                                    )
-                                    svc_by_staff: dict = {}
-                                    for row in all_svc_rows:
-                                        r = dict(row)
-                                        sid = r.pop("staff_id")
-                                        svc_by_staff.setdefault(sid, []).append(r)
-                                    for s in staff_list:
-                                        s["services"] = svc_by_staff.get(s["id"], [])
-                                tenant["staff"] = staff_list
-
-                            if not tenant.get("services"):
-                                all_services = {}
-                                for s in staff_list:
-                                    for svc in s.get("services", []):
-                                        svc_id = svc.get("id")
-                                        if svc_id and svc_id not in all_services:
-                                            all_services[svc_id] = svc
-                                tenant["services"] = list(all_services.values())
-                                if tenant["services"]:
-                                    logger.info(f"   services: {len(tenant['services'])} (built from staff)")
-                                else:
-                                    logger.warning(f"   ⚠️ No services found!")
-                            else:
-                                logger.info(f"   services: {len(tenant['services'])} (from DB)")
-
-                            logger.info(f"✅ Loaded tenant: {tenant.get('name')}")
-                            logger.info(f"   tts_provider: {tenant.get('tts_provider')}")
-                            logger.info(f"   booking_enabled: {tenant.get('booking_enabled')}")
-                            # Auto-tryb informacyjny gdy brak pracownika z kalendarzem
-                            if tenant.get('booking_enabled') == 1:
-                                has_ready_staff = any(
-                                    s.get('google_connected') and
-                                    len(s.get('services', [])) > 0
-                                    for s in tenant.get('staff', [])
-                                )
-                                if not has_ready_staff:
-                                    tenant['booking_enabled'] = 0
-                                    logger.warning(f"⚠️ booking_enabled forced to 0 — no staff with calendar+services")
-                            logger.info(f"   info_services: {len(tenant.get('info_services', []))} items")
-                            logger.info(f"   working_hours: {len(tenant.get('working_hours', []))} days")
-                            logger.info(f"   transfer_enabled: {tenant.get('transfer_enabled')}")
-                            logger.info(f"   transfer_number: {tenant.get('transfer_number')}")
-                            for st in staff_list:
-                                svc_names = [svc['name'] for svc in st.get('services', [])]
-                                logger.info(f"   Staff {st['name']}: {svc_names if svc_names else 'wszystkie usługi'}")
+                    tenant = await load_tenant_full(tenant_id)
 
                 break
 
@@ -605,10 +618,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Nagrywanie startuje przez <Start><Recording> w TwiML (patrz /twilio/incoming)
     logger.info(f"🎙️ recording_enabled={tenant.get('recording_enabled')!r}, call_sid={call_sid!r}")
-
-    # ==========================================
-    # KROK 2: Tworzymy pipeline
-    # ==========================================
 
     logger.info(f"🔧 Creating pipeline with stream_sid: {stream_sid}")
 
@@ -633,6 +642,38 @@ async def websocket_endpoint(websocket: WebSocket):
             ),
         )
     )
+
+    await run_call_pipeline(
+        transport=transport,
+        tenant=tenant,
+        call_sid=call_sid,
+        stream_sid=stream_sid,
+        caller_phone=caller_phone,
+        greeting_played=greeting_played,
+        audio_in_sample_rate=8000,
+        audio_out_sample_rate=8000,
+    )
+
+
+# ==========================================
+# WSPÓLNY PIPELINE (Twilio + Vonage)
+# ==========================================
+
+async def run_call_pipeline(
+    transport,
+    tenant: dict,
+    call_sid: str,
+    stream_sid: str | None = None,
+    caller_phone: str = "nieznany",
+    greeting_played: bool = False,
+    audio_in_sample_rate: int = 8000,
+    audio_out_sample_rate: int = 8000,
+):
+    """Buduje i uruchamia pełny pipeline (STT/LLM/TTS/FlowManager) dla połączenia.
+
+    Transport-agnostyczne — wspólne dla Twilio (/ws) i Vonage (/ws-vonage).
+    Transport (już z odpowiednim serializerem) buduje wywołujący, bo to jedyna
+    część zależna od dostawcy telefonii."""
 
     from deepgram import LiveOptions
 
@@ -960,8 +1001,8 @@ async def websocket_endpoint(websocket: WebSocket):
         params=PipelineParams(
             allow_interruptions=False,
             enable_metrics=True,
-            audio_in_sample_rate=8000,
-            audio_out_sample_rate=8000,
+            audio_in_sample_rate=audio_in_sample_rate,
+            audio_out_sample_rate=audio_out_sample_rate,
         )
     )
 
@@ -1058,9 +1099,225 @@ async def websocket_endpoint(websocket: WebSocket):
                 error_message=str(e)
             )
     finally:
-        conversation_ended = True 
+        conversation_ended = True
         logger.info("🏁 Pipeline finished")
         await save_call_log(flow_manager)
+
+
+# ==========================================
+# VONAGE — ścieżka alternatywna obok Twilio
+# ==========================================
+"""
+Vonage nie ma pojedynczego pola "webhook" na numerze — numer musi być
+przypisany do Vonage "Application" (Voice), a ta aplikacja ma:
+  - Answer URL (GET)  -> tu zwracamy NCCO (JSON, odpowiednik TwiML)
+  - Event URL (POST/GET) -> status callback (odpowiednik /twilio/status)
+
+Audio idzie jako surowe PCM 16-bit (nie base64 mu-law jak w Twilio), stąd
+VonageFrameSerializer zamiast TwilioFrameSerializer i inny sample rate.
+
+ŚWIADOMIE NIE zaimplementowane w tej wersji (do zrobienia osobno później):
+  - nagrywanie rozmów (Twilio ma to przez <Start><Recording> w TwiML)
+  - transfer do właściciela — dziś działa przez dwuetapowy mechanizm
+    specyficzny dla Twilio (flows_contact.py zapisuje "pending transfer",
+    a /twilio/after-stream czyta go i zwraca TwiML <Dial>). Dla Vonage
+    contact_owner_function zapisze wpis do transfer_requests, ale nic
+    go nie wykona — potrzebny osobny mechanizm (Vonage REST API transfer
+    na żywym połączeniu).
+"""
+
+
+@app.get("/vonage/answer")
+async def vonage_answer(request: Request):
+    """Obsługa połączenia przychodzącego z Vonage — zwraca NCCO (JSON) zamiast TwiML."""
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
+
+    logger.info(f"📞 [VONAGE] Incoming call: {from_number} → {to_number} (uuid: {call_uuid})")
+
+    tenant = await get_tenant_by_phone(to_number)
+
+    if not tenant:
+        logger.warning(f"❌ [VONAGE] No tenant for {to_number}")
+        _rejected_calls.add(call_uuid)
+        return JSONResponse([
+            {"action": "talk", "text": "Przepraszamy, ten numer nie jest aktywny.", "language": "pl-PL"}
+        ])
+
+    if tenant.get("is_blocked"):
+        logger.warning(f"🚫 [VONAGE] Tenant {tenant['id']} BLOCKED")
+        _rejected_calls.add(call_uuid)
+        return JSONResponse([
+            {"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}
+        ])
+
+    # Pre-check kredytów dla SaaS
+    if tenant.get("source") == "saas":
+        user_credits = await saas_db.execute(
+            "SELECT balance FROM credits WHERE user_id = ?",
+            [tenant.get("user_id", "")]
+        )
+        balance = float(user_credits[0].get("balance") or 0) if user_credits else 0
+        if balance < PRICE_PER_MINUTE:
+            logger.warning(f"🚫 [VONAGE] SaaS {tenant['id']} — brak kredytów: {balance:.2f} zł")
+            _rejected_calls.add(call_uuid)
+            return JSONResponse([
+                {"action": "talk", "text": "Przepraszamy, konto nie ma wystarczających środków. Do widzenia.", "language": "pl-PL"}
+            ])
+
+    logger.info(f"✅ [VONAGE] Tenant: {tenant.get('name')}")
+    host = request.headers.get("host", "localhost")
+
+    ws_uri = (
+        f"wss://{host}/ws-vonage"
+        f"?tenantId={tenant['id']}&callSid={call_uuid}&callerPhone={from_number}"
+    )
+
+    ncco = [
+        {
+            "action": "connect",
+            "endpoint": [
+                {
+                    "type": "websocket",
+                    "uri": ws_uri,
+                    "content-type": "audio/l16;rate=16000",
+                }
+            ],
+        }
+    ]
+    return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/events", methods=["GET", "POST"])
+async def vonage_events(request: Request):
+    """Status callback od Vonage — aktualizuje call_logs i odejmuje kredyty
+    (odpowiednik /twilio/status). Samodzielnie ustala tenanta po numerze "to"
+    (jak Twilio) — NIE polega na tym, że call_logs już istnieje, bo to by
+    tworzyło wyścig z save_call_log() (wpis powstaje dopiero na końcu
+    pipeline'u, a event "completed" od Vonage może przyjść wcześniej).
+
+    Vonage wysyła "completed" osobno dla KAŻDEJ nogi połączenia (inbound
+    i outbound, ten sam numer "to", różne uuid) — przetwarzamy tylko
+    direction=inbound, inaczej naliczylibyśmy podwójnie."""
+    try:
+        if request.method == "POST":
+            data = await request.json()
+        else:
+            data = dict(request.query_params)
+    except Exception:
+        data = dict(request.query_params)
+
+    status = data.get("status", "")
+    call_uuid = data.get("uuid", "")
+    duration_str = data.get("duration", "0")
+    to_number = data.get("to", "")
+    from_number = data.get("from", "nieznany")
+    direction = data.get("direction", "")
+
+    logger.info(f"📊 [VONAGE] status: {call_uuid} | {status} | {duration_str}s | direction={direction}")
+
+    if status != "completed" or not call_uuid:
+        return Response(content="", status_code=200)
+
+    if direction and direction != "inbound":
+        logger.info(f"📊 [VONAGE] Pomijam noga={direction} (liczymy tylko inbound, żeby nie naliczyć podwójnie)")
+        return Response(content="", status_code=200)
+
+    try:
+        duration = int(duration_str) if duration_str else 0
+
+        tenant = await get_tenant_by_phone(to_number) if to_number else None
+        if not tenant:
+            logger.warning(f"⚠️ [VONAGE] Nie znaleziono tenanta dla {to_number}")
+            return Response(content="", status_code=200)
+
+        tenant_id = tenant["id"]
+        is_saas_tenant = tenant.get("source") == "saas"
+        target_db = saas_db if is_saas_tenant else db
+
+        existing = await target_db.execute(
+            "SELECT id FROM call_logs WHERE call_sid = ?", [call_uuid]
+        )
+        if existing:
+            await target_db.execute(
+                "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?",
+                [duration, status, call_uuid]
+            )
+            logger.info(f"📊 [VONAGE] Updated call log: {call_uuid} → {duration}s")
+        else:
+            await target_db.execute(
+                """INSERT INTO call_logs
+                   (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                [
+                    f"call_{int(datetime.utcnow().timestamp())}",
+                    tenant_id, call_uuid, from_number, duration, status,
+                ]
+            )
+            logger.info(f"📊 [VONAGE] Created call log: {call_uuid} → {duration}s")
+
+        await apply_call_charge(tenant_id, is_saas_tenant, call_uuid, status, duration)
+
+    except Exception as e:
+        logger.error(f"[VONAGE] events error: {e}")
+
+    return Response(content="", status_code=200)
+
+
+@app.websocket("/ws-vonage")
+async def websocket_vonage_endpoint(websocket: WebSocket):
+    """WebSocket endpoint dla Vonage Audio Connector — odpowiednik /ws dla Twilio."""
+    tenant_id = websocket.query_params.get("tenantId")
+    call_sid = websocket.query_params.get("callSid") or "unknown"
+    caller_phone = websocket.query_params.get("callerPhone") or "nieznany"
+
+    if not tenant_id:
+        logger.error("❌ [VONAGE] Brak tenantId w query params — zamykam")
+        await websocket.close()
+        return
+
+    await websocket.accept()
+    logger.info(f"🔌 [VONAGE] WebSocket connected, tenant_id={tenant_id}, call_sid={call_sid}")
+
+    tenant = await load_tenant_full(tenant_id)
+    if not tenant:
+        logger.error(f"❌ [VONAGE] Nie znaleziono tenanta {tenant_id} — zamykam")
+        await websocket.close()
+        return
+
+    from pipecat.audio.vad.vad_analyzer import VADParams
+
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    confidence=0.6,
+                    start_secs=0.2,
+                    stop_secs=0.3,
+                    min_volume=0.4,
+                )
+            ),
+            serializer=VonageFrameSerializer(
+                params=VonageFrameSerializer.InputParams(vonage_sample_rate=16000),
+            ),
+        ),
+    )
+
+    await run_call_pipeline(
+        transport=transport,
+        tenant=tenant,
+        call_sid=call_sid,
+        stream_sid=None,
+        caller_phone=caller_phone,
+        greeting_played=False,
+        audio_in_sample_rate=16000,
+        audio_out_sample_rate=16000,
+    )
 
 
 # ==========================================
@@ -1173,6 +1430,108 @@ async def save_call_log(flow_manager):
 # ==========================================
 
 PRICE_PER_MINUTE = 0.39  # zł za minutę rozmowy
+
+
+async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str, call_status: str, duration: int):
+    """Nalicza minuty/kredyty za zakończoną rozmowę. Wspólne dla Twilio (/twilio/status)
+    i Vonage (/vonage/events) — wydzielone, bo to logika finansowa i chcemy mieć
+    jedno miejsce do poprawiania, nie dwie kopie do synchronizowania."""
+    duration_minutes = duration / 60.0
+
+    if call_sid in _rejected_calls:
+        _rejected_calls.discard(call_sid)
+        logger.info(f"📊 Skipping charge — call was rejected (no funds): {call_sid}")
+        return
+
+    if call_status != "completed" or duration <= 0:
+        return
+
+    if is_saas_tenant:
+        saas_row = await saas_db.execute("SELECT user_id FROM firms WHERE id = ?", [tenant_id])
+        saas_user_id = saas_row[0]["user_id"] if saas_row else None
+        if not saas_user_id:
+            logger.warning(f"⚠️ No user_id for SaaS firm {tenant_id} — can't charge")
+            return
+
+        cost = round(duration_minutes * PRICE_PER_MINUTE, 4)
+
+        await saas_db.execute(
+            "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?",
+            [duration_minutes, tenant_id]
+        )
+        await saas_db.execute(
+            """UPDATE credits
+               SET balance = balance - ?,
+                   total_spent = total_spent + ?
+               WHERE user_id = ?""",
+            [cost, cost, saas_user_id]
+        )
+        logger.info(f"📊 SaaS: -{cost:.4f} zł ({duration_minutes:.2f} min) for user {saas_user_id}")
+
+        # Sprawdź czy saldo wystarczy na następną rozmowę
+        credits = await saas_db.execute(
+            "SELECT balance FROM credits WHERE user_id = ?",
+            [saas_user_id]
+        )
+        if credits:
+            balance = float(credits[0].get("balance") or 0)
+            if balance < PRICE_PER_MINUTE:
+                await saas_db.execute(
+                    "UPDATE firms SET is_blocked = 1 WHERE id = ?",
+                    [tenant_id]
+                )
+                logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
+
+        # Sprawdź limit minut
+        firm_data = await saas_db.execute(
+            "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?",
+            [tenant_id]
+        )
+        if firm_data:
+            used = float(firm_data[0].get("minutes_used") or 0)
+            limit = int(firm_data[0].get("minutes_limit") or 0)
+            if limit > 0 and used >= limit * 0.99:
+                await saas_db.execute(
+                    "UPDATE firms SET is_blocked = 1 WHERE id = ?",
+                    [tenant_id]
+                )
+                logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min")
+
+        # Zapisz transakcję
+        await saas_db.execute(
+            """INSERT INTO transactions
+               (id, user_id, type, amount, description, created_at)
+               VALUES (?, ?, 'usage', ?, ?, datetime('now'))""",
+            [
+                f"tx_{call_sid[:12]}",
+                saas_user_id,
+                -cost,
+                f"Rozmowa {duration}s ({duration_minutes:.2f} min)",
+            ]
+        )
+
+    else:
+        # Admin — stara logika
+        await db.execute(
+            "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
+            [duration_minutes, tenant_id]
+        )
+        logger.info(f"📊 Admin: +{duration_minutes:.2f} min for {tenant_id}")
+
+        tenant_data = await db.execute(
+            "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?",
+            [tenant_id]
+        )
+        if tenant_data:
+            used = float(tenant_data[0].get("minutes_used", 0))
+            limit = int(tenant_data[0].get("minutes_limit", 100))
+            if used >= limit * 0.99:
+                await db.execute(
+                    "UPDATE tenants SET is_blocked = 1 WHERE id = ?",
+                    [tenant_id]
+                )
+                logger.warning(f"⚠️ Admin tenant {tenant_id} BLOCKED - limit reached")
+
 
 @app.post("/twilio/recording")
 async def twilio_recording(request: Request):
@@ -1304,7 +1663,6 @@ async def twilio_status(request: Request):
     if call_status in ["completed", "busy", "no-answer", "failed", "canceled"]:
         try:
             duration = int(call_duration) if call_duration else 0
-            duration_minutes = duration / 60.0
             phone_suffix = called.replace(" ", "").replace("-", "")[-9:]
 
             # ── 1. Szukaj w bazie ADMINA ──
@@ -1359,92 +1717,7 @@ async def twilio_status(request: Request):
                 logger.info(f"📊 Created call log: {call_sid} → {duration}s")
 
             # ── 4. Aktualizuj minuty / kredyty ──
-            if call_sid in _rejected_calls:
-                _rejected_calls.discard(call_sid)
-                logger.info(f"📊 Skipping charge — call was rejected (no funds): {call_sid}")
-            elif call_status == "completed" and duration > 0:
-
-                if is_saas_tenant:
-                    # SaaS — odejmuj kredyty z konta użytkownika
-                    cost = round(duration_minutes * PRICE_PER_MINUTE, 4)
-
-                    await saas_db.execute(
-                        "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?",
-                        [duration_minutes, tenant_id]
-                    )
-
-                    await saas_db.execute(
-                        """UPDATE credits
-                           SET balance = balance - ?,
-                               total_spent = total_spent + ?
-                           WHERE user_id = ?""",
-                        [cost, cost, saas_user_id]
-                    )
-                    logger.info(f"📊 SaaS: -{cost:.4f} zł ({duration_minutes:.2f} min) for user {saas_user_id}")
-
-                    # Sprawdź czy saldo wystarczy na następną rozmowę
-                    credits = await saas_db.execute(
-                        "SELECT balance FROM credits WHERE user_id = ?",
-                        [saas_user_id]
-                    )
-                    if credits:
-                        balance = float(credits[0].get("balance") or 0)
-                        if balance < PRICE_PER_MINUTE:
-                            await saas_db.execute(
-                                "UPDATE firms SET is_blocked = 1 WHERE id = ?",
-                                [tenant_id]
-                            )
-                            logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
-
-                    # Sprawdź limit minut
-                    firm_data = await saas_db.execute(
-                        "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?",
-                        [tenant_id]
-                    )
-                    if firm_data:
-                        used = float(firm_data[0].get("minutes_used") or 0)
-                        limit = int(firm_data[0].get("minutes_limit") or 0)
-                        if limit > 0 and used >= limit * 0.99:
-                            await saas_db.execute(
-                                "UPDATE firms SET is_blocked = 1 WHERE id = ?",
-                                [tenant_id]
-                            )
-                            logger.warning(f"⚠️ SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min")
-
-                    # Zapisz transakcję
-                    await saas_db.execute(
-                        """INSERT INTO transactions
-                           (id, user_id, type, amount, description, created_at)
-                           VALUES (?, ?, 'usage', ?, ?, datetime('now'))""",
-                        [
-                            f"tx_{call_sid[:12]}",
-                            saas_user_id,
-                            -cost,
-                            f"Rozmowa {duration}s ({duration_minutes:.2f} min)",
-                        ]
-                    )
-
-                else:
-                    # Admin — stara logika
-                    await db.execute(
-                        "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?",
-                        [duration_minutes, tenant_id]
-                    )
-                    logger.info(f"📊 Admin: +{duration_minutes:.2f} min for {tenant_id}")
-
-                    tenant_data = await db.execute(
-                        "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?",
-                        [tenant_id]
-                    )
-                    if tenant_data:
-                        used = float(tenant_data[0].get("minutes_used", 0))
-                        limit = int(tenant_data[0].get("minutes_limit", 100))
-                        if used >= limit * 0.99:
-                            await db.execute(
-                                "UPDATE tenants SET is_blocked = 1 WHERE id = ?",
-                                [tenant_id]
-                            )
-                            logger.warning(f"⚠️ Admin tenant {tenant_id} BLOCKED - limit reached")
+            await apply_call_charge(tenant_id, is_saas_tenant, call_sid, call_status, duration)
 
         except Exception as e:
             logger.error(f"Twilio status error: {e}")
