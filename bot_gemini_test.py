@@ -130,7 +130,10 @@ from pipecat.services.openai.realtime.events import (
 # patrz docstring wyżej po co ten podział.
 from helpers import get_tenant_by_phone, get_client_profile, db
 from realtime_prompt import build_realtime_instructions
-from realtime_tools import build_contact_owner_tool, build_end_conversation_tool
+from realtime_tools import (
+    build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
+    maybe_send_call_summary,
+)
 
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -141,7 +144,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "marin")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "cedar")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
@@ -353,7 +356,9 @@ def build_realtime_llm(system_prompt: str, tools: list | None = None):
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context, realtime_service_mode=True
     )
-    return llm, user_aggregator, assistant_aggregator
+    # context zwracany też osobno — potrzebny na końcu rozmowy do raportu
+    # (realtime_tools.py::maybe_send_call_summary czyta context.get_messages()).
+    return llm, user_aggregator, assistant_aggregator, context
 
 
 async def apply_crm_when_ready(llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task) -> dict | None:
@@ -473,13 +478,20 @@ async def websocket_gemini_test(websocket: WebSocket):
     )
 
     task_box = {"task": None}
+    context_box = {"context": None}
     call_state = make_call_state()
     tools = [
         build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
         build_end_conversation_tool(task_box, call_state),
     ]
+    if tenant.get("lead_mode", 0) == 1:
+        # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
+        # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
+        # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
+        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
+    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(system_prompt, tools=tools)
+    context_box["context"] = llm_context
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
 
@@ -527,6 +539,10 @@ async def websocket_gemini_test(websocket: WebSocket):
         logger.error(f"[REALTIME TEST] Pipeline error: {e}")
     finally:
         logger.info("🏁 [REALTIME TEST] Koniec połączenia")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST] Call summary error: {e}")
 
 
 @app.get("/health-gemini-test")
@@ -654,13 +670,20 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     )
 
     task_box = {"task": None}
+    context_box = {"context": None}
     call_state = make_call_state()
     tools = [
         build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
         build_end_conversation_tool(task_box, call_state),
     ]
+    if tenant.get("lead_mode", 0) == 1:
+        # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
+        # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
+        # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
+        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
+    llm, user_aggregator, assistant_aggregator, llm_context = build_realtime_llm(system_prompt, tools=tools)
+    context_box["context"] = llm_context
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
 
@@ -706,6 +729,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         logger.error(f"[REALTIME TEST/VONAGE] Pipeline error: {e}")
     finally:
         logger.info("🏁 [REALTIME TEST/VONAGE] Koniec połączenia")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST/VONAGE] Call summary error: {e}")
 
 
 if __name__ == "__main__":
