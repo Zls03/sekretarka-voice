@@ -90,8 +90,7 @@ from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import (
-    EndFrame, TranscriptionFrame, TTSAudioRawFrame,
-    TTSStartedFrame, TTSStoppedFrame,
+    EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
@@ -178,8 +177,15 @@ class UserTranscriptMonitor(FrameProcessor):
 
 
 class BotAudioMonitor(FrameProcessor):
-    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em), liczy deltę od
-    końca wypowiedzi usera, i odświeża zegar aktywności na start/koniec mowy bota."""
+    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em) i liczy deltę od
+    końca wypowiedzi usera.
+
+    ⚠️ CELOWO nie rusza `idle_since` na mowę bota (TTSStarted/StoppedFrame) — pierwsza
+    wersja to robiła i to był bug: własne dopytanie bota "Halo? Czy mnie słyszysz?"
+    resetowało zegar ciszy, więc nigdy nie dochodziło do progu rozłączenia (bot pytał
+    w kółko co ~15s zamiast eskalować do hangupu). 1:1 z cascade (bot.py): tam licznik
+    ciszy siedzi WYŁĄCZNIE na `_stt_end_time` (koniec mowy KLIENTA) — mowa bota nigdy
+    go nie dotyka. `idle_since` jest resetowany tylko w UserTranscriptMonitor."""
 
     def __init__(self, state: dict):
         super().__init__()
@@ -187,10 +193,8 @@ class BotAudioMonitor(FrameProcessor):
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TTSStartedFrame):
-            self._state["idle_since"] = time.time()
-        if isinstance(frame, TTSStoppedFrame):
-            self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSTextFrame) and frame.text:
+            logger.info(f"⏱️ [BOT] mówi: {frame.text!r}")
         if isinstance(frame, TTSAudioRawFrame) and self._state["waiting_for_bot_audio"]:
             self._state["waiting_for_bot_audio"] = False
             start = self._state.get("last_user_frame")
