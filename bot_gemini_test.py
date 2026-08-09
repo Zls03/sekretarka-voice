@@ -109,7 +109,7 @@ from pipecat.services.openai.realtime.events import (
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM) i
 # flows_helpers.py/polish_mappings.py (SPRAWDZONA treść promptu — patrz docstring wyżej
 # po co kopiujemy zamiast importować flows.py).
-from helpers import get_tenant_by_phone, get_client_profile, db, saas_db
+from helpers import get_tenant_by_phone, get_client_profile, db
 from flows_helpers import build_business_context, _assistant_gender, POLISH_DAYS
 from polish_mappings import normalize_polish_text, vocative_imie
 
@@ -122,7 +122,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "Cedar")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "Coral")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
@@ -574,12 +574,14 @@ async def twilio_incoming_test(request: Request):
         )
 
     host = request.headers.get("host", "localhost")
+    # phone zamiast tenantId — patrz komentarz w vonage_answer: unika drugiego
+    # round-tripu do bazy w websocket handlerze, żeby odzyskać ten sam numer z ID.
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
         <Stream url="wss://{host}/ws-gemini-test">
             <Parameter name="callSid" value="{call_sid}" />
-            <Parameter name="tenantId" value="{tenant['id']}" />
+            <Parameter name="phone" value="{tenant['phone_number']}" />
             <Parameter name="callerPhone" value="{caller}" />
         </Stream>
     </Connect>
@@ -613,14 +615,11 @@ async def websocket_gemini_test(websocket: WebSocket):
                 start_data = data.get("start", {})
                 stream_sid = start_data.get("streamSid")
                 custom_params = start_data.get("customParameters", {})
-                tenant_id = custom_params.get("tenantId")
+                tenant_phone = custom_params.get("phone")
                 caller_phone = custom_params.get("callerPhone", "nieznany")
 
-                rows = await db.execute(
-                    "SELECT phone_number FROM tenants WHERE id = ?", [tenant_id]
-                )
-                if rows and rows[0].get("phone_number"):
-                    tenant = await get_tenant_by_phone(rows[0]["phone_number"])
+                if tenant_phone:
+                    tenant = await get_tenant_by_phone(tenant_phone)
                 break
     except Exception as e:
         logger.error(f"[REALTIME TEST] Błąd startu: {e}")
@@ -634,9 +633,8 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     logger.info(f"✅ [REALTIME TEST] Tenant: {tenant.get('name')}")
 
-    client_profile = await get_client_profile(tenant.get("id", ""), caller_phone)
-    if client_profile:
-        logger.info(f"👤 [REALTIME TEST] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
+    # CRM lookup w tle równolegle z budową transportu — patrz komentarz w wersji Vonage.
+    client_profile_task = asyncio.create_task(get_client_profile(tenant.get("id", ""), caller_phone))
 
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
@@ -652,6 +650,10 @@ async def websocket_gemini_test(websocket: WebSocket):
             ),
         ),
     )
+
+    client_profile = await client_profile_task
+    if client_profile:
+        logger.info(f"👤 [REALTIME TEST] CRM: {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
 
     system_prompt = build_realtime_instructions(tenant, client_profile)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
