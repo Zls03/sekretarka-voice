@@ -14,7 +14,8 @@
       "Bash(cd /tmp)",
       "Bash(rm -rf pcinspect)",
       "Bash(mkdir pcinspect *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(git push *)"
     ]
   }
 }

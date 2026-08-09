@@ -689,7 +689,7 @@ async def run_call_pipeline(
             punctuate=True,
             numerals=True,
             interim_results=True,
-            utterance_end_ms=800,
+            utterance_end_ms=1000,
             endpointing=300,
             keyterm=tenant_keyterms,
         )
