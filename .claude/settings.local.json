@@ -16,7 +16,8 @@
       "Bash(mkdir pcinspect *)",
       "Bash(pip install *)",
       "Bash(git push *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git fetch *)"
     ]
   }
 }
