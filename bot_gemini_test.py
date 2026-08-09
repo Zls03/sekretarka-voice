@@ -88,7 +88,13 @@ from pipecat.processors.frame_processor import FrameProcessor
 # Pipecat >=1.2 przeniósł Gemini Live pod nową nazwę/ścieżkę (bez "Multimodal")
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
-from pipecat.services.openai.realtime.events import AudioConfiguration, AudioOutput, SessionProperties
+from pipecat.services.openai.realtime.events import (
+    AudioConfiguration,
+    AudioInput,
+    AudioOutput,
+    InputAudioTranscription,
+    SessionProperties,
+)
 
 # Reużywamy Twoich istniejących modułów TYLKO do odczytu danych firmy
 from helpers import get_tenant_by_phone, db, saas_db
@@ -160,7 +166,14 @@ def build_realtime_llm(system_prompt: str):
             settings=OpenAIRealtimeLLMService.Settings(
                 system_instruction=system_prompt,
                 session_properties=SessionProperties(
-                    audio=AudioConfiguration(output=AudioOutput(voice=OPENAI_REALTIME_VOICE))
+                    audio=AudioConfiguration(
+                        output=AudioOutput(voice=OPENAI_REALTIME_VOICE),
+                        # Domyślnie transkrypcja usera jest WYŁĄCZONA (OpenAI nie włącza
+                        # jej automatycznie jak Gemini) — bez tego nasz UserTranscriptMonitor
+                        # nigdy nie widzi TranscriptionFrame i pomiar ⏱️ się nie uruchamia
+                        # (tak było w teście z voice=marin powyżej — same TTFB z biblioteki).
+                        input=AudioInput(transcription=InputAudioTranscription()),
+                    )
                 ),
             ),
         )
