@@ -122,7 +122,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "Coral")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "Shimmer")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
