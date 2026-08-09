@@ -284,6 +284,14 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     conversation_ended = False
 
+    @transport.event_handler("on_client_connected")
+    async def on_connect(transport, client):
+        logger.info("🎤 [GEMINI TEST] Klient połączony — wybudzam Gemini do przywitania")
+        # Gemini Live nie odzywa się pierwszy sam z siebie — trzeba popchnąć
+        # pusty context frame, żeby wykorzystać inference_on_context_initialization
+        # (usługa doda system_instruction jako seed i wygeneruje pierwszą odpowiedź).
+        await user_aggregator.push_context_frame()
+
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
         nonlocal conversation_ended
@@ -453,6 +461,11 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
             audio_out_sample_rate=16000,
         ),
     )
+
+    @transport.event_handler("on_client_connected")
+    async def on_connect_vonage(transport, client):
+        logger.info("🎤 [VONAGE TEST] Klient połączony — wybudzam Gemini do przywitania")
+        await user_aggregator.push_context_frame()
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
