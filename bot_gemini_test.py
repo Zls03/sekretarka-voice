@@ -1,11 +1,12 @@
-# bot_gemini_test.py — Faza 1 migracji Cascade -> OpenAI Realtime (patrz CLAUDE.md)
+# bot_gemini_test.py — Fazy 1-2 migracji Cascade -> OpenAI Realtime (patrz CLAUDE.md)
 """
 Historia: ten plik powstał jako izolowany test latencji audio-to-audio (Gemini Live
 vs OpenAI Realtime) na tenantcie testowym (firm_1774140338448_8905c, Vonage). Wyniki
 (patrz tabelka w CLAUDE.md) przesądziły o wyborze OpenAI Realtime (gpt-realtime-2.1-mini,
-~0.6s user->bot, wszystko 🟢). Od tego commitu plik realizuje Fazę 1 planu migracji:
+~0.6s user->bot, wszystko 🟢). Od tego commitu plik realizuje Fazy 1-2 planu migracji:
 prawdziwy system prompt z danych panelu (cennik, godziny, adres, FAQ, ton branży,
-tożsamość asystenta) + personalizacja powitania dla powracającego klienta (CRM).
+tożsamość asystenta) + personalizacja powitania dla powracającego klienta (CRM),
+plus wykrywanie ciszy (dopytanie/rozłączenie) i limit czasu rozmowy.
 
 Gemini Live USUNIĘTY — decyzja już zapadła, trzymanie dwóch dostawców tylko zaciemniało
 plik. Jeśli kiedyś potrzebny będzie powrót do porównania, patrz historia gita.
@@ -40,18 +41,30 @@ URUCHOMIENIE OBOK ISTNIEJĄCEGO bot.py:
   bot.py na 0.0.104). Nie instalować obu requirements w tym samym środowisku.
 
 CO ZOSTAJE NA PÓŹNIEJ (kolejne fazy planu w CLAUDE.md — świadomie NIE tutaj):
-  - Faza 2: idle timeout + max call duration
   - Faza 3: sprawdz_dostepnosc()/zarezerwuj() jako function-calling tools
   - Faza 4: contact_owner, SMS, lead email
   - Faza 5: credits + call_logs
   Prompt niżej wprost mówi klientowi, że rezerwacje/przekazanie do człowieka są jeszcze
   w budowie — żeby model niczego nie obiecywał, czego nie umie wykonać.
+
+FAZA 2 — jak działa wykrywanie ciszy/limitu (patrz monitor_call_health poniżej):
+  10s ciszy -> "Halo? Czy mnie słyszysz?" | 20s ciszy -> pożegnanie + rozłączenie
+  | 4 min rozmowy - 30s -> uprzedzenie że kończymy | 4 min -> pożegnanie + rozłączenie.
+  Realizowane przez say_now() (response.create z jednorazowym `instructions`), bo
+  TTSSpeakFrame/LLMMessagesAppendFrame z cascade NIE działają z tą usługą (patrz
+  komentarz przy say_now).
+  Rozłączenie po pożegnaniu NIE czeka na realny koniec odtwarzania audio (Realtime
+  nie daje eventu "TTS na pewno skończył mówić widziany z zewnątrz w porę do tego") —
+  to stały sleep(3.0) po wysłaniu polecenia, potem EndFrame. Cascade (bot.py) robi
+  DOKŁADNIE to samo (sleep 2.0-2.5s), więc to nie uproszczenie względem produkcji,
+  tylko ten sam, już sprawdzony trik.
 """
 
 import os
 import sys
 import json
 import re
+import time
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -76,7 +89,11 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.frames.frames import EndFrame, TranscriptionFrame, TTSAudioRawFrame, UserStoppedSpeakingFrame
+from pipecat.frames.frames import (
+    EndFrame, TranscriptionFrame, TTSAudioRawFrame,
+    TTSStartedFrame, TTSStoppedFrame,
+    UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
+)
 from pipecat.processors.frame_processor import FrameProcessor
 
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
@@ -85,6 +102,8 @@ from pipecat.services.openai.realtime.events import (
     AudioInput,
     AudioOutput,
     InputAudioTranscription,
+    ResponseCreateEvent,
+    ResponseProperties,
     SessionProperties,
 )
 
@@ -106,33 +125,75 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
 OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "marin")
 
-# prosty stoper do zmierzenia całościowego opóźnienia user->bot
-_t_state = {"last_user_frame": None, "waiting_for_bot_audio": False}
+# ==========================================
+# PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
+# ==========================================
+# `_t_state` był wcześniej zmienną globalną modułu — przy jednej rozmowie na raz
+# w teście to nie szkodziło, ale teraz stan zasila też logikę idle/max-duration,
+# która MUSI być per-połączenie (dwie równoległe rozmowy nie mogą dzielić zegara
+# ciszy). Stąd każdy websocket handler tworzy własny `call_state` dict i wstrzykuje
+# go do obu monitorów poniżej.
+#
+# `idle_since` = moment ostatniej aktywności (user zaczął/skończył mówić, bot
+# zaczął/skończył mówić) — okrąża go monitor_call_health(), licząc ciszę jako
+# czas odkąd NIKT (ani user, ani bot) nic nie robi. To ten sam pomysł co
+# UserIdleController w pipecat 1.4.0 (start timer na BotStoppedSpeaking, cancel na
+# UserStarted/BotStarted), tylko zaimplementowany ręcznie prostą pętlą asyncio —
+# UserIdleController to osobny BaseObject z własnym cyklem życia/task managerem,
+# niepotrzebna komplikacja dla testowego pliku, gdzie i tak mamy już asyncio loop
+# wzorowany na bot.py::check_max_duration().
+
+
+def make_call_state() -> dict:
+    now = time.time()
+    return {
+        "last_user_frame": None,       # event-loop time, tylko do pomiaru TTFB
+        "waiting_for_bot_audio": False,
+        "idle_since": now,             # wall-clock, do wykrywania ciszy
+        "ended": False,
+    }
 
 
 class UserTranscriptMonitor(FrameProcessor):
-    """Mierzy koniec tury usera. Anchor to UserStoppedSpeakingFrame (sygnał serwerowego
-    VAD OpenAI, input_audio_buffer.speech_stopped) — TranscriptionFrame jest asynchroniczny
+    """Mierzy koniec tury usera (TTFB) i odświeża zegar aktywności (idle detection).
+    Anchor pomiaru to UserStoppedSpeakingFrame (sygnał serwerowego VAD OpenAI,
+    input_audio_buffer.speech_stopped) — TranscriptionFrame jest asynchroniczny
     side-channel i przychodzi za późno/wcześnie do pomiaru czasu, zostaje tylko do logowania."""
+
+    def __init__(self, state: dict):
+        super().__init__()
+        self._state = state
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self._state["idle_since"] = time.time()
         if isinstance(frame, UserStoppedSpeakingFrame):
-            _t_state["last_user_frame"] = asyncio.get_event_loop().time()
-            _t_state["waiting_for_bot_audio"] = True
+            self._state["last_user_frame"] = asyncio.get_event_loop().time()
+            self._state["waiting_for_bot_audio"] = True
+            self._state["idle_since"] = time.time()
         if isinstance(frame, TranscriptionFrame):
             logger.info(f"⏱️ [USER] transkrypcja: {frame.text!r}")
         await self.push_frame(frame, direction)
 
 
 class BotAudioMonitor(FrameProcessor):
-    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em) i liczy deltę od transkrypcji usera."""
+    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em), liczy deltę od
+    końca wypowiedzi usera, i odświeża zegar aktywności na start/koniec mowy bota."""
+
+    def __init__(self, state: dict):
+        super().__init__()
+        self._state = state
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TTSAudioRawFrame) and _t_state["waiting_for_bot_audio"]:
-            _t_state["waiting_for_bot_audio"] = False
-            start = _t_state.get("last_user_frame")
+        if isinstance(frame, TTSStartedFrame):
+            self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSStoppedFrame):
+            self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSAudioRawFrame) and self._state["waiting_for_bot_audio"]:
+            self._state["waiting_for_bot_audio"] = False
+            start = self._state.get("last_user_frame")
             if start:
                 ms = (asyncio.get_event_loop().time() - start) * 1000
                 icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
@@ -140,13 +201,85 @@ class BotAudioMonitor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+# ==========================================
+# IDLE TIMEOUT + MAX CALL DURATION (Faza 2)
+# ==========================================
+
+IDLE_WARNING_SECONDS = 10   # tyle ciszy -> "Halo, czy mnie słyszysz?"
+IDLE_HANGUP_SECONDS = 20    # tyle ciszy (10s po dopytaniu) -> kończymy połączenie
+MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
+
+
+async def say_now(llm: OpenAIRealtimeLLMService, text: str):
+    """Każe modelowi Realtime powiedzieć DOKŁADNIE ten tekst, jako jednorazową
+    odpowiedź (response.create z instructions), bez dopisywania niczego do historii
+    rozmowy. Odpowiednik TTSSpeakFrame z cascade — TTSSpeakFrame/LLMMessagesAppendFrame
+    NIE działają z OpenAIRealtimeLLMService (brak osobnego stopnia TTS w pipeline,
+    a _handle_messages_append to w pipecat 1.4.0 wciąż pusty stub)."""
+    await llm.send_client_event(
+        ResponseCreateEvent(
+            response=ResponseProperties(
+                instructions=f'Powiedz DOKŁADNIE: "{text}" i nic więcej.'
+            )
+        )
+    )
+
+
+async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService, call_state: dict):
+    """Odpowiednik bot.py::check_max_duration(), przepisany pod Realtime (say_now
+    zamiast TTSSpeakFrame) i uproszczony do JEDNEGO mechanizmu ciszy zamiast dwóch
+    równoległych (UserIdleProcessor + osobny silence-check) jak w cascade — to
+    duplikowało się tam bez wyraźnego powodu, tu wystarczy jeden zegar idle_since."""
+    call_start = time.time()
+    idle_warning_given = False
+    duration_warning_given = False
+
+    while True:
+        await asyncio.sleep(5)
+
+        if call_state.get("ended"):
+            logger.info("⏱️ [REALTIME TEST] Monitor zatrzymany — połączenie zakończone")
+            break
+
+        elapsed = time.time() - call_start
+        silence = time.time() - call_state["idle_since"]
+
+        if silence > IDLE_HANGUP_SECONDS:
+            logger.warning(f"🔇 [REALTIME TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
+            call_state["ended"] = True
+            await say_now(llm, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
+            await asyncio.sleep(3.0)
+            await task.queue_frame(EndFrame())
+            break
+
+        if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
+            logger.warning(f"🔇 [REALTIME TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
+            idle_warning_given = True
+            await say_now(llm, "Halo? Czy mnie słyszysz?")
+        elif silence < IDLE_WARNING_SECONDS:
+            idle_warning_given = False
+
+        if elapsed > MAX_CALL_DURATION - 30 and not duration_warning_given:
+            duration_warning_given = True
+            logger.warning(f"⚠️ [REALTIME TEST] Zbliża się limit czasu: {elapsed:.0f}s/{MAX_CALL_DURATION}s")
+            await say_now(llm, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
+
+        if elapsed > MAX_CALL_DURATION:
+            logger.warning(f"🛑 [REALTIME TEST] Limit czasu osiągnięty ({elapsed:.0f}s) — kończę połączenie")
+            call_state["ended"] = True
+            await say_now(llm, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
+            await asyncio.sleep(3.0)
+            await task.queue_frame(EndFrame())
+            break
+
+
 def build_realtime_llm(system_prompt: str):
     """Buduje OpenAIRealtimeLLMService + parę context aggregatorów."""
     logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={OPENAI_REALTIME_VOICE}")
     llm = OpenAIRealtimeLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model=OPENAI_REALTIME_MODEL,
         settings=OpenAIRealtimeLLMService.Settings(
+            model=OPENAI_REALTIME_MODEL,
             system_instruction=system_prompt,
             session_properties=SessionProperties(
                 audio=AudioConfiguration(
@@ -400,6 +533,13 @@ STYL ODPOWIEDZI:
 - Na proste pytania (cennik, godziny, adres, FAQ) odpowiadaj OD RAZU z informacji które masz powyżej
 - Po każdej odpowiedzi zadaj krótkie, zmienne pytanie zamykające (np. "Coś jeszcze?", "Mogę jeszcze pomóc?") — nie powtarzaj tego samego za każdym razem
 
+⚠️ KRYTYCZNE — JEDNA MYŚL NA TURĘ, POTEM CISZA:
+Mówisz głosem, nie piszesz tekstu — nikt Cię tu nie przerywa mechanicznie, więc SAM musisz się zatrzymać.
+- W jednej turze: JEDNO zdanie odpowiedzi + (opcjonalnie) JEDNO krótkie pytanie zamykające. Koniec. Nic więcej.
+- Zaraz po tym PRZESTAŃ MÓWIĆ i czekaj w ciszy na odpowiedź klienta — nie kontynuuj, nie dodawaj kolejnych zdań "na zapas"
+- NIE zgaduj z góry następnego pytania klienta i nie odpowiadaj na nie zanim je zada
+- NIE wymieniaj po kolei kilku informacji naraz (np. cennik + godziny + adres w jednej turze) — podaj TYLKO to o co klient zapytał
+
 ⚠️ TRYB TESTOWY — NADPISUJE POWYŻSZE ZASADY REZERWACJI:
 Rezerwacje wizyt i przekazywanie rozmowy do człowieka NIE są jeszcze obsługiwane w tej wersji testowej (kolejne fazy migracji).
 Jeśli klient chce się umówić lub porozmawiać z kimś z firmy — powiedz że ta funkcja jest jeszcze w budowie
@@ -511,8 +651,9 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     system_prompt = build_realtime_instructions(tenant, client_profile)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
-    user_transcript_monitor = UserTranscriptMonitor()
-    bot_audio_monitor = BotAudioMonitor()
+    call_state = make_call_state()
+    user_transcript_monitor = UserTranscriptMonitor(call_state)
+    bot_audio_monitor = BotAudioMonitor(call_state)
 
     pipeline = Pipeline([
         transport.input(),
@@ -540,10 +681,12 @@ async def websocket_gemini_test(websocket: WebSocket):
         # Usługa realtime nie odzywa się pierwsza sama z siebie — trzeba popchnąć
         # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu.
         await user_aggregator.push_context_frame()
+        asyncio.create_task(monitor_call_health(task, llm, call_state))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
         logger.info("📴 [REALTIME TEST] Klient rozłączony")
+        call_state["ended"] = True
         await task.queue_frame(EndFrame())
 
     runner = PipelineRunner()
@@ -681,8 +824,9 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
 
     system_prompt = build_realtime_instructions(tenant, client_profile)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
-    user_transcript_monitor = UserTranscriptMonitor()
-    bot_audio_monitor = BotAudioMonitor()
+    call_state = make_call_state()
+    user_transcript_monitor = UserTranscriptMonitor(call_state)
+    bot_audio_monitor = BotAudioMonitor(call_state)
 
     pipeline = Pipeline([
         transport.input(),
@@ -708,10 +852,12 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     async def on_connect_vonage(transport, client):
         logger.info("🎤 [REALTIME TEST/VONAGE] Klient połączony — wybudzam Realtime do przywitania")
         await user_aggregator.push_context_frame()
+        asyncio.create_task(monitor_call_health(task, llm, call_state))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
         logger.info("📴 [REALTIME TEST/VONAGE] Klient rozłączony")
+        call_state["ended"] = True
         await task.queue_frame(EndFrame())
 
     runner = PipelineRunner()
