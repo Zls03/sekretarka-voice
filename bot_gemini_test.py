@@ -133,7 +133,7 @@ from helpers import get_tenant_by_phone, get_client_profile, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
-    maybe_send_call_summary, save_call_transcript, apply_call_charge,
+    maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
 
 logger.remove()
@@ -360,6 +360,11 @@ def build_realtime_llm(
             # 0.6 to udokumentowane minimum dla tego API (niżej API i tak by przycięło).
             temperature=0.6,
             session_properties=SessionProperties(
+                # Twardy sufit na długość JEDNEJ odpowiedzi — zabezpieczenie przed rozgadaniem
+                # się modelu (obserwowane wcześniej: 12s odpowiedź, patrz bug z idle timerem)
+                # i przed kosztem pojedynczej odpowiedzi wymykającej się spod kontroli.
+                # ~600 tokenów to z zapasem więcej niż jakakolwiek sensowna odpowiedź głosowa.
+                max_output_tokens=600,
                 audio=AudioConfiguration(
                     output=AudioOutput(voice=resolved_voice, speed=speed),
                     # Transkrypcja usera domyślnie WYŁĄCZONA w OpenAI — bez tego
@@ -416,6 +421,13 @@ async def twilio_incoming_test(request: Request):
         return Response(
             content='<?xml version="1.0"?><Response><Say language="pl-PL">'
                     'Numer testowy nieaktywny.</Say></Response>',
+            media_type="application/xml",
+        )
+
+    if not await is_call_allowed(tenant):
+        return Response(
+            content='<?xml version="1.0"?><Response><Say language="pl-PL">'
+                    'Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml",
         )
 
@@ -621,6 +633,10 @@ async def vonage_answer(request: Request):
 
     if not tenant:
         ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
+        return JSONResponse(ncco)
+
+    if not await is_call_allowed(tenant):
+        ncco = [{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}]
         return JSONResponse(ncco)
 
     host = request.headers.get("host", "localhost")

@@ -699,3 +699,25 @@ async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str,
             if used >= limit * 0.99:
                 await db.execute("UPDATE tenants SET is_blocked = 1 WHERE id = ?", [tenant_id])
                 logger.warning(f"⚠️ [REALTIME TEST] Admin tenant {tenant_id} BLOCKED - limit reached")
+
+
+async def is_call_allowed(tenant: dict) -> bool:
+    """Pre-call guard, 1:1 z bot.py (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
+    i /vonage/answer poniżej). Bez tego zablokowany/bez-środków tenant i tak dostawałby pełne, płatne
+    połączenie z OpenAI Realtime — apply_call_charge() ustawia is_blocked DOPIERO PO zakończonej rozmowie,
+    więc to jedyne miejsce które faktycznie zapobiega rozpoczęciu kosztownej sesji.
+
+    Dla SaaS get_tenant_by_phone() i tak już filtruje is_blocked=0 w SQL (patrz helpers.py), więc ten
+    check tu to głównie: (1) obrona przed niespójnością (is_blocked jeszcze nie ustawione, a saldo już
+    zeszło poniżej progu), (2) jedyny check dla tenantów admina, gdzie SQL filtruje tylko is_active."""
+    if tenant.get("is_blocked"):
+        logger.warning(f"🚫 [REALTIME TEST] Tenant {tenant.get('id')} BLOCKED — odrzucam połączenie")
+        return False
+    if tenant.get("source") == "saas":
+        user_id = tenant.get("user_id", "")
+        rows = await saas_db.execute("SELECT balance FROM credits WHERE user_id = ?", [user_id])
+        balance = float(rows[0].get("balance") or 0) if rows else 0
+        if balance < PRICE_PER_MINUTE:
+            logger.warning(f"🚫 [REALTIME TEST] SaaS {tenant.get('id')} — brak kredytów: {balance:.2f} zł")
+            return False
+    return True
