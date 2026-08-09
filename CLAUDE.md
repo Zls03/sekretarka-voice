@@ -97,25 +97,27 @@ cheaper). Fallback to `gpt-realtime-2` if quality/tool-calling reliability
 becomes an issue — this is a one-line env var change, not an architecture
 decision.
 
-**Architecture note — RAG for FAQ/documents is a DELIBERATELY SEPARATE later
-phase, not part of this migration.** FAQ/documents are intended to be moved to
-vector RAG (Turso vector or similar) in a later phase. Phase 1 keeps the
-existing FAQ behavior (whole FAQ dumped into the prompt via SQL, same as
-`bot.py` does today) so the Realtime migration is isolated and easy to test —
-mixing two large architectural changes at once makes it impossible to
-attribute latency/quality changes to the right cause. RAG should be built when
-a real tenant's FAQ/documentation volume actually justifies it (large FAQ,
-multi-page procedures, franchise docs) — not preemptively for every tenant;
-for a handful of FAQ items, SQL-in-prompt stays simpler and more reliable than
-retrieval (nothing to "miss" when everything already fits in context).
+**Architecture note — vector RAG for long-form content is a DELIBERATELY
+SEPARATE later phase, not part of this migration.** Existing short FAQ
+(current `faq` table, a handful of Q&A pairs per tenant) STAYS in SQL and
+keeps being dumped whole into the prompt, same as `bot.py` does today —
+it's small, so retrieval would add failure modes (a miss) without any
+upside. A NEW, separate store (Turso vector or similar) is added *alongside*
+it in a later phase, specifically for long-form content that doesn't belong
+in SQL rows: procedures, policies, branded/industry documentation, multi-page
+material a tenant might want the assistant to draw on. Phase 1 of this
+migration touches neither — it only wires the existing SQL-backed prompt
+(services, hours, address, short FAQ) into the Realtime system_instruction.
+Mixing the Realtime migration with introducing RAG at the same time would
+make it impossible to attribute latency/quality changes to the right cause.
 
 Target end-state split:
 ```
-SQL (stały kontekst, każdy request)          Turso Vector (RAG, later phase)
-├── firma / godziny / usługi / ceny          ├── FAQ (jeśli duże)
-├── pracownicy                               ├── procedury
-└── ustawienia                               ├── długie informacje
-                                              └── dokumentacja branżowa
+SQL (stały kontekst, każdy request)          Turso Vector (RAG, later phase — NOWA rzecz)
+├── firma / godziny / usługi / ceny          ├── procedury
+├── pracownicy                               ├── długie informacje
+├── FAQ (krótkie, zostaje tu na zawsze)       └── dokumentacja branżowa
+└── ustawienia
         ↓                                            ↓
    zawsze w system_instruction              tylko relevant fragmenty, wstrzykiwane
                                              po retrieval przed odpowiedzią
