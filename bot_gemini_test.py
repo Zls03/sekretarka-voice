@@ -1,18 +1,25 @@
-# bot_gemini_test.py — Fazy 1-2 migracji Cascade -> OpenAI Realtime (patrz CLAUDE.md)
+# bot_gemini_test.py — Fazy 1-2-4 migracji Cascade -> OpenAI Realtime (patrz CLAUDE.md)
 """
 Historia: ten plik powstał jako izolowany test latencji audio-to-audio (Gemini Live
 vs OpenAI Realtime) na tenantcie testowym (firm_1774140338448_8905c, Vonage). Wyniki
 (patrz tabelka w CLAUDE.md) przesądziły o wyborze OpenAI Realtime (gpt-realtime-2.1-mini,
-~0.6s user->bot, wszystko 🟢). Od tego commitu plik realizuje Fazy 1-2 planu migracji:
+~0.6s user->bot, wszystko 🟢). Od tego commitu plik realizuje Fazy 1-2-4 planu migracji:
 prawdziwy system prompt z danych panelu (cennik, godziny, adres, FAQ, ton branży,
 tożsamość asystenta) + personalizacja powitania dla powracającego klienta (CRM),
-plus wykrywanie ciszy (dopytanie/rozłączenie) i limit czasu rozmowy.
+wykrywanie ciszy (dopytanie/rozłączenie) i limit czasu rozmowy, oraz PIERWSZĄ funkcję
+function-callingu — contact_owner (zostawienie wiadomości dla właściciela, patrz sekcja
+CONTACT_OWNER niżej).
+
+KOLEJNOŚĆ FAZ ŚWIADOMIE ODWRÓCONA względem CLAUDE.md: Faza 4 (kontakt/zgłoszenia) PRZED
+Fazą 3 (rezerwacje) — booking jest najbardziej ryzykowną częścią (błąd = podwójna
+rezerwacja/zmyślony termin) i wymaga jeszcze podpięcia Google Calendar, więc lepiej
+dopracować prostszy tryb informacyjny i function-calling na niższą stawkę (contact_owner)
+zanim zabierzemy się za booking.
 
 Gemini Live USUNIĘTY — decyzja już zapadła, trzymanie dwóch dostawców tylko zaciemniało
 plik. Jeśli kiedyś potrzebny będzie powrót do porównania, patrz historia gita.
 
-NIE dotyka produkcyjnego bot.py. Zero FlowManagera, zero logiki rezerwacji/function-calling
-(to Faza 3 planu — booking jako guarded tools). Prompt jest ŚWIADOMIE skopiowany z
+NIE dotyka produkcyjnego bot.py. Zero FlowManagera. Prompt jest ŚWIADOMIE skopiowany z
 flows.py::create_initial_node / flows_helpers.py::build_business_context zamiast
 zaimportowany stamtąd wprost: te moduły ciągną `pipecat_flows`, który jest spięty z
 pipecat-ai==0.0.104 (stary kontekst OpenAILLMContext) — import pod pipecat-ai==1.4.0
@@ -26,6 +33,8 @@ WYMAGANE ZMIENNE ŚRODOWISKOWE (te same co w Railway):
   OPENAI_API_KEY       — klucz OpenAI Realtime
   TWILIO_AUTH_TOKEN    — do walidacji podpisu Twilio (opcjonalnie, można pominąć na testach)
   TEST_TENANT_ID        — wymuszony tenant dla ścieżki Vonage (patrz /vonage/answer)
+  RESEND_API_KEY        — do wysyłki emaila w contact_owner (Faza 4) — bez tego funkcja
+                          zwróci klientowi uczciwy błąd zamiast fałszywie potwierdzić wysyłkę
 
 PODŁĄCZENIE (Twilio):
   1) Wybierz numer testowy w konsoli Twilio (osobny lub tymczasowo przełącz istniejący)
@@ -40,11 +49,15 @@ URUCHOMIENIE OBOK ISTNIEJĄCEGO bot.py:
   (requirements-gemini-test.txt, pipecat-ai==1.4.0 — CELOWO inna wersja niż produkcyjny
   bot.py na 0.0.104). Nie instalować obu requirements w tym samym środowisku.
 
-CO ZOSTAJE NA PÓŹNIEJ (kolejne fazy planu w CLAUDE.md — świadomie NIE tutaj):
-  - Faza 3: sprawdz_dostepnosc()/zarezerwuj() jako function-calling tools
-  - Faza 4: contact_owner, SMS, lead email
+CO ZOSTAJE NA PÓŹNIEJ (świadomie NIE tutaj):
+  - Reszta Fazy 4: zbieranie zgłoszeń (lead collection, wieloturowe), SMS, raport email po rozmowie
+  - Żywe przekierowanie rozmowy (transfer) — ani dla Twilio (brak /twilio/after-stream w tym
+    pliku) ani dla Vonage (brak mechanizmu w ogóle, wymaga Vonage REST API) — patrz sekcja
+    CONTACT_OWNER. Działa TYLKO ścieżka "zostaw wiadomość" (email przez Resend).
+  - Faza 3: sprawdz_dostepnosc()/zarezerwuj() jako function-calling tools (ostatnia, bo
+    najbardziej ryzykowna — patrz wyżej)
   - Faza 5: credits + call_logs
-  Prompt niżej wprost mówi klientowi, że rezerwacje/przekazanie do człowieka są jeszcze
+  Prompt niżej wprost mówi klientowi, że rezerwacje/zgłoszenia/żywe przekierowanie są jeszcze
   w budowie — żeby model niczego nie obiecywał, czego nie umie wykonać.
 
 FAZA 2 — jak działa wykrywanie ciszy/limitu (patrz monitor_call_health poniżej):
@@ -106,6 +119,8 @@ from pipecat.services.openai.realtime.events import (
     SessionProperties,
     SessionUpdateEvent,
 )
+from pipecat.services.llm_service import FunctionCallParams
+from pipecat.adapters.schemas.function_schema import FunctionSchema
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM) i
 # flows_helpers.py/polish_mappings.py (SPRAWDZONA treść promptu — patrz docstring wyżej
@@ -123,7 +138,7 @@ OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-min
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "shimmer")
+OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "alloy")
 
 # ==========================================
 # PER-POŁĄCZENIE: pomiar latencji + wykrywanie ciszy (Faza 2)
@@ -301,14 +316,21 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
             break
 
 
-def build_realtime_llm(system_prompt: str):
-    """Buduje OpenAIRealtimeLLMService + parę context aggregatorów."""
+def build_realtime_llm(system_prompt: str, tools: list | None = None):
+    """Buduje OpenAIRealtimeLLMService + parę context aggregatorów.
+
+    tools: lista FunctionSchema (z handler ustawionym na schemacie — LLMService
+    rejestruje je automatycznie z LLMContext, bez osobnego register_function)."""
     logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={OPENAI_REALTIME_VOICE}")
     llm = OpenAIRealtimeLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAIRealtimeLLMService.Settings(
             model=OPENAI_REALTIME_MODEL,
             system_instruction=system_prompt,
+            # Niżej niż domyślne (OpenAI: 0.8) — mniej "kreatywnych" dopowiedzeń/wstawek
+            # konwersacyjnych, bardziej dosłowne trzymanie się instrukcji z promptu.
+            # 0.6 to udokumentowane minimum dla tego API (niżej API i tak by przycięło).
+            temperature=0.6,
             session_properties=SessionProperties(
                 audio=AudioConfiguration(
                     output=AudioOutput(voice=OPENAI_REALTIME_VOICE),
@@ -322,7 +344,7 @@ def build_realtime_llm(system_prompt: str):
         ),
     )
 
-    context = LLMContext()
+    context = LLMContext(tools=tools or [])
     # realtime_service_mode=True: usługa realtime emituje inaczej UserStarted/StoppedSpeakingFrame,
     # więc zapisy do kontekstu muszą iść w trybie "trailing" zamiast czekać na te ramki.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
@@ -576,11 +598,27 @@ Mówisz głosem, nie piszesz tekstu — nikt Cię tu nie przerywa mechanicznie, 
 - Zaraz po tym PRZESTAŃ MÓWIĆ i czekaj w ciszy na odpowiedź klienta — nie kontynuuj, nie dodawaj kolejnych zdań "na zapas"
 - NIE zgaduj z góry następnego pytania klienta i nie odpowiadaj na nie zanim je zada
 - NIE wymieniaj po kolei kilku informacji naraz (np. cennik + godziny + adres w jednej turze) — podaj TYLKO to o co klient zapytał
+- ZAKAZANE zwroty na wejściu do odpowiedzi (wchodź OD RAZU w treść, bez rozbiegu):
+  "Super,", "Świetnie,", "Jasne,", "Oczywiście,", "No więc,", "Cóż,", "Jak mogę dla Ciebie...",
+  "Chętnie pomogę,", "Rozumiem,", "Dziękuję za pytanie," i inne warianty grzecznościowego wstępu
+  ❌ "Super, jestem tu żeby pomóc — nasz adres to..." ✅ "Nasz adres to..."
 
-⚠️ TRYB TESTOWY — NADPISUJE POWYŻSZE ZASADY REZERWACJI:
-Rezerwacje wizyt i przekazywanie rozmowy do człowieka NIE są jeszcze obsługiwane w tej wersji testowej (kolejne fazy migracji).
-Jeśli klient chce się umówić lub porozmawiać z kimś z firmy — powiedz że ta funkcja jest jeszcze w budowie
-i zaproponuj kontakt w standardowy sposób później. NIE obiecuj że coś zapiszesz ani że kogoś przekażesz."""
+⚠️ KONTAKT Z WŁAŚCICIELEM — TO JUŻ DZIAŁA:
+Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
+lub jest sfrustrowany i potrzebuje pomocy człowieka:
+1. Dopytaj naturalnie w rozmowie o brakujące rzeczy — potrzebujesz IMIENIA klienta i TREŚCI wiadomości
+   (czego dotyczy sprawa). Jedno pytanie na turę, jak zawsze.
+2. Gdy masz oba → wywołaj funkcję contact_owner(customer_name, message). NIE pytaj o nic więcej.
+3. Po wywołaniu powiedz krótko że wiadomość została przekazana właścicielowi i grzecznie zakończ rozmowę.
+⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) NIE jest jeszcze dostępne w tej wersji
+testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że to
+jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego.
+
+⚠️ TRYB TESTOWY — POZOSTAŁE OGRANICZENIA:
+Rezerwacje wizyt i zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika)
+NIE są jeszcze obsługiwane w tej wersji testowej (kolejne fazy migracji). Jeśli klient chce się
+UMÓWIĆ na wizytę — powiedz że rezerwacje telefoniczne są jeszcze w budowie i zaproponuj zostawienie
+wiadomości przez contact_owner zamiast tego. NIE obiecuj że coś zarezerwujesz."""
 
     return role_content + addendum
 
@@ -598,6 +636,133 @@ async def apply_crm_when_ready(llm: OpenAIRealtimeLLMService, tenant: dict, clie
         updated_prompt = build_realtime_instructions(tenant, client_profile, include_greeting=False)
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile
+
+
+# ==========================================
+# CONTACT_OWNER — Faza 4, pierwsza funkcja (patrz CLAUDE.md: kolejność Faz 3/4
+# odwrócona na życzenie — Faza 4 pierwsza, bo prostsza, i uczy wzorca function-calling
+# w Realtime zanim zabierzemy się za bardziej ryzykowne rezerwacje)
+# ==========================================
+#
+# TYLKO ścieżka "zostaw wiadomość" — działa dla Twilio I Vonage jednakowo (samo
+# wysłanie emaila nie zależy od dostawcy telefonii). Żywe przekierowanie rozmowy
+# (transfer) ŚWIADOMIE pominięte na razie:
+#   - w cascade transfer dla Twilio idzie przez dwuetapowy trik (zapis do
+#     transfer_requests + TwiML <Dial> w /twilio/after-stream), którego ten plik
+#     w ogóle nie ma (brak własnego /twilio/after-stream)
+#   - dla Vonage nie ma GOTOWEGO mechanizmu wcale — wymagałby osobnego wywołania
+#     Vonage REST API na żywym połączeniu (patrz docstring bot.py przy sekcji VONAGE)
+#   To jest dokładnie ta granica, którą plan w CLAUDE.md już wcześniej zaakceptował:
+#   "acceptable to ship 'leave a message only' for Vonage at first".
+
+async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str):
+    """Wyślij email z wiadomością do właściciela. Uproszczona kopia flows.py::send_message_email
+    (bez GPT-streszczenia kontekstu rozmowy — bonus, nie rdzeń funkcji) — SKOPIOWANA, nie
+    zaimportowana, z tego samego powodu co reszta promptu (patrz docstring pliku: flows.py
+    ciągnie pipecat_flows, niekompatybilne z pipecat-ai==1.4.0 użytym tutaj)."""
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        logger.warning("📧 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam")
+        return False
+
+    business_name = tenant.get("name", "Firma")
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+        <h2 style="color: #333;">📞 Nowa wiadomość od klienta</h2>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Firma:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{business_name}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Od:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{customer_name}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Telefon:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{phone}">{phone}</a></td></tr>
+        </table>
+        <p><strong>💬 Wiadomość:</strong></p>
+        <p style="background: #f5f5f5; padding: 15px; border-radius: 5px;">{message}</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+        <p style="color: #999; font-size: 12px;">Wiadomość przekazana przez asystenta głosowego (test Realtime) • {business_name}</p>
+    </div>
+    """
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
+                json={
+                    "from": "Voice AI <noreply@bizvoice.pl>",
+                    "to": [to_email],
+                    "subject": f"📞 Wiadomość od {customer_name} - {business_name}",
+                    "html": html_content,
+                },
+                timeout=10.0,
+            )
+            if response.status_code == 200:
+                logger.info("📧 [REALTIME TEST] Email wysłany")
+                return True
+            logger.error(f"📧 [REALTIME TEST] Resend error: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"📧 [REALTIME TEST] Send email error: {e}")
+        return False
+
+
+def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict) -> FunctionSchema:
+    """FunctionSchema z handlerem przypiętym bezpośrednio — LLMContext rejestruje go
+    automatycznie (patrz build_realtime_llm), bez osobnego register_function.
+
+    task_box: {"task": None} wypełniane PO stworzeniu PipelineTask — w momencie budowy
+    tego tool'a (przed pipeline'em, bo LLMContext potrzebuje tools już przy konstrukcji
+    llm) `task` jeszcze nie istnieje. Handler czyta task_box["task"] dopiero przy
+    faktycznym wywołaniu (w trakcie żywej rozmowy), więc do tego czasu jest już ustawiony."""
+
+    async def handle_contact_owner(params: FunctionCallParams):
+        customer_name = (params.arguments.get("customer_name") or "").strip() or "Nieznany"
+        message = (params.arguments.get("message") or "").strip()
+        logger.info(f"📞 [REALTIME TEST] contact_owner: {customer_name} — {message[:60]!r}")
+
+        owner_email = tenant.get("notification_email") or tenant.get("email")
+        if not owner_email:
+            logger.warning("📞 [REALTIME TEST] contact_owner: brak notification_email na tenancie")
+            await params.result_callback({"status": "error", "reason": "no_owner_email"})
+            return
+        if not message:
+            await params.result_callback({"status": "error", "reason": "empty_message"})
+            return
+
+        sent = await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
+        await params.result_callback({"status": "ok" if sent else "error"})
+
+        if sent:
+            # Zaplanuj rozłączenie po TTS — ta sama logika co bot.py::save_and_confirm_message
+            # (sleep 3.0 + EndFrame — nie czekamy na realny koniec audio, patrz komentarz przy say_now).
+            async def auto_hangup():
+                await asyncio.sleep(6.0)  # dłużej niż w say_now — tu bot jeszcze SAM formułuje potwierdzenie
+                try:
+                    t = task_box.get("task")
+                    if t:
+                        await t.queue_frame(EndFrame())
+                        logger.info("🔚 [REALTIME TEST] EndFrame po contact_owner")
+                except Exception as e:
+                    logger.error(f"[REALTIME TEST] EndFrame po contact_owner error: {e}")
+            asyncio.create_task(auto_hangup())
+
+    return FunctionSchema(
+        name="contact_owner",
+        description="""Klient chce kontaktu z właścicielem/firmą — zostawić wiadomość. Użyj gdy:
+- "chcę porozmawiać z właścicielem", "proszę o kontakt", "czy mogę zostawić wiadomość"
+- "połącz mnie", "przekieruj mnie", "chcę rozmawiać z człowiekiem"
+- klient jest sfrustrowany i potrzebuje pomocy człowieka
+- nie możesz pomóc i klient potrzebuje właściciela
+Wywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości) — jeśli czegoś brakuje, dopytaj
+klienta NAJPIERW w normalnej rozmowie (jedno pytanie na turę), potem wywołaj.""",
+        properties={
+            "customer_name": {"type": "string", "description": "Imię klienta"},
+            "message": {"type": "string", "description": "Treść wiadomości do przekazania właścicielowi — czego dotyczy sprawa"},
+        },
+        required=["customer_name", "message"],
+        handler=handle_contact_owner,
+    )
 
 
 # ==========================================
@@ -701,8 +866,10 @@ async def websocket_gemini_test(websocket: WebSocket):
         ),
     )
 
+    task_box = {"task": None}
+    tools = [build_contact_owner_tool(tenant, caller_phone, task_box)]
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
+    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
     call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
@@ -726,6 +893,7 @@ async def websocket_gemini_test(websocket: WebSocket):
             audio_out_sample_rate=8000,
         ),
     )
+    task_box["task"] = task
 
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
@@ -876,8 +1044,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         ),
     )
 
+    task_box = {"task": None}
+    tools = [build_contact_owner_tool(tenant, caller_phone, task_box)]
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
+    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
     call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
@@ -901,6 +1071,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
             audio_out_sample_rate=16000,
         ),
     )
+    task_box["task"] = task
 
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
