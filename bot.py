@@ -699,7 +699,7 @@ async def run_call_pipeline(
     tts = create_tts_service(tenant)
 
 
-    llm_provider = tenant.get("llm_provider", "openai")
+    llm_provider = tenant.get("llm_provider", "groq")
     if llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
