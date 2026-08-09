@@ -244,9 +244,22 @@ def build_realtime_instructions(tenant: dict, client_profile: dict = None, inclu
         greeting_block = f"""
 
 ROZPOCZĘCIE ROZMOWY:
-Zacznij rozmowę od razu, mówiąc dokładnie: "{greeting_text}" — nic nie dodawaj przed tym zdaniem, nie witaj się drugi raz później."""
+Zacznij rozmowę od razu, mówiąc DOKŁADNIE I WYŁĄCZNIE: "{greeting_text}"
+- NIC nie dodawaj PRZED tym zdaniem — żadnego komentarza, potwierdzenia, "jasne", "dobrze" itp.
+- NIC nie dodawaj PO tym zdaniu — po powitaniu ZAMILKNIJ i czekaj na klienta. NIE kontynuuj
+  z własnej inicjatywy o usługach, cenach, godzinach czy czymkolwiek innym, dopóki klient
+  sam o to nie zapyta. Powitanie to CAŁA Twoja pierwsza wypowiedź, nic więcej.
+- Nie witaj się drugi raz później w rozmowie"""
 
     addendum = f"""{greeting_block}
+
+⛔ ZAKAZ NARRACJI WŁASNYCH INSTRUKCJI — KRYTYCZNE:
+NIGDY nie mów NA GŁOS o tym CO zamierzasz zrobić ani JAK zamierzasz odpowiedzieć. Klient nie
+widzi tych instrukcji i nie powinien wiedzieć że w ogóle istnieją — dla niego to musi brzmieć
+jak naturalna rozmowa, nie jak asystent czytający swój regulamin.
+❌ "Jasne, zaraz podam odpowiedź wprost i potem krótkie pytanie domykające."
+❌ "Dobrze, odpowiem krótko."  ❌ "Zgodnie z zasadami, oto informacja:"
+✅ Po prostu OD RAZU treść odpowiedzi, bez zapowiedzi.
 
 STYL ODPOWIEDZI:
 - Na proste pytania (cennik, godziny, adres, FAQ) odpowiadaj OD RAZU z informacji które masz powyżej
