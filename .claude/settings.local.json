@@ -19,7 +19,10 @@
       "WebSearch",
       "Bash(git fetch *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "PowerShell(python -c \"import pipecat, os; print\\(os.path.dirname\\(pipecat.__file__\\)\\)\")",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\zylso\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\Lib\\\\site-packages\\\\pipecat\\\\services' -Recurse -Filter '*realtime*' | Select-Object -ExpandProperty FullName\")",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\zylso\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\Lib\\\\site-packages\\\\pipecat\\\\services\\\\openai\\\\realtime' -Recurse -File | Select-Object -ExpandProperty FullName\")"
     ]
   }
 }
