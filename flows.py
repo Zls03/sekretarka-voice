@@ -172,15 +172,22 @@ def create_initial_node(tenant: dict, greeting_played: bool = False, client_prof
     base_greeting = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
 
     # Personalizacja powitania dla powracającego klienta
+    from polish_mappings import normalize_polish_text
     if client_profile and client_profile.get("visit_count", 0) > 0:
         name = client_profile.get("name", "")
-        name_part = f" {name}" if name else ""
-        # Usuń "Dzień dobry" z początku base_greeting żeby uniknąć duplikatu
-        import re
-        base_stripped = re.sub(r'^[Dd]zień dobry[,!.]?\s*', '', base_greeting).strip()
-        base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
-        if name:
+        first_name = name.split()[0] if name else ""
+        # Jeśli własne powitanie firmy już zawiera imię klienta (np. ktoś ręcznie
+        # wpisał spersonalizowany tekst w panelu) — nie dokładaj drugiego "Dzień dobry",
+        # bo wychodzi sklejone dwa powitania naraz.
+        already_personalized = bool(
+            first_name and normalize_polish_text(first_name).lower() in normalize_polish_text(base_greeting).lower()
+        )
+        if first_name and not already_personalized:
             from polish_mappings import vocative_imie
+            # Usuń "Dzień dobry" z początku base_greeting żeby uniknąć duplikatu
+            import re
+            base_stripped = re.sub(r'^[Dd]zień dobry[,!.]?\s*', '', base_greeting).strip()
+            base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
             name_voc = vocative_imie(name)
             first_message = f"Dzień dobry {name_voc}. {base_stripped}"
         else:
