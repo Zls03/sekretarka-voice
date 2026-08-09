@@ -1,13 +1,22 @@
-# bot_gemini_test.py — IZOLOWANY test Gemini Live
+# bot_gemini_test.py — IZOLOWANY test modeli audio-to-audio (Gemini Live / OpenAI Realtime)
 """
 Cel: sprawdzić latencję i jakość rozpoznawania polskich nazw usług/pracowników
-przy użyciu Gemini Multimodal Live zamiast Deepgram+GPT+TTS.
+przy użyciu modelu audio-to-audio (Gemini Live lub OpenAI Realtime) zamiast
+Deepgram+GPT+TTS.
 
 NIE dotyka produkcyjnego bot.py. Zero FlowManagera, zero logiki rezerwacji.
 Reużywa Twojej bazy tenantów (get_tenant_by_phone / db) tylko do ODCZYTU danych firmy.
 
+WYBÓR DOSTAWCY: zmienna środowiskowa REALTIME_PROVIDER
+  "google" (domyślnie) — Gemini Live, wymaga GOOGLE_API_KEY
+  "openai"             — OpenAI Realtime, wymaga OPENAI_API_KEY (ten sam klucz co w bot.py)
+  Model dla OpenAI ustawiany przez OPENAI_REALTIME_MODEL (domyślnie "gpt-realtime-2.1-mini"
+  — NIE zweryfikowałem tej nazwy na żywo w katalogu modeli OpenAI; jeśli dostaniesz 404,
+  spróbuj "gpt-realtime-2", czyli domyślnego modelu w pipecat 1.4.0).
+
 WYMAGANE ZMIENNE ŚRODOWISKOWE (te same co w Railway):
-  GOOGLE_API_KEY       — Twój istniejący klucz z Google AI Studio
+  GOOGLE_API_KEY       — wymagane gdy REALTIME_PROVIDER=google
+  OPENAI_API_KEY       — wymagane gdy REALTIME_PROVIDER=openai
   TWILIO_AUTH_TOKEN    — do walidacji podpisu Twilio (opcjonalnie, można pominąć na testach)
 
 PODŁĄCZENIE (Twilio):
@@ -31,18 +40,20 @@ WYMAGANY PIPECAT: >=1.4.0 (NIE ten sam pin co bot.py, który siedzi na 0.0.104
   pipecat-ai w requirements.txt wywali produkcyjny bot.py (patrz sekcja niżej).
 
 UWAGI / RZECZY DO SPRAWDZENIA W TEŚCIE:
-  - Nazwa modelu "gemini-2.5-flash-preview-native-audio-dialog" może się zmienić
-    — sprawdź aktualną listę modeli Live API w Google AI Studio przed testem.
-    (domyślny model w pipecat 1.4.0 to "gemini-2.5-flash-native-audio-preview-12-2025"
-    — jeśli Twój model zwróci błąd 404 od Google, spróbuj tego).
-  - Gemini Live generuje audio natywnie w 24kHz, Twilio streamuje 8kHz mu-law.
+  - Oba serwisy generują audio natywnie w innym sample rate niż telefonia
+    (Gemini 24kHz, OpenAI 24kHz vs Twilio 8kHz mu-law / Vonage 16kHz PCM).
     Pipecat powinien to resamplować automatycznie w transporcie, ale posłuchaj
     uważnie czy nie ma artefaktów/przycięć w głosie — to częsty problem na starcie.
   - VAD: tu zostawiony Silero (jak w produkcji) RÓWNOLEGLE z wbudowanym VAD
-    Gemini Live. Jeśli usłyszysz dziwne przerywanie wypowiedzi bota — spróbuj
-    usunąć vad_analyzer z transportu i zdać się w 100% na VAD Gemini.
+    usługi. Jeśli usłyszysz dziwne przerywanie wypowiedzi bota — spróbuj
+    usunąć vad_analyzer z transportu i zdać się w 100% na VAD dostawcy.
   - To NIE mierzy dokładnie STT/LLM/TTS osobno (to jeden strumień audio-in/out).
-    Mierzysz całość: koniec mowy użytkownika -> pierwsza ramka audio bota.
+    Mierzysz całość: koniec mowy użytkownika (transkrypcja od usługi) ->
+    pierwsza ramka audio bota. Pomiar jest w dwóch osobnych procesorach
+    (UserTranscriptMonitor / BotAudioMonitor), bo transkrypcja usera leci
+    UPSTREAM z usługi, a audio bota DOWNSTREAM — jeden processor za LLM-em
+    (jak było wcześniej) nigdy nie widział transkrypcji i pomiar się nie
+    uruchamiał (0 pomiarów w poprzednich testach).
 """
 
 import os
@@ -72,10 +83,11 @@ from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import EndFrame, TranscriptionFrame, TTSAudioRawFrame
-from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.processors.frame_processor import FrameProcessor
 
 # Pipecat >=1.2 przeniósł Gemini Live pod nową nazwę/ścieżkę (bez "Multimodal")
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
 # Reużywamy Twoich istniejących modułów TYLKO do odczytu danych firmy
 from helpers import get_tenant_by_phone, db, saas_db
@@ -85,35 +97,76 @@ logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {messa
 
 app = FastAPI()
 
+REALTIME_PROVIDER = os.getenv("REALTIME_PROVIDER", "google").lower()  # "google" | "openai"
+OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
+
 # prosty stoper do zmierzenia całościowego opóźnienia user->bot
-_t_state = {"last_user_frame": None}
+_t_state = {"last_user_frame": None, "waiting_for_bot_audio": False}
 
 
-class LatencyMonitor(FrameProcessor):
-    """Bardzo prosty pomiar: koniec mowy usera -> pierwsza ramka audio bota."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._waiting_for_bot_audio = False
+class UserTranscriptMonitor(FrameProcessor):
+    """Łapie transkrypcję usera. UWAGA: usługi realtime (Gemini/OpenAI) pushują
+    TranscriptionFrame w kierunku UPSTREAM (do context aggregatora), nie downstream
+    do transportu — dlatego ten processor musi siedzieć MIĘDZY user_aggregator a llm,
+    a nie za LLM-em (tam by nigdy tej ramki nie zobaczył — tak było w poprzednich testach)."""
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        now = asyncio.get_event_loop().time()
-
-        if isinstance(frame, TranscriptionFrame) and direction == FrameDirection.DOWNSTREAM:
-            _t_state["last_user_frame"] = now
-            self._waiting_for_bot_audio = True
+        if isinstance(frame, TranscriptionFrame):
+            _t_state["last_user_frame"] = asyncio.get_event_loop().time()
+            _t_state["waiting_for_bot_audio"] = True
             logger.info(f"⏱️ [USER] transkrypcja: {frame.text!r}")
+        await self.push_frame(frame, direction)
 
-        if isinstance(frame, TTSAudioRawFrame) and self._waiting_for_bot_audio:
-            self._waiting_for_bot_audio = False
+
+class BotAudioMonitor(FrameProcessor):
+    """Łapie pierwszą ramkę audio bota (downstream, za LLM-em) i liczy deltę od transkrypcji usera."""
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSAudioRawFrame) and _t_state["waiting_for_bot_audio"]:
+            _t_state["waiting_for_bot_audio"] = False
             start = _t_state.get("last_user_frame")
             if start:
-                ms = (now - start) * 1000
+                ms = (asyncio.get_event_loop().time() - start) * 1000
                 icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
                 logger.info(f"⏱️ [TOTAL user->bot audio] {ms:.0f}ms {icon}")
-
         await self.push_frame(frame, direction)
+
+
+def build_realtime_llm(system_prompt: str):
+    """Buduje usługę audio-to-audio + parę context aggregatorów wg REALTIME_PROVIDER.
+
+    Ten sam trigger (`user_aggregator.push_context_frame()` po connect) działa dla
+    obu dostawców: Gemini seeduje kontekst systemową instrukcją, OpenAI bezwarunkowo
+    odpala `_create_response()` na pierwszym LLMContextFrame — więc dla OpenAI ten
+    mechanizm powinien być NIEZAWODNY (Gemini bywa kapryśny, patrz notatka w kodzie
+    poniżej o audio-input / history-recall).
+    """
+    if REALTIME_PROVIDER == "openai":
+        logger.info(f"🧠 REALTIME_PROVIDER=openai, model={OPENAI_REALTIME_MODEL}")
+        llm = OpenAIRealtimeLLMService(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model=OPENAI_REALTIME_MODEL,
+            settings=OpenAIRealtimeLLMService.Settings(system_instruction=system_prompt),
+        )
+    else:
+        logger.info("🧠 REALTIME_PROVIDER=google (Gemini Live)")
+        llm = GeminiLiveLLMService(
+            api_key=os.getenv("GOOGLE_API_KEY"),
+            model="models/gemini-2.5-flash-native-audio-preview-12-2025",  # stary "preview-native-audio-dialog" zwracał 404 (wycofany)
+            voice_id="Aoede",
+            system_instruction=system_prompt,
+        )
+
+    context = LLMContext()
+    # realtime_service_mode=True: usługi realtime nie emitują (Gemini) lub emitują
+    # inaczej (OpenAI) UserStarted/StoppedSpeakingFrame, więc zapisy do kontekstu
+    # muszą iść w trybie "trailing" zamiast czekać na te ramki.
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+        context, realtime_service_mode=True
+    )
+    return llm, user_aggregator, assistant_aggregator
 
 
 def build_system_prompt(tenant: dict) -> str:
@@ -245,29 +298,16 @@ async def websocket_gemini_test(websocket: WebSocket):
     )
 
     system_prompt = build_system_prompt(tenant)
-
-    llm = GeminiLiveLLMService(
-        api_key=os.getenv("GOOGLE_API_KEY"),
-        model="models/gemini-2.5-flash-native-audio-preview-12-2025",  # stary "preview-native-audio-dialog" zwracał 404 (wycofany)
-        voice_id="Aoede",
-        system_instruction=system_prompt,
-        # transcribe_user_audio/transcribe_model_audio usunięte w pipecat 1.x —
-        # transkrypcja wejścia i wyjścia jest teraz zawsze włączona wewnątrz usługi.
-    )
-
-    context = LLMContext()
-    # realtime_service_mode=True: Gemini Live nie emituje UserStarted/StoppedSpeakingFrame,
-    # więc zapisy do kontekstu muszą iść w trybie "trailing" zamiast czekać na te ramki.
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context, realtime_service_mode=True
-    )
-    latency_monitor = LatencyMonitor()
+    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
+    user_transcript_monitor = UserTranscriptMonitor()
+    bot_audio_monitor = BotAudioMonitor()
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
+        user_transcript_monitor,
         llm,
-        latency_monitor,
+        bot_audio_monitor,
         transport.output(),
         assistant_aggregator,
     ])
@@ -286,10 +326,10 @@ async def websocket_gemini_test(websocket: WebSocket):
 
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
-        logger.info("🎤 [GEMINI TEST] Klient połączony — wybudzam Gemini do przywitania")
-        # Gemini Live nie odzywa się pierwszy sam z siebie — trzeba popchnąć
-        # pusty context frame, żeby wykorzystać inference_on_context_initialization
-        # (usługa doda system_instruction jako seed i wygeneruje pierwszą odpowiedź).
+        logger.info(f"🎤 [GEMINI TEST] Klient połączony — wybudzam {REALTIME_PROVIDER} do przywitania")
+        # Usługa realtime nie odzywa się pierwsza sama z siebie — trzeba popchnąć
+        # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu
+        # (patrz build_realtime_llm — mechanizm różni się między Gemini a OpenAI).
         await user_aggregator.push_context_frame()
 
     @transport.event_handler("on_client_disconnected")
@@ -311,7 +351,7 @@ async def websocket_gemini_test(websocket: WebSocket):
 
 @app.get("/health-gemini-test")
 async def health():
-    return {"status": "ok", "mode": "gemini-live-test"}
+    return {"status": "ok", "provider": REALTIME_PROVIDER}
 
 
 # ==========================================
@@ -429,25 +469,16 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     )
 
     system_prompt = build_system_prompt(tenant)
-
-    llm = GeminiLiveLLMService(
-        api_key=os.getenv("GOOGLE_API_KEY"),
-        model="models/gemini-2.5-flash-native-audio-preview-12-2025",  # stary "preview-native-audio-dialog" zwracał 404 (wycofany)
-        voice_id="Aoede",
-        system_instruction=system_prompt,
-    )
-
-    context = LLMContext()
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context, realtime_service_mode=True
-    )
-    latency_monitor = LatencyMonitor()
+    llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt)
+    user_transcript_monitor = UserTranscriptMonitor()
+    bot_audio_monitor = BotAudioMonitor()
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
+        user_transcript_monitor,
         llm,
-        latency_monitor,
+        bot_audio_monitor,
         transport.output(),
         assistant_aggregator,
     ])
@@ -464,7 +495,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
 
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
-        logger.info("🎤 [VONAGE TEST] Klient połączony — wybudzam Gemini do przywitania")
+        logger.info(f"🎤 [VONAGE TEST] Klient połączony — wybudzam {REALTIME_PROVIDER} do przywitania")
         await user_aggregator.push_context_frame()
 
     @transport.event_handler("on_client_disconnected")
