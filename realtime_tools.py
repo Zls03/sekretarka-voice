@@ -103,7 +103,7 @@ def _looks_like_vague_meta_message(message: str) -> bool:
     return any(m.startswith(p) for p in _VAGUE_MESSAGE_STARTS)
 
 
-def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict) -> FunctionSchema:
+def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, call_state: dict) -> FunctionSchema:
     """FunctionSchema z handlerem przypiętym bezpośrednio — LLMContext rejestruje go
     automatycznie (patrz bot_gemini_test.py::build_realtime_llm), bez osobnego
     register_function.
@@ -111,7 +111,13 @@ def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict) ->
     task_box: {"task": None} wypełniane PO stworzeniu PipelineTask — w momencie budowy
     tego tool'a (przed pipeline'em, bo LLMContext potrzebuje tools już przy konstrukcji
     llm) `task` jeszcze nie istnieje. Handler czyta task_box["task"] dopiero przy
-    faktycznym wywołaniu (w trakcie żywej rozmowy), więc do tego czasu jest już ustawiony."""
+    faktycznym wywołaniu (w trakcie żywej rozmowy), więc do tego czasu jest już ustawiony.
+
+    call_state: to samo co w bot_gemini_test.py::make_call_state() — TU ustawiamy
+    call_state["ended"]=True od razu po udanym wysłaniu, żeby monitor_call_health
+    przestał liczyć ciszę na kończącym się połączeniu. Bez tego (bug znaleziony na
+    żywym telefonie): po EndFrame z tej funkcji monitor dalej działał, nie wiedział że
+    rozmowa się kończy, i próbował rozłączyć DRUGI RAZ przez "brak odpowiedzi 20s"."""
 
     async def handle_contact_owner(params: FunctionCallParams):
         customer_name = (params.arguments.get("customer_name") or "").strip() or "Nieznany"
@@ -139,6 +145,7 @@ def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict) ->
         await params.result_callback({"status": "ok" if sent else "error"})
 
         if sent:
+            call_state["ended"] = True
             # Zaplanuj rozłączenie po TTS — ta sama logika co bot.py::save_and_confirm_message
             # (sleep + EndFrame — nie czekamy na realny koniec audio, patrz komentarz przy say_now
             # w bot_gemini_test.py).
@@ -160,12 +167,12 @@ def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict) ->
 - "połącz mnie", "przekieruj mnie", "chcę rozmawiać z człowiekiem"
 - klient jest sfrustrowany i potrzebuje pomocy człowieka
 - nie możesz pomóc i klient potrzebuje właściciela
-Wywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości) — jeśli czegoś brakuje, dopytaj
-klienta NAJPIERW w normalnej rozmowie (jedno pytanie na turę: "Czego dokładnie dotyczy sprawa?"),
-potem wywołaj.
+Wywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości). Jeśli czegoś brakuje, zapytaj
+klienta JEDNO krótkie pytanie wprost (np. "Czego dokładnie dotyczy sprawa?" / "Na jakie imię
+mam zapisać?") — NIE zapowiadaj że o to zapytasz, po prostu zapytaj.
 Jeśli wynik wywołania to status="error", reason="message_too_vague" — wiadomość była za ogólna
-(np. samo "chce kontaktu" bez konkretu). PRZEPROŚ krótko, dopytaj WPROST czego dotyczy sprawa,
-i wywołaj funkcję PONOWNIE z konkretną treścią.""",
+(np. samo "chce kontaktu" bez konkretu). Krótko przeproś i zadaj TO SAMO pytanie ponownie,
+bez tłumaczenia dlaczego pytasz drugi raz.""",
         properties={
             "customer_name": {"type": "string", "description": "Imię klienta"},
             "message": {
@@ -185,14 +192,18 @@ i wywołaj funkcję PONOWNIE z konkretną treścią.""",
     )
 
 
-def build_end_conversation_tool(task_box: dict) -> FunctionSchema:
+def build_end_conversation_tool(task_box: dict, call_state: dict) -> FunctionSchema:
     """Global-function odpowiednik end_conversation_function() z cascade (flows.py) —
     tam było zawsze dostępne niezależnie od node'a. Bez tego bot nie miał ŻADNEGO
     sposobu żeby rozpoznać koniec rozmowy inaczej niż przez ciszę (10s/20s) — klient
-    mówiący "dziękuję, to wszystko" po prostu wisiał w rozmowie aż zadziałał idle timeout."""
+    mówiący "dziękuję, to wszystko" po prostu wisiał w rozmowie aż zadziałał idle timeout.
+
+    call_state: patrz komentarz w build_contact_owner_tool — ten sam fix (call_state["ended"]
+    ustawiane od razu), żeby monitor_call_health nie próbował rozłączyć drugi raz."""
 
     async def handle_end_conversation(params: FunctionCallParams):
         logger.info("👋 [REALTIME TEST] end_conversation — rozłączam po pożegnaniu")
+        call_state["ended"] = True
         await params.result_callback({"status": "ok"})
 
         async def auto_hangup():

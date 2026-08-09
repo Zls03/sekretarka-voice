@@ -473,13 +473,13 @@ async def websocket_gemini_test(websocket: WebSocket):
     )
 
     task_box = {"task": None}
+    call_state = make_call_state()
     tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box),
-        build_end_conversation_tool(task_box),
+        build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
+        build_end_conversation_tool(task_box, call_state),
     ]
     system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
-    call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
 
@@ -654,13 +654,13 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     )
 
     task_box = {"task": None}
+    call_state = make_call_state()
     tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box),
-        build_end_conversation_tool(task_box),
+        build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
+        build_end_conversation_tool(task_box, call_state),
     ]
     system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_realtime_llm(system_prompt, tools=tools)
-    call_state = make_call_state()
     user_transcript_monitor = UserTranscriptMonitor(call_state)
     bot_audio_monitor = BotAudioMonitor(call_state)
 
