@@ -275,7 +275,17 @@ async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
     Czy mnie słyszysz?" jako message, wysyłając śmieciowy email do właściciela. Tools zostają
     zarejestrowane na poziomie SESJI, więc bez tego jawnego wyłączenia model miał do nich
     dostęp nawet w tej jednorazowej, wymuszonej wypowiedzi. tool_choice="none" gwarantuje że
-    ta odpowiedź może być WYŁĄCZNIE mową, żadnego wywołania funkcji."""
+    ta odpowiedź może być WYŁĄCZNIE mową, żadnego wywołania funkcji.
+
+    Timeout na wyczyszczenie suppress_idle_reset (zamiast polegać WYŁĄCZNIE na TTSStoppedFrame
+    w BotAudioMonitor): podejrzewany, nie w 100% potwierdzony bug — jeśli klient wejdzie
+    w słowo w trakcie TEGO dopytania (barge-in, zaobserwowane na żywym telefonie: "Halo? Czy
+    mnie słysz" ucięte w połowie), przerwana wypowiedź może nie wygenerować czystego
+    TTSStoppedFrame. Bez tego timeoutu flaga zostałaby WTEDY zapalona już na resztę rozmowy —
+    KAŻDY kolejny, prawdziwy Start/Stop bota przestałby resetować zegar ciszy (bo trafiałby
+    w gałąź "to była nasza wymuszona wypowiedź"), więc zegar rósłby mimo aktywnej, płynnej
+    rozmowy. Ten timeout samoczynnie leczy flagę niezależnie od tego czy TTSStoppedFrame
+    w ogóle nadejdzie."""
     call_state["suppress_idle_reset"] = True
     await llm.send_client_event(
         ResponseCreateEvent(
@@ -285,6 +295,12 @@ async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
             )
         )
     )
+
+    async def _clear_suppress_after_timeout():
+        await asyncio.sleep(8.0)
+        call_state["suppress_idle_reset"] = False
+
+    asyncio.create_task(_clear_suppress_after_timeout())
 
 
 async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService, call_state: dict):
