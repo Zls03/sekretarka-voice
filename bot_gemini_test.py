@@ -206,24 +206,42 @@ class UserTranscriptMonitor(FrameProcessor):
 
 class BotAudioMonitor(FrameProcessor):
     """Łapie pierwszą ramkę audio bota (downstream, za LLM-em), liczy deltę od
-    końca wypowiedzi usera, i resetuje zegar ciszy na START i KONIEC KAŻDEJ prawdziwej
-    wypowiedzi bota (powitanie, odpowiedź).
+    końca wypowiedzi usera, i resetuje zegar ciszy PRZEZ CAŁY CZAS TRWANIA
+    wypowiedzi bota (powitanie, odpowiedź), nie tylko na jej start/koniec.
 
-    ⚠️ RESET NA START JEST KRYTYCZNY, nie kosmetyczny — bug znaleziony na żywym telefonie:
-    długa odpowiedź bota (np. 12 sekund ciągłego mówienia — TTFB + generowanie + odtwarzanie)
-    NIE resetowała zegara dopóki się nie skończyła, więc licznik ciszy dalej liczył od
-    momentu kiedy KLIENT ostatnio przestał mówić — i zdążył przekroczyć próg 10s ZANIM bot
-    w ogóle skończył swoją odpowiedź, mimo że przez cały ten czas bot był w pełni aktywny,
-    zero prawdziwej ciszy. Efekt: "Halo? Czy mnie słyszysz?" wystrzeliwało zaraz po tym jak
-    bot skończył mówić, i potrafiło "zjeść" pytanie klienta który akurat wszedł w słowo.
-    Reset na START chroni cały czas trwania odpowiedzi bota, niezależnie jak długa.
+    ⚠️ HISTORIA BUGA (2 warstwy, obie znalezione na żywym telefonie):
+    1) Zegar resetowany TYLKO na Stop — długa odpowiedź (kilka-kilkanaście sekund
+       audio) nie resetowała zegara dopóki się nie skończyła, więc licznik ciszy
+       dalej liczył od momentu kiedy KLIENT ostatnio przestał mówić, i przekraczał
+       próg ZANIM bot skończył. Fix: reset także na Start.
+    2) Reset na START NIE WYSTARCZYŁ — to tylko przesuwa punkt odniesienia, nie
+       chroni całej wypowiedzi. Jeśli SAMO audio bota trwa dłużej niż próg (np.
+       dwuzdaniowa odpowiedź prawnika ~12-15s), zegar mimo to wygasa W TRAKCIE
+       mówienia bota, bo nic go nie odświeżało między Start a Stop. Potwierdzone
+       w logu: TTSStoppedFrame dla danej tury czasem w ogóle nie pojawia się w
+       oczekiwanym czasie (audio realnie jeszcze leci), a "processing time" z
+       Realtime mierzy WYGENEROWANIE tekstu, nie odtworzenie audio — nie da się
+       na nim polegać jako sygnale "bot skończył mówić".
+    FIX: reset na KAŻDEJ paczce audio wychodzącej do transportu (TTSAudioRawFrame)
+    — leci non-stop przez całą wypowiedź, więc zegar fizycznie nie może wygasnąć
+    póki bot faktycznie mówi, niezależnie od długości. Start/Stop zostają jako
+    dodatkowe warstwy (pierwsza/ostatnia ramka, grace period po Stop).
+
+    ⚠️ GRACE PERIOD po Stop (BOT_STOP_GRACE_SECONDS): ochrona przed opóźnieniem
+    odtwarzania u dostawcy telefonii (Vonage) — nasz TTSStoppedFrame odpala się
+    gdy MY skończymy wysyłać audio, ale telefon klienta może je jeszcze przez
+    chwilę odtwarzać. Bez tego zapasu cisza mogłaby zacząć się liczyć nieco
+    wcześniej niż realnie klient przestał słyszeć bota.
 
     ⚠️ WYJĄTEK: automatyczne dopytanie/pożegnanie z say_now() (monitor_call_health) jest
-    OZNACZONE flagą `call_state["suppress_idle_reset"]` — ANI start, ANI koniec TEJ
-    konkretnej wypowiedzi nie rusza zegara (inaczej własne "Halo?" bota resetowałoby zegar
-    który ma doprowadzić do rozłączenia, i bot pytałby w kółko bez końca — dokładniej opisane
-    w monitor_call_health). Flaga jest czyszczona dopiero na Stopped, więc zostaje aktywna
-    przez całą wypowiedź nudge'a (Started + Stopped), nie tylko pierwszą napotkaną ramkę."""
+    OZNACZONE flagą `call_state["suppress_idle_reset"]` — ŻADNA ramka (Start/Stop/Audio)
+    TEJ konkretnej wypowiedzi nie rusza zegara (inaczej własne "Halo?" bota resetowałoby
+    zegar który ma doprowadzić do rozłączenia, i bot pytałby w kółko bez końca —
+    dokładniej opisane w monitor_call_health). Flaga jest czyszczona dopiero na Stopped
+    (plus samoczyszczący timeout w say_now, patrz tam), więc zostaje aktywna przez całą
+    wypowiedź nudge'a, nie tylko pierwszą napotkaną ramkę."""
+
+    BOT_STOP_GRACE_SECONDS = 1.2
 
     def __init__(self, state: dict):
         super().__init__()
@@ -236,18 +254,23 @@ class BotAudioMonitor(FrameProcessor):
         if isinstance(frame, TTSStartedFrame):
             if not self._state.get("suppress_idle_reset"):
                 self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSAudioRawFrame):
+            if not self._state.get("suppress_idle_reset"):
+                # Ciągłe odświeżanie — patrz punkt (2) w docstringu klasy. To jest
+                # GŁÓWNA linia obrony, Start/Stop to tylko brzegowe uzupełnienie.
+                self._state["idle_since"] = time.time()
+            if self._state["waiting_for_bot_audio"]:
+                self._state["waiting_for_bot_audio"] = False
+                start = self._state.get("last_user_frame")
+                if start:
+                    ms = (asyncio.get_event_loop().time() - start) * 1000
+                    icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
+                    logger.info(f"⏱️ [TOTAL user->bot audio] {ms:.0f}ms {icon}")
         if isinstance(frame, TTSStoppedFrame):
             if self._state.get("suppress_idle_reset"):
                 self._state["suppress_idle_reset"] = False
             else:
-                self._state["idle_since"] = time.time()
-        if isinstance(frame, TTSAudioRawFrame) and self._state["waiting_for_bot_audio"]:
-            self._state["waiting_for_bot_audio"] = False
-            start = self._state.get("last_user_frame")
-            if start:
-                ms = (asyncio.get_event_loop().time() - start) * 1000
-                icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
-                logger.info(f"⏱️ [TOTAL user->bot audio] {ms:.0f}ms {icon}")
+                self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
         await self.push_frame(frame, direction)
 
 

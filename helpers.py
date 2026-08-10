@@ -351,6 +351,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "azure_voice_id":      actual_voice_id,
         "elevenlabs_voice_id": actual_voice_id if actual_provider == "elevenlabs" else None,
         "speaking_rate":       float(firm.get("speaking_rate") or 1.06),
+        "realtime_voice":      firm.get("realtime_voice") or "",
 
         "is_active":        int(firm.get("is_active") or 1),
         "is_blocked":       int(firm.get("is_blocked") or 0),
