@@ -138,7 +138,7 @@ def _looks_too_short(text: str) -> bool:
 # właściciela. Główny fix to tool_choice="none" na tej wymuszonej odpowiedzi (say_now), TU
 # to tylko druga linia obrony — gdyby mimo wszystko coś podobnego się powtórzyło.
 _SCRIPTED_BOT_PHRASES = (
-    "halo? czy mnie słyszysz",
+    "czy nadal jesteśmy połączeni",
     "nie słyszę odpowiedzi",
     "za chwilę będę kończyć",
     "przepraszam, czas rozmowy się skończył",

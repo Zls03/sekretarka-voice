@@ -69,7 +69,7 @@ CO ZOSTAJE NA PÓŹNIEJ (świadomie NIE tutaj):
   przekierowanie są jeszcze w budowie — żeby model niczego nie obiecywał, czego nie umie wykonać.
 
 FAZA 2 — jak działa wykrywanie ciszy/limitu (patrz monitor_call_health poniżej):
-  10s ciszy -> "Halo? Czy mnie słyszysz?" | 20s ciszy -> pożegnanie + rozłączenie
+  10s ciszy -> "Przepraszam, czy nadal jesteśmy połączeni?" | 20s ciszy -> pożegnanie + rozłączenie
   | 4 min rozmowy - 30s -> uprzedzenie że kończymy | 4 min -> pożegnanie + rozłączenie.
   Realizowane przez say_now() (response.create z jednorazowym `instructions`), bo
   TTSSpeakFrame/LLMMessagesAppendFrame z cascade NIE działają z tą usługą (patrz
@@ -365,7 +365,10 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
         if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
             logger.warning(f"🔇 [REALTIME TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
             idle_warning_given = True
-            await say_now(llm, call_state, "Halo? Czy mnie słyszysz?")
+            # "Pan/Pani" NIE nadaje się tu literalnie — say_now każe wypowiedzieć tekst
+            # DOKŁADNIE, więc TTS przeczytałby ten znak "/" na głos. Neutralna wersja bez
+            # zwrotu grzecznościowego, żeby nie zgadywać płci dzwoniącego.
+            await say_now(llm, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
         elif silence < IDLE_WARNING_SECONDS:
             idle_warning_given = False
 
