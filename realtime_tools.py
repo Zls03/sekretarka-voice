@@ -131,6 +131,25 @@ def _looks_too_short(text: str) -> bool:
     return len((text or "").strip()) < 10
 
 
+# Wymuszone, zaszyte w kodzie wypowiedzi bota (patrz bot_gemini_test.py::say_now) — dopytanie
+# o ciszę, ostrzeżenie o limicie czasu, pożegnania. Zaobserwowany na żywym telefonie bug:
+# jedna z tych wypowiedzi wylądowała jako `message`/`problem` w contact_owner (model wywołał
+# funkcję z DOKŁADNIE tym tekstem, zamiast treścią od klienta), wysyłając śmieciowy email do
+# właściciela. Główny fix to tool_choice="none" na tej wymuszonej odpowiedzi (say_now), TU
+# to tylko druga linia obrony — gdyby mimo wszystko coś podobnego się powtórzyło.
+_SCRIPTED_BOT_PHRASES = (
+    "halo? czy mnie słyszysz",
+    "nie słyszę odpowiedzi",
+    "za chwilę będę kończyć",
+    "przepraszam, czas rozmowy się skończył",
+)
+
+
+def _is_scripted_bot_phrase(text: str) -> bool:
+    t = (text or "").lower().strip()
+    return any(p in t for p in _SCRIPTED_BOT_PHRASES)
+
+
 def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, call_state: dict) -> FunctionSchema:
     """FunctionSchema z handlerem przypiętym bezpośrednio — LLMContext rejestruje go
     automatycznie (patrz bot_gemini_test.py::build_realtime_llm), bez osobnego
@@ -159,6 +178,10 @@ def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, ca
             return
         if not message:
             await params.result_callback({"status": "error", "reason": "empty_message"})
+            return
+        if _is_scripted_bot_phrase(message):
+            logger.warning(f"📞 [REALTIME TEST] contact_owner: treść to zaszyta wypowiedź bota (nie klienta), odrzucam: {message[:60]!r}")
+            await params.result_callback({"status": "error", "reason": "message_too_vague"})
             return
         if _looks_like_vague_meta_message(message):
             # Model czasem zamiast prawdziwej treści wpisuje własny, pokrętny opis sytuacji
@@ -499,7 +522,7 @@ def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -
         urgency = params.arguments.get("urgency") or "normal"
         logger.info(f"🛠️ [REALTIME TEST] submit_lead: urgency={urgency} — {problem[:60]!r}")
 
-        if _looks_too_short(problem):
+        if _looks_too_short(problem) or _is_scripted_bot_phrase(problem):
             logger.warning(f"🛠️ [REALTIME TEST] submit_lead: za mało konkretu, odrzucam: {problem[:60]!r}")
             await params.result_callback({"status": "error", "reason": "problem_too_vague"})
             return

@@ -268,12 +268,20 @@ async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
     a _handle_messages_append to w pipecat 1.4.0 wciąż pusty stub).
 
     Ustawia suppress_idle_reset, żeby BotAudioMonitor NIE zresetował zegara ciszy
-    na tę wypowiedź — to automatyczne dopytanie/pożegnanie, nie prawdziwa tura bota."""
+    na tę wypowiedź — to automatyczne dopytanie/pożegnanie, nie prawdziwa tura bota.
+
+    tool_choice="none": zaobserwowany na żywym telefonie bug — ten wymuszony response.create
+    (z samym "powiedz dokładnie X") potrafił RÓWNIEŻ wywołać contact_owner z treścią "Halo?
+    Czy mnie słyszysz?" jako message, wysyłając śmieciowy email do właściciela. Tools zostają
+    zarejestrowane na poziomie SESJI, więc bez tego jawnego wyłączenia model miał do nich
+    dostęp nawet w tej jednorazowej, wymuszonej wypowiedzi. tool_choice="none" gwarantuje że
+    ta odpowiedź może być WYŁĄCZNIE mową, żadnego wywołania funkcji."""
     call_state["suppress_idle_reset"] = True
     await llm.send_client_event(
         ResponseCreateEvent(
             response=ResponseProperties(
-                instructions=f'Powiedz DOKŁADNIE: "{text}" i nic więcej.'
+                instructions=f'Powiedz DOKŁADNIE: "{text}" i nic więcej.',
+                tool_choice="none",
             )
         )
     )
@@ -294,7 +302,11 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
     duration_warning_given = False
 
     while True:
-        await asyncio.sleep(5)
+        # 2s zamiast 5s — na żywym telefonie próg 10s ciszy potrafił faktycznie wystrzelić
+        # dopiero po 12-14s (10s + do 5s spóźnienia z samej granulacji tej pętli). Klient
+        # odbierał to jako "nie doczekał nawet 10 sekund", choć log pokazywał realnie WIĘCEJ
+        # niż próg — to była kwestia opóźnienia sprawdzania, nie błędnego liczenia ciszy.
+        await asyncio.sleep(2)
 
         if call_state.get("ended"):
             logger.info("⏱️ [REALTIME TEST] Monitor zatrzymany — połączenie zakończone")
