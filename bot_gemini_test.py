@@ -177,6 +177,9 @@ def make_call_state() -> dict:
                                         # jako "ciszy klienta"
         "suppress_idle_reset": False,  # True = kolejny TTSStoppedFrame to say_now()
                                         # (dopytanie/pożegnanie), nie prawdziwa tura bota
+        "audio_playback_until": now,   # estymowany czas zakończenia odtwarzania zbuforowanego
+                                        # audio (patrz BotAudioMonitor) — kumuluje realny czas
+                                        # trwania paczek, nie tylko moment ich odebrania
         "ended": False,
     }
 
@@ -222,10 +225,18 @@ class BotAudioMonitor(FrameProcessor):
        oczekiwanym czasie (audio realnie jeszcze leci), a "processing time" z
        Realtime mierzy WYGENEROWANIE tekstu, nie odtworzenie audio — nie da się
        na nim polegać jako sygnale "bot skończył mówić".
-    FIX: reset na KAŻDEJ paczce audio wychodzącej do transportu (TTSAudioRawFrame)
-    — leci non-stop przez całą wypowiedź, więc zegar fizycznie nie może wygasnąć
-    póki bot faktycznie mówi, niezależnie od długości. Start/Stop zostają jako
-    dodatkowe warstwy (pierwsza/ostatnia ramka, grace period po Stop).
+    3) RESET NA "TERAZ" PRZY KAŻDEJ PACZCE TEŻ NIE WYSTARCZYŁ — potwierdzone na żywym
+       telefonie: przy dłuższych, złożonych odpowiedziach model ma nierówne przerwy w
+       GENEROWANIU kolejnych paczek audio (widać w logu jako nierówne odstępy między
+       tokenami), a w takiej przerwie MY nic nie dostajemy, więc zegar resetowany do
+       time.time() i tak zaczynał liczyć ciszę — mimo że telefon klienta W TEJ CHWILI
+       WCIĄŻ ODTWARZA wcześniej wysłane, zbuforowane audio (WYSŁANIE paczki ≠ MOMENT
+       jej odtworzenia). FIX: zamiast resetować do "teraz", kumulujemy estymowany czas
+       zakończenia odtwarzania (audio_playback_until = poprzednia estymacja LUB teraz,
+       cokolwiek późniejsze, + realny czas trwania tej paczki z jej rozmiaru/sample_rate)
+       — to poprawnie przetrwa przerwy w GENEROWANIU, bo bufor po stronie klienta nie
+       jest pusty tylko dlatego że MY akurat nic nowego nie wysłaliśmy.
+    Start/Stop zostają jako dodatkowe warstwy (pierwsza/ostatnia ramka, grace period po Stop).
 
     ⚠️ GRACE PERIOD po Stop (BOT_STOP_GRACE_SECONDS): ochrona przed opóźnieniem
     odtwarzania u dostawcy telefonii (Vonage) — nasz TTSStoppedFrame odpala się
@@ -256,9 +267,16 @@ class BotAudioMonitor(FrameProcessor):
                 self._state["idle_since"] = time.time()
         if isinstance(frame, TTSAudioRawFrame):
             if not self._state.get("suppress_idle_reset"):
-                # Ciągłe odświeżanie — patrz punkt (2) w docstringu klasy. To jest
+                # Ciągłe odświeżanie — patrz punkt (3) w docstringu klasy. To jest
                 # GŁÓWNA linia obrony, Start/Stop to tylko brzegowe uzupełnienie.
-                self._state["idle_since"] = time.time()
+                # Estymujemy KIEDY ta paczka faktycznie skończy grać, nie kiedy ją
+                # odebraliśmy — kumulacja czasu trwania audio, odporna na przerwy
+                # w generowaniu (bufor po stronie klienta nie jest wtedy pusty).
+                now = time.time()
+                duration_s = len(frame.audio) / (frame.sample_rate * frame.num_channels * 2)
+                playback_until = max(self._state.get("audio_playback_until", now), now) + duration_s
+                self._state["audio_playback_until"] = playback_until
+                self._state["idle_since"] = playback_until
             if self._state["waiting_for_bot_audio"]:
                 self._state["waiting_for_bot_audio"] = False
                 start = self._state.get("last_user_frame")
