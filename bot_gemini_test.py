@@ -1121,6 +1121,12 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST] Klient połączony — wybudzam do przywitania")
+        # Bug znaleziony na żywym telefonie: Gemini Live ma osobny krok handshake'u
+        # ("Connecting to Gemini service" -> "Connected to Gemini service", ~1s), którego
+        # OpenAI Realtime nie ma. push_context_frame() wywołane od razu w on_connect
+        # wysyłało ramkę ZANIM połączenie z Gemini się ustanowiło — ginęła w locie,
+        # bot nigdy nie wypowiadał powitania. Krótkie opóźnienie naprawia wyścig.
+        await asyncio.sleep(1.0)
         await user_aggregator.push_context_frame()
 
     @transport.event_handler("on_client_disconnected")
@@ -1233,6 +1239,8 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Klient połączony — wybudzam do przywitania")
+        # Patrz komentarz w on_connect (Twilio) wyżej — ten sam wyścig z handshake'em Gemini.
+        await asyncio.sleep(1.0)
         await user_aggregator.push_context_frame()
 
     @transport.event_handler("on_client_disconnected")
