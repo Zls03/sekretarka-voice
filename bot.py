@@ -701,12 +701,26 @@ async def run_call_pipeline(
 
     llm_provider = tenant.get("llm_provider", "groq")
 
-    # Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-instruct) COFNIĘTE — mimo że jest
-    # w oficjalnej dokumentacji Groq, konto zwraca 404 model_not_found na żywym połączeniu
-    # (potwierdzone: bot witał się, potem cisza na pierwszym prawdziwym pytaniu — LLM call
-    # się wysypywał). Prawdopodobnie wymaga osobnego dostępu/whitelisty na koncie Groq.
-    # Wrócono do sprawdzonej Llama 3.3-70b poniżej.
-    if llm_provider == "cerebras":
+    # Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-instruct) COFNIĘTE — Groq oficjalnie
+    # wycofał ten model 17.07.2026 dla darmowych/developer-tier kont (potwierdzone w
+    # https://console.groq.com/docs/deprecations), stąd 404 model_not_found na żywym
+    # połączeniu. Polecane zamienniki Groq: openai/gpt-oss-120b (model PRODUKCYJNY, ~500 tps,
+    # 131K kontekstu, natywny tool-calling) lub qwen/qwen3.6-27b (⚠️ Preview — "should not be
+    # used in production, may be discontinued at short notice", ta sama kategoria ryzyka co
+    # Scout). Wybrany gpt-oss-120b jako bezpieczniejszy pod produkcję.
+    #
+    # 🧪 TEST: gpt-oss-120b (Groq) na tenancie testowym, scoped po ID — nie dotyka innych.
+    if tenant.get("id") == "firm_1774140338448_8905c":
+        llm = GroqLLMService(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model="openai/gpt-oss-120b",
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info("🧠 Using Groq gpt-oss-120b (TEST override, tenant firm_1774140338448_8905c)")
+    elif llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
             model="llama3.3-70b",
