@@ -992,13 +992,14 @@ class GeminiLatencyMonitor(FrameProcessor):
 
 def build_gemini_live_llm(system_prompt: str):
     """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live. Bez tools —
-    patrz docstring sekcji. Voice "Charon" to domyślny głos serwisu (bezpieczny wybór,
-    nie wymaga weryfikacji jak nazwa modelu)."""
+    patrz docstring sekcji. Voice "Kore" — ten sam głos (Chirp 3 HD) co
+    pl-PL-Chirp3-HD-Kore używany w cascade (tts_factory.py), top damski głos PL
+    wg rankingu użytkownika."""
     logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}")
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model=GEMINI_LIVE_MODEL,
-        voice_id="Charon",
+        voice_id="Kore",
         system_instruction=system_prompt,
     )
     context = LLMContext()
