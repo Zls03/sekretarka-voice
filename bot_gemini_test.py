@@ -131,6 +131,7 @@ from pipecat.services.openai.realtime.events import (
 # Gemini Live — TYLKO do szybkiego testu porównawczego latencji (patrz sekcja na końcu
 # pliku, route'y "-gemini-live"). Nie dotyka niczego z OpenAI Realtime powyżej.
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+from pipecat.transcriptions.language import Language
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
@@ -960,38 +961,56 @@ faktycznego końca mowy), ale wystarczające do zgrubnego porównania.
 GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
 
 
-class GeminiLatencyMonitor(FrameProcessor):
-    """Prosty pomiar: dotarcie transkrypcji usera -> pierwsza ramka audio bota.
-    Świadomie odrębna klasa od UserTranscriptMonitor/BotAudioMonitor (OpenAI Realtime
-    wyżej) — te są zbudowane wokół call_state/idle_since specyficznych dla tamtej
-    sekcji, tu nie ma idle-timeoutu więc nie ma sensu ich reużywać."""
+def make_gemini_state() -> dict:
+    return {"last_user_frame": None, "waiting_for_bot_audio": False}
 
-    def __init__(self):
+
+class GeminiUserMonitor(FrameProcessor):
+    """Łapie transkrypcję usera. MUSI siedzieć PRZED llm w pipeline (nie po) — bug
+    znaleziony na żywym telefonie: GeminiLiveLLMService wypycha TranscriptionFrame
+    kierunkiem UPSTREAM (w stronę user_aggregatora), nie DOWNSTREAM. Poprzednia wersja
+    tego monitora siedziała PO llm i przez to NIGDY nie widziała żadnej transkrypcji
+    (potwierdzone: zero logów mimo że pipecat sam logował transkrypcje wewnętrznie),
+    mimo że audio realnie leciało — stąd zero zmierzonych opóźnień w poprzednim teście."""
+
+    def __init__(self, state: dict):
         super().__init__()
-        self._last_user_frame = None
-        self._waiting_for_bot_audio = False
+        self._state = state
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            self._state["last_user_frame"] = asyncio.get_event_loop().time()
+            self._state["waiting_for_bot_audio"] = True
+            logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
+        await self.push_frame(frame, direction)
+
+
+class GeminiBotMonitor(FrameProcessor):
+    """Łapie tekst i audio bota (oba lecą DOWNSTREAM z llm, więc ta klasa siedzi PO
+    llm — symetrycznie do GeminiUserMonitor, który siedzi PRZED)."""
+
+    def __init__(self, state: dict):
+        super().__init__()
+        self._state = state
         self._heard_any_bot_audio = False
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
         now = asyncio.get_event_loop().time()
 
-        if isinstance(frame, TranscriptionFrame):
-            self._last_user_frame = now
-            self._waiting_for_bot_audio = True
-            logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
+        if isinstance(frame, TTSTextFrame) and frame.text:
+            logger.info(f"⏱️ [GEMINI LIVE/BOT] mówi: {frame.text!r}")
 
         if isinstance(frame, TTSAudioRawFrame):
             if not self._heard_any_bot_audio:
-                # Niezależne od pomiaru latencji poniżej — to samo w sobie potwierdza że
-                # audio bota W OGÓLE poleciało (w tym powitanie, którego druga część kodu
-                # nie łapie, bo nie ma go przed czym "parować" — nie było wcześniej transkrypcji usera).
                 self._heard_any_bot_audio = True
                 logger.info("⏱️ [GEMINI LIVE] Pierwsza ramka audio bota dotarła (np. powitanie)")
-            if self._waiting_for_bot_audio:
-                self._waiting_for_bot_audio = False
-                if self._last_user_frame:
-                    ms = (now - self._last_user_frame) * 1000
+            if self._state["waiting_for_bot_audio"]:
+                self._state["waiting_for_bot_audio"] = False
+                start = self._state.get("last_user_frame")
+                if start:
+                    ms = (now - start) * 1000
                     icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
                     logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
 
@@ -1002,12 +1021,21 @@ def build_gemini_live_llm(system_prompt: str):
     """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live. Bez tools —
     patrz docstring sekcji. Voice "Kore" — ten sam głos (Chirp 3 HD) co
     pl-PL-Chirp3-HD-Kore używany w cascade (tts_factory.py), top damski głos PL
-    wg rankingu użytkownika."""
+    wg rankingu użytkownika.
+
+    settings=... (zamiast przestarzałych kwargs model=/voice_id=) — świadomie żeby móc
+    ustawić language=Language.PL. Bug znaleziony na żywym telefonie: bez tego domyślny
+    język transkrypcji to EN_US (patrz InputParams w źródle pipecat), więc pierwsze
+    tury rozmowy transkrybowały się jako bełkot w losowych językach (niemiecki,
+    hiszpański, portugalski) zanim model jakoś "złapał" polski w dalszej części rozmowy."""
     logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}")
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
-        model=GEMINI_LIVE_MODEL,
-        voice_id="Kore",
+        settings=GeminiLiveLLMService.Settings(
+            model=GEMINI_LIVE_MODEL,
+            voice="Kore",
+            language=Language.PL,
+        ),
         system_instruction=system_prompt,
     )
     context = LLMContext()
@@ -1105,13 +1133,16 @@ async def websocket_gemini_live_test(websocket: WebSocket):
 
     system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
-    latency_monitor = GeminiLatencyMonitor()
+    gemini_state = make_gemini_state()
+    gemini_user_monitor = GeminiUserMonitor(gemini_state)
+    gemini_bot_monitor = GeminiBotMonitor(gemini_state)
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
+        gemini_user_monitor,
         llm,
-        latency_monitor,
+        gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
     ])
@@ -1225,13 +1256,16 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
 
     system_prompt = build_realtime_instructions(tenant, None)
     llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
-    latency_monitor = GeminiLatencyMonitor()
+    gemini_state = make_gemini_state()
+    gemini_user_monitor = GeminiUserMonitor(gemini_state)
+    gemini_bot_monitor = GeminiBotMonitor(gemini_state)
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
+        gemini_user_monitor,
         llm,
-        latency_monitor,
+        gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
     ])
