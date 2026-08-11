@@ -25,8 +25,11 @@ rezerwacja/zmyślony termin) i wymaga jeszcze podpięcia Google Calendar, więc 
 dopracować prostszy tryb informacyjny i function-calling na niższą stawkę (contact_owner)
 zanim zabierzemy się za booking.
 
-Gemini Live USUNIĘTY — decyzja już zapadła, trzymanie dwóch dostawców tylko zaciemniało
-plik. Jeśli kiedyś potrzebny będzie powrót do porównania, patrz historia gita.
+Gemini Live wcześniej USUNIĘTY (decyzja zapadła na rzecz OpenAI Realtime) — ale
+DOŁOŻONY z powrotem na końcu pliku (sekcja "-gemini-live") jako doraźny, ubogi test
+porównawczy (2026-08-11), bo Gemini wypuściło gemini-3.1-flash-live-preview i warto
+sprawdzić latencję. Świadomie osobne route'y, zero ingerencji w sekcję OpenAI
+Realtime wyżej — patrz docstring tamtej sekcji.
 
 NIE dotyka produkcyjnego bot.py. Zero FlowManagera. Treść promptu (realtime_prompt.py)
 jest ŚWIADOMIE skopiowana z flows.py/flows_helpers.py zamiast zaimportowana stamtąd
@@ -125,6 +128,9 @@ from pipecat.services.openai.realtime.events import (
     SessionProperties,
     SessionUpdateEvent,
 )
+# Gemini Live — TYLKO do szybkiego testu porównawczego latencji (patrz sekcja na końcu
+# pliku, route'y "-gemini-live"). Nie dotyka niczego z OpenAI Realtime powyżej.
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
@@ -924,6 +930,323 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[REALTIME TEST/VONAGE] Call transcript error: {e}")
+
+
+# ==========================================================================
+# 🧪 GEMINI LIVE — szybki test porównawczy latencji, OBOK OpenAI Realtime
+# ==========================================================================
+"""
+Cel: TYLKO zmierzyć latencję/jakość gemini-3.1-flash-live-preview na tym samym
+tenancie testowym, do porównania z OpenAI Realtime powyżej. Świadomie ubogie
+względem sekcji OpenAI Realtime — bez tools (contact_owner/submit_lead/
+end_conversation), bez idle-timeout, bez CRM w tle. To NIE jest kandydat do
+rozbudowy 1:1 — jeśli Gemini Live wygra test latencji, wtedy dopiero warto
+dociągnąć brakujące funkcje analogicznie do sekcji OpenAI Realtime wyżej.
+
+Osobne route'y (inna ścieżka niż OpenAI Realtime) — NIC z sekcji wyżej nie jest
+ruszane. Żeby faktycznie przetestować, trzeba w konsoli Vonage/Twilio ręcznie
+przełączyć Answer URL/webhook na endpoint poniżej, i przełączyć z powrotem po
+teście.
+
+GeminiLiveLLMService NIE emituje UserStartedSpeakingFrame/UserStoppedSpeakingFrame
+(server VAD Gemini nie ma odpowiednika tych zdarzeń w pipecat, patrz docstring
+serwisu) — stąd pomiar latencji niżej kotwiczy się o TranscriptionFrame (moment
+dotarcia transkrypcji), tak jak w pierwotnym izolowanym teście tego pliku (patrz
+git log, commit z pierwszej wersji). Mniej precyzyjne niż w sekcji OpenAI Realtime
+(TranscriptionFrame to boczny kanał, przychodzi z pewnym opóźnieniem względem
+faktycznego końca mowy), ale wystarczające do zgrubnego porównania.
+"""
+
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
+
+
+class GeminiLatencyMonitor(FrameProcessor):
+    """Prosty pomiar: dotarcie transkrypcji usera -> pierwsza ramka audio bota.
+    Świadomie odrębna klasa od UserTranscriptMonitor/BotAudioMonitor (OpenAI Realtime
+    wyżej) — te są zbudowane wokół call_state/idle_since specyficznych dla tamtej
+    sekcji, tu nie ma idle-timeoutu więc nie ma sensu ich reużywać."""
+
+    def __init__(self):
+        super().__init__()
+        self._last_user_frame = None
+        self._waiting_for_bot_audio = False
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        now = asyncio.get_event_loop().time()
+
+        if isinstance(frame, TranscriptionFrame):
+            self._last_user_frame = now
+            self._waiting_for_bot_audio = True
+            logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
+
+        if isinstance(frame, TTSAudioRawFrame) and self._waiting_for_bot_audio:
+            self._waiting_for_bot_audio = False
+            if self._last_user_frame:
+                ms = (now - self._last_user_frame) * 1000
+                icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
+                logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
+
+        await self.push_frame(frame, direction)
+
+
+def build_gemini_live_llm(system_prompt: str):
+    """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live. Bez tools —
+    patrz docstring sekcji. Voice "Charon" to domyślny głos serwisu (bezpieczny wybór,
+    nie wymaga weryfikacji jak nazwa modelu)."""
+    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}")
+    llm = GeminiLiveLLMService(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        model=GEMINI_LIVE_MODEL,
+        voice_id="Charon",
+        system_instruction=system_prompt,
+    )
+    context = LLMContext()
+    # realtime_service_mode=True — patrz docstring GeminiLiveLLMService: usługa nie
+    # emituje UserStarted/StoppedSpeakingFrame, więc zapisy do kontekstu muszą iść
+    # w trybie "trailing" (tak samo jak dla OpenAI Realtime wyżej).
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+        context, realtime_service_mode=True
+    )
+    return llm, user_aggregator, assistant_aggregator
+
+
+@app.post("/twilio/incoming-gemini-live-test")
+async def twilio_incoming_gemini_live_test(request: Request):
+    form = await request.form()
+    called = form.get("Called", form.get("To", ""))
+    caller = form.get("From", "")
+    call_sid = form.get("CallSid", "")
+
+    logger.info(f"📞 [GEMINI LIVE TEST] Incoming: {caller} → {called} (CallSid: {call_sid})")
+
+    tenant = await get_tenant_by_phone(called)
+    if not tenant:
+        return Response(
+            content='<?xml version="1.0"?><Response><Say language="pl-PL">'
+                    'Numer testowy nieaktywny.</Say></Response>',
+            media_type="application/xml",
+        )
+
+    host = request.headers.get("host", "localhost")
+    twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="wss://{host}/ws-gemini-live-test">
+            <Parameter name="callSid" value="{call_sid}" />
+            <Parameter name="phone" value="{tenant['phone_number']}" />
+            <Parameter name="callerPhone" value="{caller}" />
+        </Stream>
+    </Connect>
+</Response>'''
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.websocket("/ws-gemini-live-test")
+async def websocket_gemini_live_test(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("🔌 [GEMINI LIVE TEST] WebSocket connected")
+
+    stream_sid = None
+    tenant = None
+    caller_phone = "nieznany"
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            data = json.loads(message)
+            event = data.get("event")
+            if event == "connected":
+                continue
+            if event == "start":
+                start_data = data.get("start", {})
+                stream_sid = start_data.get("streamSid")
+                custom_params = start_data.get("customParameters", {})
+                tenant_phone = custom_params.get("phone")
+                caller_phone = custom_params.get("callerPhone", "nieznany")
+                if tenant_phone:
+                    tenant = await get_tenant_by_phone(tenant_phone)
+                break
+    except Exception as e:
+        logger.error(f"[GEMINI LIVE TEST] Błąd startu: {e}")
+        await websocket.close()
+        return
+
+    if not stream_sid or not tenant:
+        logger.error("❌ [GEMINI LIVE TEST] Brak stream_sid lub tenant — zamykam")
+        await websocket.close()
+        return
+
+    logger.info(f"✅ [GEMINI LIVE TEST] Tenant: {tenant.get('name')}")
+
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+            ),
+            serializer=TwilioFrameSerializer(
+                stream_sid=stream_sid,
+                params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
+            ),
+        ),
+    )
+
+    system_prompt = build_realtime_instructions(tenant, None)
+    llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
+    latency_monitor = GeminiLatencyMonitor()
+
+    pipeline = Pipeline([
+        transport.input(),
+        user_aggregator,
+        llm,
+        latency_monitor,
+        transport.output(),
+        assistant_aggregator,
+    ])
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            audio_in_sample_rate=8000,
+            audio_out_sample_rate=8000,
+        ),
+    )
+
+    @transport.event_handler("on_client_connected")
+    async def on_connect(transport, client):
+        logger.info("🎤 [GEMINI LIVE TEST] Klient połączony — wybudzam do przywitania")
+        await user_aggregator.push_context_frame()
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_disconnect(transport, client):
+        logger.info("📴 [GEMINI LIVE TEST] Klient rozłączony")
+        await task.queue_frame(EndFrame())
+
+    runner = PipelineRunner()
+    logger.info("🚀 [GEMINI LIVE TEST] Start pipeline")
+    try:
+        await runner.run(task)
+    except Exception as e:
+        logger.error(f"[GEMINI LIVE TEST] Pipeline error: {e}")
+    finally:
+        logger.info("🏁 [GEMINI LIVE TEST] Koniec połączenia")
+
+
+@app.get("/health-gemini-live-test")
+async def health_gemini_live():
+    return {"status": "ok", "provider": "gemini-live", "model": GEMINI_LIVE_MODEL}
+
+
+@app.get("/vonage/answer-gemini-live")
+async def vonage_answer_gemini_live(request: Request):
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number}")
+
+    tenant = await get_tenant_by_phone(to_number)
+    if not tenant:
+        ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
+        return JSONResponse(ncco)
+
+    host = request.headers.get("host", "localhost")
+    ws_uri = f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}"
+
+    ncco = [
+        {
+            "action": "connect",
+            "endpoint": [
+                {
+                    "type": "websocket",
+                    "uri": ws_uri,
+                    "content-type": "audio/l16;rate=16000",
+                }
+            ],
+        }
+    ]
+    return JSONResponse(ncco)
+
+
+@app.websocket("/ws-gemini-live-test-vonage")
+async def websocket_gemini_live_test_vonage(websocket: WebSocket):
+    tenant_phone = websocket.query_params.get("phone")
+    caller_phone = websocket.query_params.get("callerPhone", "nieznany")
+    if not tenant_phone:
+        logger.error("❌ [GEMINI LIVE TEST/VONAGE] Brak phone w query params — zamykam")
+        await websocket.close()
+        return
+
+    await websocket.accept()
+    logger.info(f"🔌 [GEMINI LIVE TEST/VONAGE] WebSocket connected, phone={tenant_phone}")
+
+    tenant = await get_tenant_by_phone(tenant_phone)
+    if not tenant:
+        logger.error("❌ [GEMINI LIVE TEST/VONAGE] Nie znaleziono tenanta — zamykam")
+        await websocket.close()
+        return
+
+    logger.info(f"✅ [GEMINI LIVE TEST/VONAGE] Tenant: {tenant.get('name')}")
+
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+            ),
+            serializer=VonageFrameSerializer(
+                params=VonageFrameSerializer.InputParams(vonage_sample_rate=16000),
+            ),
+        ),
+    )
+
+    system_prompt = build_realtime_instructions(tenant, None)
+    llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
+    latency_monitor = GeminiLatencyMonitor()
+
+    pipeline = Pipeline([
+        transport.input(),
+        user_aggregator,
+        llm,
+        latency_monitor,
+        transport.output(),
+        assistant_aggregator,
+    ])
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            audio_in_sample_rate=16000,
+            audio_out_sample_rate=16000,
+        ),
+    )
+
+    @transport.event_handler("on_client_connected")
+    async def on_connect_vonage(transport, client):
+        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Klient połączony — wybudzam do przywitania")
+        await user_aggregator.push_context_frame()
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_disconnect_vonage(transport, client):
+        logger.info("📴 [GEMINI LIVE TEST/VONAGE] Klient rozłączony")
+        await task.queue_frame(EndFrame())
+
+    runner = PipelineRunner()
+    logger.info("🚀 [GEMINI LIVE TEST/VONAGE] Start pipeline")
+    try:
+        await runner.run(task)
+    except Exception as e:
+        logger.error(f"[GEMINI LIVE TEST/VONAGE] Pipeline error: {e}")
+    finally:
+        logger.info("🏁 [GEMINI LIVE TEST/VONAGE] Koniec połączenia")
 
 
 if __name__ == "__main__":
