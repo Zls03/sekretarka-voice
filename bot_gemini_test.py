@@ -970,6 +970,7 @@ class GeminiLatencyMonitor(FrameProcessor):
         super().__init__()
         self._last_user_frame = None
         self._waiting_for_bot_audio = False
+        self._heard_any_bot_audio = False
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
@@ -980,12 +981,19 @@ class GeminiLatencyMonitor(FrameProcessor):
             self._waiting_for_bot_audio = True
             logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
 
-        if isinstance(frame, TTSAudioRawFrame) and self._waiting_for_bot_audio:
-            self._waiting_for_bot_audio = False
-            if self._last_user_frame:
-                ms = (now - self._last_user_frame) * 1000
-                icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
-                logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
+        if isinstance(frame, TTSAudioRawFrame):
+            if not self._heard_any_bot_audio:
+                # Niezależne od pomiaru latencji poniżej — to samo w sobie potwierdza że
+                # audio bota W OGÓLE poleciało (w tym powitanie, którego druga część kodu
+                # nie łapie, bo nie ma go przed czym "parować" — nie było wcześniej transkrypcji usera).
+                self._heard_any_bot_audio = True
+                logger.info("⏱️ [GEMINI LIVE] Pierwsza ramka audio bota dotarła (np. powitanie)")
+            if self._waiting_for_bot_audio:
+                self._waiting_for_bot_audio = False
+                if self._last_user_frame:
+                    ms = (now - self._last_user_frame) * 1000
+                    icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
+                    logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
 
         await self.push_frame(frame, direction)
 
@@ -1122,12 +1130,14 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     async def on_connect(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST] Klient połączony — wybudzam do przywitania")
         # Bug znaleziony na żywym telefonie: Gemini Live ma osobny krok handshake'u
-        # ("Connecting to Gemini service" -> "Connected to Gemini service", ~1s), którego
-        # OpenAI Realtime nie ma. push_context_frame() wywołane od razu w on_connect
-        # wysyłało ramkę ZANIM połączenie z Gemini się ustanowiło — ginęła w locie,
-        # bot nigdy nie wypowiadał powitania. Krótkie opóźnienie naprawia wyścig.
-        await asyncio.sleep(1.0)
+        # ("Connecting to Gemini service" -> synchroniczny zrzut CAŁEGO system promptu do
+        # logów -> "Connected to Gemini service"). 1s okazało się za mało — ten zrzut logów
+        # sam w sobie potrafi zająć więcej niż sekundę. Podniesione do 2.5s + jawne logi
+        # przed/po, żeby NASTĘPNY test dał pewność co się dzieje, zamiast kolejnego zgadywania.
+        await asyncio.sleep(2.5)
+        logger.info("🎤 [GEMINI LIVE TEST] Wysyłam push_context_frame() (po 2.5s opóźnienia)")
         await user_aggregator.push_context_frame()
+        logger.info("🎤 [GEMINI LIVE TEST] push_context_frame() wysłane bez wyjątku")
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
@@ -1239,9 +1249,12 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Klient połączony — wybudzam do przywitania")
-        # Patrz komentarz w on_connect (Twilio) wyżej — ten sam wyścig z handshake'em Gemini.
-        await asyncio.sleep(1.0)
+        # Patrz komentarz w on_connect (Twilio) wyżej — ten sam wyścig z handshake'em Gemini,
+        # 1s okazało się za mało, podniesione do 2.5s + jawne logi przed/po.
+        await asyncio.sleep(2.5)
+        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Wysyłam push_context_frame() (po 2.5s opóźnienia)")
         await user_aggregator.push_context_frame()
+        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] push_context_frame() wysłane bez wyjątku")
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
