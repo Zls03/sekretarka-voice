@@ -114,6 +114,7 @@ from pipecat.frames.frames import (
     EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
     TTSStartedFrame, TTSStoppedFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
+    LLMMessagesAppendFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
 
@@ -962,7 +963,20 @@ GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.g
 
 
 def make_gemini_state() -> dict:
-    return {"last_user_frame": None, "waiting_for_bot_audio": False}
+    now = time.time()
+    return {
+        "last_user_frame": None,
+        "waiting_for_bot_audio": False,
+        # Od tu w dół: pola pod idle-timeout (Faza 2), patrz gemini_say_now() /
+        # monitor_gemini_call_health() niżej — te same nazwy pól i ta sama logika
+        # co make_call_state()/BotAudioMonitor w sekcji OpenAI Realtime wyżej,
+        # przeniesione 1:1 (nie duplikowane, świadomie skopiowane, bo Gemini Live
+        # ma inny mechanizm "powiedz dokładnie X" niż OpenAI, patrz gemini_say_now).
+        "idle_since": now,
+        "suppress_idle_reset": False,
+        "audio_playback_until": now,
+        "ended": False,
+    }
 
 
 class GeminiUserMonitor(FrameProcessor):
@@ -971,7 +985,12 @@ class GeminiUserMonitor(FrameProcessor):
     kierunkiem UPSTREAM (w stronę user_aggregatora), nie DOWNSTREAM. Poprzednia wersja
     tego monitora siedziała PO llm i przez to NIGDY nie widziała żadnej transkrypcji
     (potwierdzone: zero logów mimo że pipecat sam logował transkrypcje wewnętrznie),
-    mimo że audio realnie leciało — stąd zero zmierzonych opóźnień w poprzednim teście."""
+    mimo że audio realnie leciało — stąd zero zmierzonych opóźnień w poprzednim teście.
+
+    Odświeża też idle_since — GeminiLiveLLMService NIE emituje UserStarted/StoppedSpeakingFrame
+    (patrz warning w logu na żywym telefonie), więc w odróżnieniu od OpenAI Realtime (gdzie
+    UserStoppedSpeakingFrame jest dokładniejszym sygnałem) TranscriptionFrame to jedyny
+    potwierdzony-działający sygnał aktywności usera jaki tu mamy."""
 
     def __init__(self, state: dict):
         super().__init__()
@@ -982,13 +1001,21 @@ class GeminiUserMonitor(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             self._state["last_user_frame"] = asyncio.get_event_loop().time()
             self._state["waiting_for_bot_audio"] = True
+            self._state["idle_since"] = time.time()
             logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
         await self.push_frame(frame, direction)
 
 
 class GeminiBotMonitor(FrameProcessor):
     """Łapie tekst i audio bota (oba lecą DOWNSTREAM z llm, więc ta klasa siedzi PO
-    llm — symetrycznie do GeminiUserMonitor, który siedzi PRZED)."""
+    llm — symetrycznie do GeminiUserMonitor, który siedzi PRZED).
+
+    Odświeżanie idle_since na TTSStarted/TTSAudioRawFrame/TTSStoppedFrame + honorowanie
+    suppress_idle_reset — logika 1:1 skopiowana z BotAudioMonitor (sekcja OpenAI Realtime
+    wyżej, tam pełny docstring z historią 3 warstw bugów). Nie odkrywam tu koła na nowo —
+    to już raz znaleziony i sprawdzony na żywym telefonie mechanizm."""
+
+    BOT_STOP_GRACE_SECONDS = 1.2
 
     def __init__(self, state: dict):
         super().__init__()
@@ -997,30 +1024,121 @@ class GeminiBotMonitor(FrameProcessor):
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        now = asyncio.get_event_loop().time()
+        now_loop = asyncio.get_event_loop().time()
 
         if isinstance(frame, TTSTextFrame) and frame.text:
             logger.info(f"⏱️ [GEMINI LIVE/BOT] mówi: {frame.text!r}")
+
+        if isinstance(frame, TTSStartedFrame):
+            if not self._state.get("suppress_idle_reset"):
+                self._state["idle_since"] = time.time()
 
         if isinstance(frame, TTSAudioRawFrame):
             if not self._heard_any_bot_audio:
                 self._heard_any_bot_audio = True
                 logger.info("⏱️ [GEMINI LIVE] Pierwsza ramka audio bota dotarła (np. powitanie)")
+            if not self._state.get("suppress_idle_reset"):
+                now = time.time()
+                duration_s = len(frame.audio) / (frame.sample_rate * frame.num_channels * 2)
+                playback_until = max(self._state.get("audio_playback_until", now), now) + duration_s
+                self._state["audio_playback_until"] = playback_until
+                self._state["idle_since"] = playback_until
             if self._state["waiting_for_bot_audio"]:
                 self._state["waiting_for_bot_audio"] = False
                 start = self._state.get("last_user_frame")
                 if start:
-                    ms = (now - start) * 1000
+                    ms = (now_loop - start) * 1000
                     icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
                     logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
+
+        if isinstance(frame, TTSStoppedFrame):
+            if self._state.get("suppress_idle_reset"):
+                self._state["suppress_idle_reset"] = False
+            else:
+                self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
 
         await self.push_frame(frame, direction)
 
 
+async def gemini_say_now(task: PipelineTask, call_state: dict, text: str):
+    """Odpowiednik say_now() (sekcja OpenAI Realtime wyżej) dla Gemini Live. Gemini
+    Live nie ma ResponseCreateEvent(instructions=...) — jedynego, jednorazowego
+    "powiedz dokładnie X" z API OpenAI. Zamiast tego reużywamy ten sam mechanizm co
+    przy starcie rozmowy (LLMMessagesAppendFrame -> GeminiLiveLLMService._create_single_response,
+    patrz kick startowy w on_connect niżej), tylko z treścią wprost każącą powiedzieć
+    dokładny tekst — model trzyma się dokładnej treści gdy się go o to jawnie poprosi
+    (potwierdzone: powitanie z system promptu wychodzi słowo w słowo).
+
+    Bez tool_choice="none" z wersji OpenAI — trasy Gemini Live świadomie NIE MAJĄ żadnych
+    tools zarejestrowanych (patrz docstring sekcji na górze pliku), więc nie ma ryzyka że
+    ten nudge przypadkiem wywoła jakąś funkcję."""
+    call_state["suppress_idle_reset"] = True
+    await task.queue_frames([
+        LLMMessagesAppendFrame(
+            messages=[{"role": "user", "content": f'Powiedz DOKŁADNIE: "{text}" i nic więcej.'}],
+            run_llm=True,
+        )
+    ])
+
+    async def _clear_suppress_after_timeout():
+        await asyncio.sleep(8.0)
+        call_state["suppress_idle_reset"] = False
+
+    asyncio.create_task(_clear_suppress_after_timeout())
+
+
+async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
+    """Odpowiednik monitor_call_health() (sekcja OpenAI Realtime wyżej) dla Gemini
+    Live — ta sama logika progów (IDLE_WARNING_SECONDS/IDLE_HANGUP_SECONDS/MAX_CALL_DURATION,
+    stałe zdefiniowane raz, wyżej w pliku), tylko wywołuje gemini_say_now() zamiast say_now()."""
+    call_start = time.time()
+    call_state["idle_since"] = call_start
+    idle_warning_given = False
+    duration_warning_given = False
+
+    while True:
+        await asyncio.sleep(2)
+
+        if call_state.get("ended"):
+            logger.info("⏱️ [GEMINI LIVE TEST] Monitor zatrzymany — połączenie zakończone")
+            break
+
+        elapsed = time.time() - call_start
+        silence = time.time() - call_state["idle_since"]
+
+        if silence > IDLE_HANGUP_SECONDS:
+            logger.warning(f"🔇 [GEMINI LIVE TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
+            call_state["ended"] = True
+            await gemini_say_now(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
+            await asyncio.sleep(3.0)
+            await task.queue_frame(EndFrame())
+            break
+
+        if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
+            logger.warning(f"🔇 [GEMINI LIVE TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
+            idle_warning_given = True
+            await gemini_say_now(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
+        elif silence < IDLE_WARNING_SECONDS:
+            idle_warning_given = False
+
+        if elapsed > MAX_CALL_DURATION - 30 and not duration_warning_given:
+            duration_warning_given = True
+            logger.warning(f"⚠️ [GEMINI LIVE TEST] Zbliża się limit czasu: {elapsed:.0f}s/{MAX_CALL_DURATION}s")
+            await gemini_say_now(task, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
+
+        if elapsed > MAX_CALL_DURATION:
+            logger.warning(f"🛑 [GEMINI LIVE TEST] Limit czasu osiągnięty ({elapsed:.0f}s) — kończę połączenie")
+            call_state["ended"] = True
+            await gemini_say_now(task, call_state, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
+            await asyncio.sleep(3.0)
+            await task.queue_frame(EndFrame())
+            break
+
+
 def build_gemini_live_llm(system_prompt: str):
     """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live. Bez tools —
-    patrz docstring sekcji. Voice "Kore" — ten sam głos (Chirp 3 HD) co
-    pl-PL-Chirp3-HD-Kore używany w cascade (tts_factory.py), top damski głos PL
+    patrz docstring sekcji. Voice "Zephyr" — ten sam głos (Chirp 3 HD) co
+    pl-PL-Chirp3-HD-Zephyr używany w cascade (tts_factory.py), top damski głos PL
     wg rankingu użytkownika.
 
     settings=... (zamiast przestarzałych kwargs model=/voice_id=) — świadomie żeby móc
@@ -1033,7 +1151,7 @@ def build_gemini_live_llm(system_prompt: str):
         api_key=os.getenv("GOOGLE_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
             model=GEMINI_LIVE_MODEL,
-            voice="Kore",
+            voice="Zephyr",
             language=Language.PL,
         ),
         system_instruction=system_prompt,
@@ -1160,19 +1278,37 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST] Klient połączony — wybudzam do przywitania")
-        # Bug znaleziony na żywym telefonie: Gemini Live ma osobny krok handshake'u
-        # ("Connecting to Gemini service" -> synchroniczny zrzut CAŁEGO system promptu do
-        # logów -> "Connected to Gemini service"). 1s okazało się za mało — ten zrzut logów
-        # sam w sobie potrafi zająć więcej niż sekundę. Podniesione do 2.5s + jawne logi
-        # przed/po, żeby NASTĘPNY test dał pewność co się dzieje, zamiast kolejnego zgadywania.
-        await asyncio.sleep(2.5)
-        logger.info("🎤 [GEMINI LIVE TEST] Wysyłam push_context_frame() (po 2.5s opóźnienia)")
-        await user_aggregator.push_context_frame()
-        logger.info("🎤 [GEMINI LIVE TEST] push_context_frame() wysłane bez wyjątku")
+        # Poprzednia wersja wołała user_aggregator.push_context_frame() z pustym
+        # kontekstem, licząc że GeminiLiveLLMService._handle_context() samo doda seed
+        # (patrz źródło: gdy messages puste, dokleja CAŁY system_instruction PONOWNIE
+        # jako wiadomość "system" w kontekście, żeby było co wysłać). Efekt na żywym
+        # telefonie: pierwsza odpowiedź (powitanie) potrafiła wypaść dopiero ~15-17s
+        # po connect, i wyglądało to jakby bot czekał aż klient odezwie się pierwszy
+        # ("Halo?"), a nie proaktywnie sam zaczynał. Podejrzenie: model musi wtedy
+        # przetworzyć ogromny (~150 linii) system prompt DWA razy — raz jako
+        # system_instruction sesji, raz jako doklejony seed — zanim w ogóle wygeneruje
+        # pierwszy dźwięk.
+        # Teraz zamiast pustego kontekstu wysyłamy jawną, krótką wiadomość startową
+        # przez LLMMessagesAppendFrame — GeminiLiveLLMService ma na to bezpośrednią
+        # obsługę (_create_single_response / _create_initial_response), a treść do
+        # powiedzenia i tak dyktuje system_instruction ("ROZPOCZĘCIE ROZMOWY: ..."),
+        # więc ta wiadomość jest tylko "zapłonem" do wywołania inferencji, nie
+        # duplikuje całego promptu.
+        await asyncio.sleep(1.0)
+        logger.info("🎤 [GEMINI LIVE TEST] Wysyłam LLMMessagesAppendFrame (kick startowy)")
+        await task.queue_frames([
+            LLMMessagesAppendFrame(
+                messages=[{"role": "user", "content": "(początek rozmowy)"}],
+                run_llm=True,
+            )
+        ])
+        logger.info("🎤 [GEMINI LIVE TEST] Kick startowy wysłany bez wyjątku")
+        asyncio.create_task(monitor_gemini_call_health(task, gemini_state))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
         logger.info("📴 [GEMINI LIVE TEST] Klient rozłączony")
+        gemini_state["ended"] = True
         await task.queue_frame(EndFrame())
 
     runner = PipelineRunner()
@@ -1283,16 +1419,24 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
         logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Klient połączony — wybudzam do przywitania")
-        # Patrz komentarz w on_connect (Twilio) wyżej — ten sam wyścig z handshake'em Gemini,
-        # 1s okazało się za mało, podniesione do 2.5s + jawne logi przed/po.
-        await asyncio.sleep(2.5)
-        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Wysyłam push_context_frame() (po 2.5s opóźnienia)")
-        await user_aggregator.push_context_frame()
-        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] push_context_frame() wysłane bez wyjątku")
+        # Patrz komentarz w on_connect (Twilio) wyżej — zamiast pustego push_context_frame()
+        # (który dublował cały system prompt jako seed i dawał ~15-17s do pierwszego dźwięku
+        # na żywym telefonie), wysyłamy krótki jawny "zapłon" przez LLMMessagesAppendFrame.
+        await asyncio.sleep(1.0)
+        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Wysyłam LLMMessagesAppendFrame (kick startowy)")
+        await task.queue_frames([
+            LLMMessagesAppendFrame(
+                messages=[{"role": "user", "content": "(początek rozmowy)"}],
+                run_llm=True,
+            )
+        ])
+        logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Kick startowy wysłany bez wyjątku")
+        asyncio.create_task(monitor_gemini_call_health(task, gemini_state))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
         logger.info("📴 [GEMINI LIVE TEST/VONAGE] Klient rozłączony")
+        gemini_state["ended"] = True
         await task.queue_frame(EndFrame())
 
     runner = PipelineRunner()
