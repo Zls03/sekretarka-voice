@@ -724,6 +724,148 @@ async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str,
                 logger.warning(f"⚠️ [REALTIME TEST] Admin tenant {tenant_id} BLOCKED - limit reached")
 
 
+# ==========================================
+# ŻYWE PRZEKIEROWANIE (transfer) — Vonage REST API, tylko Vonage
+# ==========================================
+#
+# Twilio ma OSOBNY, już istniejący mechanizm (transfer_requests table + TwiML <Dial>
+# w /twilio/after-stream, patrz flows_contact.py) — ten kod go NIE zastępuje ani nie
+# dotyka, jest wyłącznie dla Vonage, który (w odróżnieniu od Twilio) nie ma
+# dwuetapowego triku dostępnego w tym serwisie (brak /twilio/after-stream w
+# bot_gemini_test.py — patrz CLAUDE.md, ta granica była tam już wcześniej opisana).
+#
+# Mechanizm: Vonage Voice REST API, PUT /v1/calls/{call_uuid} z action="transfer" +
+# nowe NCCO — to PODMIENIA bieżący "leg" połączenia (który dotąd był podłączony do
+# NASZEGO websocketu) na nowy (talk + connect do telefonu właściciela). Efekt:
+# Vonage sam zamyka nasz websocket gdy nowe NCCO przejmuje kontrolę — NIE wysyłamy
+# własnego EndFrame po udanym transferze (w odróżnieniu od contact_owner/end_conversation),
+# żeby nie ścigać się z tym zamknięciem od strony Vonage. call_state["ended"]=True
+# nadal ustawiane, żeby monitor_gemini_call_health przestał liczyć ciszę.
+#
+# Autoryzacja: JWT RS256 podpisany kluczem prywatnym Aplikacji Vonage (VONAGE_APPLICATION_ID
+# + VONAGE_PRIVATE_KEY) — to INNE poświadczenie niż to co obsługuje Answer/Event URL
+# (te w ogóle nie wymagają autoryzacji, są tylko webhookami). Ten mechanizm jest
+# NIEPRZETESTOWANY na żywym połączeniu w momencie napisania — pierwszy telefon z
+# transfer_enabled=1 to pierwszy prawdziwy test.
+
+VONAGE_API_BASE = "https://api.nexmo.com"
+
+
+def _generate_vonage_jwt() -> str | None:
+    """JWT krótkożyjący (60s) do jednego wywołania REST API — Vonage wymaga nowego
+    tokenu per-request (albo bardzo krótkiego TTL), nie długożyjącego API key jak
+    część innych dostawców."""
+    app_id = os.getenv("VONAGE_APPLICATION_ID")
+    private_key = os.getenv("VONAGE_PRIVATE_KEY")
+    if not app_id or not private_key:
+        logger.warning("📞 [TRANSFER] Brak VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY — transfer niedostępny")
+        return None
+    # Railway env vars są jednolinijkowe — klucz PEM wklejony z dosłownymi "\n"
+    # zamiast prawdziwych złamań linii trzeba odtworzyć, inaczej podpis RS256 nie zweryfikuje się.
+    private_key = private_key.replace("\\n", "\n")
+    import jwt as pyjwt
+    now = int(time.time())
+    payload = {
+        "iat": now,
+        "exp": now + 60,
+        "jti": str(uuid.uuid4()),
+        "application_id": app_id,
+    }
+    return pyjwt.encode(payload, private_key, algorithm="RS256")
+
+
+def _format_transfer_number(raw: str) -> str:
+    """1:1 z flows_contact.py (cascade, sekcja Twilio transfer) — ta sama normalizacja
+    polskiego numeru, żeby zachowanie było spójne między dwoma dostawcami telefonii."""
+    number = (raw or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if number.startswith("0048"):
+        number = number[4:]
+    elif number.startswith("48") and len(number) == 11:
+        number = number[2:]
+    if not number.startswith("+"):
+        number = f"+48{number}"
+    return number
+
+
+async def transfer_vonage_call(call_uuid: str, destination_number: str, announce_text: str) -> bool:
+    """PUT /v1/calls/{uuid} — podmienia NCCO trwającego połączenia. `announce_text`
+    leci jako "talk" ZANIM Vonage podłączy telefon właściciela (natywny mechanizm
+    Vonage, nie nasz pipeline — unika wyścigu z Gemini Live próbującym powiedzieć
+    to samo przez nasze audio, które i tak zaraz zostanie odcięte)."""
+    token = _generate_vonage_jwt()
+    if not token:
+        return False
+    if not call_uuid:
+        logger.warning("📞 [TRANSFER] Brak call_uuid — nie mogę przekierować")
+        return False
+
+    ncco = [
+        {"action": "talk", "text": announce_text, "language": "pl-PL"},
+        {"action": "connect", "endpoint": [{"type": "phone", "number": destination_number}]},
+    ]
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"{VONAGE_API_BASE}/v1/calls/{call_uuid}",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}},
+                timeout=10.0,
+            )
+            if response.status_code in (200, 204):
+                logger.info(f"📞 [TRANSFER] Vonage transfer OK: {call_uuid} → {destination_number}")
+                return True
+            logger.error(f"📞 [TRANSFER] Vonage API error: {response.status_code} — {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"📞 [TRANSFER] Vonage API exception: {e}")
+        return False
+
+
+def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict) -> FunctionSchema:
+    """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane z bot_gemini_test.py
+    tylko gdy tenant.get("transfer_enabled")==1 I połączenie idzie przez Vonage (call_sid
+    to wtedy prawdziwy Vonage call uuid, przechwycony w /vonage/answer-gemini-live, patrz
+    tam). Ten sam checkbox/pole co dla Twilio (transfer_number) — bez nowej konfiguracji
+    w panelu."""
+
+    async def handle_transfer(params: FunctionCallParams):
+        raw_number = (tenant.get("transfer_number") or "").strip()
+        if not raw_number:
+            logger.warning(f"📞 [TRANSFER] tenant {tenant.get('id')} ma transfer_enabled ale brak transfer_number")
+            await params.result_callback({"status": "error", "reason": "no_transfer_number"})
+            return
+
+        destination = _format_transfer_number(raw_number)
+        if len(destination) < 12:
+            logger.error(f"📞 [TRANSFER] Nieprawidłowy numer po normalizacji: {destination!r}")
+            await params.result_callback({"status": "error", "reason": "invalid_number"})
+            return
+
+        ok = await transfer_vonage_call(
+            call_sid, destination,
+            announce_text="Już łączę z osobą odpowiedzialną, chwileczkę.",
+        )
+        await params.result_callback({"status": "ok" if ok else "error"})
+        if ok:
+            call_state["ended"] = True  # zatrzymaj monitor ciszy — patrz docstring sekcji wyżej
+
+    return FunctionSchema(
+        name="transfer_to_owner",
+        description="""Klient WYRAŹNIE żąda połączenia NA ŻYWO z człowiekiem/właścicielem
+(nie samej wiadomości) — np. "połącz mnie z kimś", "chcę porozmawiać z człowiekiem TERAZ",
+"przełącz mnie". Użyj TYLKO gdy klient chce żywej rozmowy w TEJ chwili — jeśli chce
+zostawić wiadomość/kontakt zwrotny, użyj zamiast tego contact_owner.
+Wywołaj OD RAZU, NIC nie mówiąc przed nią (żadnej zapowiedzi typu "już przełączam") —
+zapowiedź o przekierowaniu leci automatycznie z systemu telefonii, nie od Ciebie.
+Jeśli wynik to status="error" — przekierowanie się nie udało (brak numeru/błąd), krótko
+przeproś i zaproponuj zamiast tego zostawienie wiadomości przez contact_owner.""",
+        properties={},
+        required=[],
+        handler=handle_transfer,
+    )
+
+
 async def is_call_allowed(tenant: dict) -> bool:
     """Pre-call guard, 1:1 z bot.py (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
     i /vonage/answer poniżej). Bez tego zablokowany/bez-środków tenant i tak dostawałby pełne, płatne

@@ -30,3 +30,7 @@ httpx
 
 # Reużywane przez helpers.py
 cryptography
+
+# Vonage REST API (transfer żywej rozmowy) — JWT RS256 podpisywany kluczem
+# prywatnym Aplikacji Vonage, patrz realtime_tools.py::build_transfer_tool
+PyJWT

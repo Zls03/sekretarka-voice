@@ -141,6 +141,7 @@ from helpers import get_tenant_by_phone, get_client_profile, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
+    build_transfer_tool,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
 
@@ -1135,35 +1136,42 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
             break
 
 
-def build_gemini_live_llm(system_prompt: str):
-    """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live. Bez tools —
-    patrz docstring sekcji. Voice "Zephyr" — ten sam głos (Chirp 3 HD) co
-    pl-PL-Chirp3-HD-Zephyr używany w cascade (tts_factory.py), top damski głos PL
-    wg rankingu użytkownika.
+def build_gemini_live_llm(system_prompt: str, tools: list | None = None):
+    """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live.
+
+    tools: lista FunctionSchema — DOKŁADNIE ten sam format co dla OpenAI Realtime
+    (pipecat.adapters.schemas.function_schema.FunctionSchema jest zamierzenie
+    provider-agnostic, GeminiLiveLLMService konwertuje ją pod spodem przez
+    GeminiLLMAdapter — sprawdzone w źródle pipecat), więc realtime_tools.py::build_*_tool
+    są reużywane WPROST, bez żadnej gemini-specyficznej wersji.
+
+    Voice "Aoede" — Chirp 3 HD, top damski głos PL wg rankingu użytkownika.
 
     settings=... (zamiast przestarzałych kwargs model=/voice_id=) — świadomie żeby móc
     ustawić language=Language.PL. Bug znaleziony na żywym telefonie: bez tego domyślny
     język transkrypcji to EN_US (patrz InputParams w źródle pipecat), więc pierwsze
     tury rozmowy transkrybowały się jako bełkot w losowych językach (niemiecki,
     hiszpański, portugalski) zanim model jakoś "złapał" polski w dalszej części rozmowy."""
-    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}")
+    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, tools={[t.name for t in (tools or [])]}")
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
             model=GEMINI_LIVE_MODEL,
-            voice="Zephyr",
+            voice="Aoede",
             language=Language.PL,
         ),
         system_instruction=system_prompt,
     )
-    context = LLMContext()
+    context = LLMContext(tools=tools or [])
     # realtime_service_mode=True — patrz docstring GeminiLiveLLMService: usługa nie
     # emituje UserStarted/StoppedSpeakingFrame, więc zapisy do kontekstu muszą iść
     # w trybie "trailing" (tak samo jak dla OpenAI Realtime wyżej).
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context, realtime_service_mode=True
     )
-    return llm, user_aggregator, assistant_aggregator
+    # context zwracany osobno — ten sam powód co w build_realtime_llm (raport rozmowy
+    # + transkrypt czytają context.get_messages() po zakończeniu połączenia).
+    return llm, user_aggregator, assistant_aggregator, context
 
 
 @app.post("/twilio/incoming-gemini-live-test")
@@ -1180,6 +1188,13 @@ async def twilio_incoming_gemini_live_test(request: Request):
         return Response(
             content='<?xml version="1.0"?><Response><Say language="pl-PL">'
                     'Numer testowy nieaktywny.</Say></Response>',
+            media_type="application/xml",
+        )
+
+    if not await is_call_allowed(tenant):
+        return Response(
+            content='<?xml version="1.0"?><Response><Say language="pl-PL">'
+                    'Przepraszamy, linia jest chwilowo niedostępna.</Say><Hangup/></Response>',
             media_type="application/xml",
         )
 
@@ -1205,6 +1220,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     stream_sid = None
     tenant = None
     caller_phone = "nieznany"
+    call_sid = None
 
     try:
         while True:
@@ -1219,6 +1235,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
                 custom_params = start_data.get("customParameters", {})
                 tenant_phone = custom_params.get("phone")
                 caller_phone = custom_params.get("callerPhone", "nieznany")
+                call_sid = custom_params.get("callSid")
                 if tenant_phone:
                     tenant = await get_tenant_by_phone(tenant_phone)
                 break
@@ -1229,6 +1246,11 @@ async def websocket_gemini_live_test(websocket: WebSocket):
 
     if not stream_sid or not tenant:
         logger.error("❌ [GEMINI LIVE TEST] Brak stream_sid lub tenant — zamykam")
+        await websocket.close()
+        return
+
+    if not await is_call_allowed(tenant):
+        logger.warning(f"🚫 [GEMINI LIVE TEST] Tenant {tenant.get('id')} zablokowany — zamykam")
         await websocket.close()
         return
 
@@ -1249,9 +1271,22 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         ),
     )
 
-    system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
     gemini_state = make_gemini_state()
+    task_box = {"task": None}
+    context_box = {"context": None}
+    # Reużywamy WPROST build_*_tool z realtime_tools.py (patrz docstring
+    # build_gemini_live_llm) — call_state=gemini_state, bo ma już pole "ended"
+    # którego te handlery potrzebują (patrz make_gemini_state()).
+    tools = [
+        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state),
+        build_end_conversation_tool(task_box, gemini_state),
+    ]
+    if tenant.get("lead_mode", 0) == 1:
+        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
+
+    system_prompt = build_realtime_instructions(tenant, None)
+    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(system_prompt, tools=tools)
+    context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
 
@@ -1274,6 +1309,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
             audio_out_sample_rate=8000,
         ),
     )
+    task_box["task"] = task
 
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
@@ -1319,6 +1355,14 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         logger.error(f"[GEMINI LIVE TEST] Pipeline error: {e}")
     finally:
         logger.info("🏁 [GEMINI LIVE TEST] Koniec połączenia")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST] Call summary error: {e}")
+        try:
+            await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST] Call transcript error: {e}")
 
 
 @app.get("/health-gemini-live-test")
@@ -1330,6 +1374,7 @@ async def health_gemini_live():
 async def vonage_answer_gemini_live(request: Request):
     to_number = request.query_params.get("to", "")
     from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
     logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number}")
 
     tenant = await get_tenant_by_phone(to_number)
@@ -1337,8 +1382,12 @@ async def vonage_answer_gemini_live(request: Request):
         ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
         return JSONResponse(ncco)
 
+    if not await is_call_allowed(tenant):
+        ncco = [{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}]
+        return JSONResponse(ncco)
+
     host = request.headers.get("host", "localhost")
-    ws_uri = f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}"
+    ws_uri = f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}&callSid={call_uuid}"
 
     ncco = [
         {
@@ -1359,6 +1408,7 @@ async def vonage_answer_gemini_live(request: Request):
 async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     tenant_phone = websocket.query_params.get("phone")
     caller_phone = websocket.query_params.get("callerPhone", "nieznany")
+    call_sid = websocket.query_params.get("callSid")
     if not tenant_phone:
         logger.error("❌ [GEMINI LIVE TEST/VONAGE] Brak phone w query params — zamykam")
         await websocket.close()
@@ -1390,9 +1440,24 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         ),
     )
 
-    system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator = build_gemini_live_llm(system_prompt)
     gemini_state = make_gemini_state()
+    task_box = {"task": None}
+    context_box = {"context": None}
+    tools = [
+        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state),
+        build_end_conversation_tool(task_box, gemini_state),
+    ]
+    if tenant.get("lead_mode", 0) == 1:
+        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
+    if tenant.get("transfer_enabled", 0) == 1:
+        # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
+        # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),
+        # nietknięty tym kodem.
+        tools.append(build_transfer_tool(tenant, call_sid, gemini_state))
+
+    system_prompt = build_realtime_instructions(tenant, None)
+    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(system_prompt, tools=tools)
+    context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
 
@@ -1415,6 +1480,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             audio_out_sample_rate=16000,
         ),
     )
+    task_box["task"] = task
 
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
@@ -1447,6 +1513,14 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         logger.error(f"[GEMINI LIVE TEST/VONAGE] Pipeline error: {e}")
     finally:
         logger.info("🏁 [GEMINI LIVE TEST/VONAGE] Koniec połączenia")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST/VONAGE] Call summary error: {e}")
+        try:
+            await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST/VONAGE] Call transcript error: {e}")
 
 
 if __name__ == "__main__":
