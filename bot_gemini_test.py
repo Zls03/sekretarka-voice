@@ -1136,7 +1136,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
             break
 
 
-def build_gemini_live_llm(system_prompt: str, tools: list | None = None):
+def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: str | None = None):
     """Analogiczne do build_realtime_llm() wyżej, ale dla Gemini Live.
 
     tools: lista FunctionSchema — DOKŁADNIE ten sam format co dla OpenAI Realtime
@@ -1145,19 +1145,40 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None):
     GeminiLLMAdapter — sprawdzone w źródle pipecat), więc realtime_tools.py::build_*_tool
     są reużywane WPROST, bez żadnej gemini-specyficznej wersji.
 
-    Voice "Aoede" — Chirp 3 HD, top damski głos PL wg rankingu użytkownika.
+    voice: per-tenant (tenant.get("gemini_voice"), NA RAZIE bez UI w panelu — jak
+    "realtime_voice" dla OpenAI zanim dostał zakładkę). Fallback "Kore" — #1 damski
+    głos PL wg rankingu użytkownika (11.08.2026). Osobne pole nazwy od "realtime_voice",
+    bo zestawy nazw głosów OpenAI i Gemini się NIE pokrywają (np. "cedar" nic nie znaczy
+    dla Gemini, "Kore" nic nie znaczy dla OpenAI) — wspólne pole ryzykowałoby wysłaniem
+    złej nazwy do złego dostawcy.
+
+    ⚠️ BRAK kontroli tempa/prędkości mówienia — sprawdzone w źródle pipecat:
+    GeminiLiveLLMService.Settings nie ma odpowiednika OpenAI Realtime AudioOutput(speed=...).
+    To ograniczenie samego Gemini Live API, nie brak wpięcia z naszej strony — nie da się
+    obecnie tego podpiąć pod "speaking_rate" tak jak działa to dla OpenAI Realtime/cascade.
 
     settings=... (zamiast przestarzałych kwargs model=/voice_id=) — świadomie żeby móc
     ustawić language=Language.PL. Bug znaleziony na żywym telefonie: bez tego domyślny
     język transkrypcji to EN_US (patrz InputParams w źródle pipecat), więc pierwsze
     tury rozmowy transkrybowały się jako bełkot w losowych językach (niemiecki,
-    hiszpański, portugalski) zanim model jakoś "złapał" polski w dalszej części rozmowy."""
-    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, tools={[t.name for t in (tools or [])]}")
+    hiszpański, portugalski) zanim model jakoś "złapał" polski w dalszej części rozmowy.
+    ⚠️ To ustawia język TYLKO dla generowania odpowiedzi (speech_config.language_code) —
+    sprawdzone w źródle: input_audio_transcription (rozpoznawanie mowy KLIENTA) jest
+    tworzone przez pipecat 1.4.0 BEZ żadnej podpowiedzi językowej (pusty
+    AudioTranscriptionConfig()), mimo że google-genai SDK wspiera pole `language_codes`
+    właśnie do tego. Pipecat 1.4.0 tego pola jeszcze nie przekazuje — to prawdopodobnie
+    prawdziwa przyczyna sporadycznego bełkotu w obcym języku w transkrypcji KLIENTA,
+    obserwowanego na żywych telefonach nawet po ustawieniu language=Language.PL. Naprawa
+    wymagałaby nadpisania wewnętrznej metody connect() biblioteki (fragile, może się
+    zepsuć przy update pipecat) — świadomie NIE zrobione teraz, bo problem wystąpił
+    rzadko (0 razy w 2 ostatnich pełnych testach) i ryzyko łatki nie jest tego warte."""
+    resolved_voice = voice or "Kore"
+    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, voice={resolved_voice}, tools={[t.name for t in (tools or [])]}")
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
             model=GEMINI_LIVE_MODEL,
-            voice="Aoede",
+            voice=resolved_voice,
             language=Language.PL,
         ),
         system_instruction=system_prompt,
@@ -1285,7 +1306,10 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
 
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(system_prompt, tools=tools)
+    gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
+    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
+        system_prompt, tools=tools, voice=gemini_voice
+    )
     context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
@@ -1456,7 +1480,10 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         tools.append(build_transfer_tool(tenant, call_sid, gemini_state))
 
     system_prompt = build_realtime_instructions(tenant, None)
-    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(system_prompt, tools=tools)
+    gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
+    llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
+        system_prompt, tools=tools, voice=gemini_voice
+    )
     context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)

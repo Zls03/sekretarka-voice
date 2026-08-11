@@ -223,7 +223,12 @@ klienta JEDNO krótkie pytanie wprost (np. "Czego dokładnie dotyczy sprawa?" / 
 mam zapisać?") — NIE zapowiadaj że o to zapytasz, po prostu zapytaj.
 Jeśli wynik wywołania to status="error", reason="message_too_vague" — wiadomość była za ogólna
 (np. samo "chce kontaktu" bez konkretu). Krótko przeproś i zadaj TO SAMO pytanie ponownie,
-bez tłumaczenia dlaczego pytasz drugi raz.""",
+bez tłumaczenia dlaczego pytasz drugi raz.
+⚠️ Jeśli wynik to status="ok" — połączenie zaraz automatycznie się rozłączy (kilka sekund po
+Twojej odpowiedzi), więc Twoja odpowiedź MUSI być zamkniętym pożegnaniem, NIE pytaniem
+otwartym. NIE pytaj "Czy mogę jeszcze w czymś pomóc?" — nikt nie zdąży odpowiedzieć.
+✅ "Dobrze, przekazuję wiadomość właścicielowi. Dziękuję za telefon, do usłyszenia!"
+❌ "Wiadomość została przekazana. Czy mogę jeszcze w czymś pomóc?\"""",
         properties={
             "customer_name": {"type": "string", "description": "Imię klienta"},
             "message": {
