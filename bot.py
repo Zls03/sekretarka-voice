@@ -710,11 +710,7 @@ async def run_call_pipeline(
             ),
         )
         logger.info("🧠 Using Cerebras llama3.3-70b")
-    elif llm_provider in ("groq", "openai"):
-        # "openai" trafia tu też TYMCZASOWO na czas testu latencji — w bazie SaaS
-        # to pole ma jawnie zapisane "openai" (nie NULL), więc żaden default
-        # w kodzie tego nie ominie. Przywróć `elif llm_provider == "groq":`
-        # gdy skończysz porównywać dostawców.
+    elif llm_provider == "groq":
         llm_model = tenant.get("llm_model") or "llama-3.3-70b-versatile"
         llm = GroqLLMService(
             api_key=os.getenv("GROQ_API_KEY"),
