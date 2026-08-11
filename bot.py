@@ -701,21 +701,12 @@ async def run_call_pipeline(
 
     llm_provider = tenant.get("llm_provider", "groq")
 
-    # 🧪 TEST: Llama 4 Scout (Groq) na tenancie testowym, scoped po ID (NIE po wartości
-    # llm_provider="openai" jak poprzednio — to dokładnie ten wzorzec który psuł innych
-    # tenantów po cichu). Dotyka WYŁĄCZNIE firm_1774140338448_8905c. Usuń ten blok (i
-    # przywróć zwykłe llm_provider z bazy) gdy skończysz porównywać z GPT-4.1-mini.
-    if tenant.get("id") == "firm_1774140338448_8905c":
-        llm = GroqLLMService(
-            api_key=os.getenv("GROQ_API_KEY"),
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            params=BaseOpenAILLMService.InputParams(
-                temperature=0.3,
-                max_completion_tokens=250,
-            ),
-        )
-        logger.info("🧠 Using Groq Llama 4 Scout (TEST override, tenant firm_1774140338448_8905c)")
-    elif llm_provider == "cerebras":
+    # Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-instruct) COFNIĘTE — mimo że jest
+    # w oficjalnej dokumentacji Groq, konto zwraca 404 model_not_found na żywym połączeniu
+    # (potwierdzone: bot witał się, potem cisza na pierwszym prawdziwym pytaniu — LLM call
+    # się wysypywał). Prawdopodobnie wymaga osobnego dostępu/whitelisty na koncie Groq.
+    # Wrócono do sprawdzonej Llama 3.3-70b poniżej.
+    if llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
             model="llama3.3-70b",
@@ -726,10 +717,7 @@ async def run_call_pipeline(
         )
         logger.info("🧠 Using Cerebras llama3.3-70b")
     elif llm_provider == "groq":
-        # Domyślny model podniesiony z Llama 3.3-70b na Llama 4 Scout (MoE, szybszy,
-        # patrz test latencji) — dotyczy KAŻDEGO tenanta z llm_provider="groq" w bazie,
-        # który nie ma jawnie ustawionego własnego llm_model. Nie dotyka openai/cerebras/gemini.
-        llm_model = tenant.get("llm_model") or "meta-llama/llama-4-scout-17b-16e-instruct"
+        llm_model = tenant.get("llm_model") or "llama-3.3-70b-versatile"
         llm = GroqLLMService(
             api_key=os.getenv("GROQ_API_KEY"),
             model=llm_model,
