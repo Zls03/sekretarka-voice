@@ -701,14 +701,22 @@ async def run_call_pipeline(
 
     llm_provider = tenant.get("llm_provider", "groq")
 
-    # Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-instruct) COFNIĘTE — Groq oficjalnie
-    # wycofał ten model 17.07.2026 dla darmowych/developer-tier kont (potwierdzone w
-    # https://console.groq.com/docs/deprecations), stąd 404 model_not_found na żywym
-    # połączeniu. Zastąpiony przez openai/gpt-oss-120b (model PRODUKCYJNY, ~500 tps, 131K
-    # kontekstu, natywny tool-calling) — NIE qwen/qwen3.6-27b, bo ten jest oznaczony przez
-    # Groq jako Preview ("should not be used in production, may be discontinued at short
-    # notice"), czyli ta sama kategoria ryzyka co Scout.
-    if llm_provider == "cerebras":
+    # 🧪 TEST: wymuszony Groq gpt-oss-120b na tenancie testowym, po ID — NIE po wartości
+    # llm_provider (w bazie ten tenant ma "openai", więc bez tego override'u zawsze wróci
+    # do GPT-4.1-mini niezależnie od tego co ustawimy w gałęzi "groq" niżej). Panel nie ma
+    # jeszcze pola do wyboru dostawcy LLM, więc to jedyny sposób testowania na tym tenancie
+    # bez ręcznej zmiany w bazie. Usuń ten blok gdy skończysz porównywać z GPT-4.1-mini.
+    if tenant.get("id") == "firm_1774140338448_8905c":
+        llm = GroqLLMService(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model="openai/gpt-oss-120b",
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info("🧠 Using Groq gpt-oss-120b (TEST override, tenant firm_1774140338448_8905c)")
+    elif llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
             model="llama3.3-70b",
