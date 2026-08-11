@@ -726,7 +726,10 @@ async def run_call_pipeline(
         )
         logger.info("🧠 Using Cerebras llama3.3-70b")
     elif llm_provider == "groq":
-        llm_model = tenant.get("llm_model") or "llama-3.3-70b-versatile"
+        # Domyślny model podniesiony z Llama 3.3-70b na Llama 4 Scout (MoE, szybszy,
+        # patrz test latencji) — dotyczy KAŻDEGO tenanta z llm_provider="groq" w bazie,
+        # który nie ma jawnie ustawionego własnego llm_model. Nie dotyka openai/cerebras/gemini.
+        llm_model = tenant.get("llm_model") or "meta-llama/llama-4-scout-17b-16e-instruct"
         llm = GroqLLMService(
             api_key=os.getenv("GROQ_API_KEY"),
             model=llm_model,
