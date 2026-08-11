@@ -700,7 +700,22 @@ async def run_call_pipeline(
 
 
     llm_provider = tenant.get("llm_provider", "groq")
-    if llm_provider == "cerebras":
+
+    # 🧪 TEST: Llama 4 Scout (Groq) na tenancie testowym, scoped po ID (NIE po wartości
+    # llm_provider="openai" jak poprzednio — to dokładnie ten wzorzec który psuł innych
+    # tenantów po cichu). Dotyka WYŁĄCZNIE firm_1774140338448_8905c. Usuń ten blok (i
+    # przywróć zwykłe llm_provider z bazy) gdy skończysz porównywać z GPT-4.1-mini.
+    if tenant.get("id") == "firm_1774140338448_8905c":
+        llm = GroqLLMService(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            params=BaseOpenAILLMService.InputParams(
+                temperature=0.3,
+                max_completion_tokens=250,
+            ),
+        )
+        logger.info("🧠 Using Groq Llama 4 Scout (TEST override, tenant firm_1774140338448_8905c)")
+    elif llm_provider == "cerebras":
         llm = CerebrasLLMService(
             api_key=os.getenv("CEREBRAS_API_KEY"),
             model="llama3.3-70b",
