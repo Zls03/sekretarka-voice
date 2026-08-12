@@ -17,7 +17,13 @@
 # (paczka google-genai) — bez tego import na górze pliku wywali cały serwis,
 # w tym też route'y OpenAI Realtime.
 
-pipecat-ai[google]==1.4.0
+# [google,silero] — silero bo transporty w tym pliku uzywaja SileroVADAnalyzer.
+# Wczesniej to dzialalo tylko dzieki recznej komendzie builda na Railway
+# ("pip install -r requirements.txt && pip install -U pipecat-ai[google,silero]"),
+# ktora w ogole NIE czytala tego pliku — dlatego PyJWT (dopisany nizej dla
+# transferu Vonage) nigdy sie nie zainstalowal, mimo ze byl tu od dawna.
+# Trzeba zmienic Build Command na Railway na instalacje z TEGO pliku.
+pipecat-ai[google,silero]==1.4.0
 
 # Server
 fastapi

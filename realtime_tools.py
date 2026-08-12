@@ -230,8 +230,8 @@ def build_contact_owner_tool(
 - Jeśli klient WYRAŹNIE chce żywej rozmowy TERAZ ("połącz mnie", "chcę z kimś porozmawiać
   natychmiast") → NIE używaj tej funkcji, użyj transfer_to_owner.
 - Jeśli NIE JEST JASNE które z dwóch klient ma na myśli (np. samo "czy mogę porozmawiać z
-  właścicielem?") → ZAPYTAJ wprost, jednym zdaniem: "Czy wolisz żebym połączył od razu, czy
-  wolisz zostawić wiadomość i ktoś oddzwoni?" — i dopiero na podstawie odpowiedzi wybierz
+  właścicielem?") → ZAPYTAJ wprost, jednym zdaniem, BEZ formy "ty" (np. "Połączyć teraz, czy
+  lepiej zostawić wiadomość i ktoś oddzwoni?") — i dopiero na podstawie odpowiedzi wybierz
   właściwą funkcję. NIE zgaduj.
 - klient jest sfrustrowany i potrzebuje pomocy człowieka, a nie jest jasne który wariant → też dopytaj jak wyżej"""
     else:
