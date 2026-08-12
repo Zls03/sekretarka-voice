@@ -861,13 +861,15 @@ async def transfer_vonage_call(call_uuid: str, destination_number: str, from_num
             "endpoint": [{"type": "phone", "number": destination_number}],
         },
     ]
+    body = {"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}}
+    logger.info(f"📞 [TRANSFER] Wysyłam do Vonage: uuid={call_uuid} body={body}")
     try:
         import httpx
         async with httpx.AsyncClient() as client:
             response = await client.put(
                 f"{VONAGE_API_BASE}/v1/calls/{call_uuid}",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json={"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}},
+                json=body,
                 timeout=10.0,
             )
             if response.status_code in (200, 204):
