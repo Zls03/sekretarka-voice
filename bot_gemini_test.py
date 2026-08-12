@@ -1489,7 +1489,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         # nietknięty tym kodem.
         tools.append(build_transfer_tool(tenant, call_sid, gemini_state))
 
-    system_prompt = build_realtime_instructions(tenant, None)
+    system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice

@@ -237,14 +237,23 @@ PRZYKŁAD STYLU ODPOWIEDZI:
 - Lepiej przyznać że nie wiesz niż zmyślić{crm_hint}"""
 
 
-def build_realtime_instructions(tenant: dict, client_profile: dict = None, include_greeting: bool = True) -> str:
+def build_realtime_instructions(
+    tenant: dict, client_profile: dict = None, include_greeting: bool = True, has_transfer: bool = False
+) -> str:
     """system_instruction dla OpenAI Realtime: rola+styl+biznes+CRM (jak w cascade) plus
     krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy).
 
     include_greeting=False: bez bloku "zacznij rozmowę mówiąc dokładnie...". Używane gdy
     dosyłamy zaktualizowany prompt (np. CRM doszedł już PO starcie rozmowy przez
     session.update) — z tą instrukcją model mógłby zinterpretować aktualizację jako
-    polecenie przywitania się jeszcze raz."""
+    polecenie przywitania się jeszcze raz.
+
+    has_transfer: True gdy w tej rozmowie jest zarejestrowane transfer_to_owner (Gemini
+    Live/Vonage + transfer_enabled=1 na tenancie). Bug znaleziony na żywym telefonie: ten
+    blok promptu na sztywno mówił "połączenie na żywo jeszcze w budowie" NIEZALEŻNIE od
+    tego czy transfer_to_owner był akurat dostępny — model więc odmawiał przekierowania
+    nawet gdy klient wprost o nie poprosił i narzędzie realnie istniało (sprzeczność z
+    opisem samego narzędzia w realtime_tools.py::build_contact_owner_tool)."""
     role_content = build_role_prompt(tenant, client_profile)
 
     greeting_block = ""
@@ -259,6 +268,26 @@ Zacznij rozmowę od razu, mówiąc DOKŁADNIE I WYŁĄCZNIE: "{greeting_text}"
   z własnej inicjatywy o usługach, cenach, godzinach czy czymkolwiek innym, dopóki klient
   sam o to nie zapyta. Powitanie to CAŁA Twoja pierwsza wypowiedź, nic więcej.
 - Nie witaj się drugi raz później w rozmowie"""
+
+    if has_transfer:
+        contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM — DWIE ŚCIEŻKI, MASZ contact_owner ORAZ transfer_to_owner:
+Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
+lub jest sfrustrowany i potrzebuje pomocy człowieka — patrz szczegółowy opis obu funkcji
+(kiedy użyć której, kiedy dopytać którą wybiera) w ich własnych opisach narzędzi. Ogólnie:
+- Żywe połączenie TERAZ → transfer_to_owner (żadnej zapowiedzi przed wywołaniem)
+- Wiadomość/oddzwonienie → contact_owner (dopytaj o imię i treść, potem wywołaj)
+- Niejasne które → dopytaj wprost, bez formy "ty" """
+    else:
+        contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM — TO JUŻ DZIAŁA:
+Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
+lub jest sfrustrowany i potrzebuje pomocy człowieka:
+1. Dopytaj naturalnie w rozmowie o brakujące rzeczy — potrzebujesz IMIENIA klienta i TREŚCI wiadomości
+   (czego dotyczy sprawa). Jedno pytanie na turę, jak zawsze.
+2. Gdy masz oba → wywołaj funkcję contact_owner(customer_name, message). NIE pytaj o nic więcej.
+3. Po wywołaniu powiedz krótko że wiadomość została przekazana właścicielowi i grzecznie zakończ rozmowę.
+⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) NIE jest jeszcze dostępne w tej wersji
+testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że to
+jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego."""
 
     addendum = f"""{greeting_block}
 
@@ -326,16 +355,7 @@ wywołaj end_conversation() OD RAZU, NIC nie mówiąc przed nią (żadnego "już
 żadnej zapowiedzi). Pożegnanie powiesz DOPIERO w odpowiedzi PO wyniku funkcji — jedno
 pożegnanie, nie dwa. Bez wywołania tej funkcji rozmowa NIE ROZŁĄCZY SIĘ sama.
 
-⚠️ KONTAKT Z WŁAŚCICIELEM — TO JUŻ DZIAŁA:
-Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
-lub jest sfrustrowany i potrzebuje pomocy człowieka:
-1. Dopytaj naturalnie w rozmowie o brakujące rzeczy — potrzebujesz IMIENIA klienta i TREŚCI wiadomości
-   (czego dotyczy sprawa). Jedno pytanie na turę, jak zawsze.
-2. Gdy masz oba → wywołaj funkcję contact_owner(customer_name, message). NIE pytaj o nic więcej.
-3. Po wywołaniu powiedz krótko że wiadomość została przekazana właścicielowi i grzecznie zakończ rozmowę.
-⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) NIE jest jeszcze dostępne w tej wersji
-testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że to
-jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego.
+{contact_block}
 
 ⚠️ TRYB TESTOWY — POZOSTAŁE OGRANICZENIA:
 Rezerwacje wizyt i zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika)
