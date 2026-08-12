@@ -834,11 +834,18 @@ def _format_transfer_number(raw: str) -> str:
     return f"48{number}"
 
 
-async def transfer_vonage_call(call_uuid: str, destination_number: str, announce_text: str) -> bool:
+async def transfer_vonage_call(call_uuid: str, destination_number: str, from_number: str, announce_text: str) -> bool:
     """PUT /v1/calls/{uuid} — podmienia NCCO trwającego połączenia. `announce_text`
     leci jako "talk" ZANIM Vonage podłączy telefon właściciela (natywny mechanizm
     Vonage, nie nasz pipeline — unika wyścigu z Gemini Live próbującym powiedzieć
-    to samo przez nasze audio, które i tak zaraz zostanie odcięte)."""
+    to samo przez nasze audio, które i tak zaraz zostanie odcięte).
+
+    from_number: bug znaleziony na żywym telefonie (400 Bad Request) — akcja "connect"
+    formalnie ma pole "from" jako opcjonalne w schemacie, ale sprawdzone wprost w
+    dokumentacji Vonage (ncco-reference#connect): "This must be one of your Vonage
+    virtual numbers if you're connecting to a real phone, as the call won't connect
+    otherwise" — w praktyce wymagane. To musi być NASZ numer Vonage (tenant['phone_number']),
+    nie numer docelowy (właściciela)."""
     token = _generate_vonage_jwt()
     if not token:
         return False
@@ -848,7 +855,11 @@ async def transfer_vonage_call(call_uuid: str, destination_number: str, announce
 
     ncco = [
         {"action": "talk", "text": announce_text, "language": "pl-PL"},
-        {"action": "connect", "endpoint": [{"type": "phone", "number": destination_number}]},
+        {
+            "action": "connect",
+            "from": from_number,
+            "endpoint": [{"type": "phone", "number": destination_number}],
+        },
     ]
     try:
         import httpx
@@ -889,8 +900,9 @@ def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict) -> Functi
             await params.result_callback({"status": "error", "reason": "invalid_number"})
             return
 
+        from_number = _format_transfer_number(tenant.get("phone_number") or "")
         ok = await transfer_vonage_call(
-            call_sid, destination,
+            call_sid, destination, from_number,
             announce_text="Już łączę z osobą odpowiedzialną, chwileczkę.",
         )
         await params.result_callback({"status": "ok" if ok else "error"})
