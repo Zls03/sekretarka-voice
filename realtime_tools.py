@@ -818,16 +818,20 @@ def _generate_vonage_jwt() -> str | None:
 
 
 def _format_transfer_number(raw: str) -> str:
-    """1:1 z flows_contact.py (cascade, sekcja Twilio transfer) — ta sama normalizacja
-    polskiego numeru, żeby zachowanie było spójne między dwoma dostawcami telefonii."""
-    number = (raw or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    """Normalizacja numeru pod Vonage connect/phone endpoint.
+
+    Bug znaleziony na żywym telefonie: pierwsza wersja kopiowała 1:1 normalizację z
+    flows_contact.py (cascade, Twilio transfer), która KOŃCZY numer znakiem "+"
+    (+48XXXXXXXXX) — bo tego wymaga Twilio. Vonage wymaga czegoś innego: sprawdzone
+    wprost w dokumentacji NCCO (developer.vonage.com/en/voice/voice-api/ncco-reference,
+    akcja connect/phone) — przykład tam to "447700900001", BEZ znaku "+". Ten sam "+"
+    który u Twilio jest obowiązkowy, u Vonage powodował 400 Bad Request."""
+    number = (raw or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "").lstrip("+")
     if number.startswith("0048"):
         number = number[4:]
     elif number.startswith("48") and len(number) == 11:
         number = number[2:]
-    if not number.startswith("+"):
-        number = f"+48{number}"
-    return number
+    return f"48{number}"
 
 
 async def transfer_vonage_call(call_uuid: str, destination_number: str, announce_text: str) -> bool:
@@ -880,7 +884,7 @@ def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict) -> Functi
             return
 
         destination = _format_transfer_number(raw_number)
-        if len(destination) < 12:
+        if len(destination) < 11:
             logger.error(f"📞 [TRANSFER] Nieprawidłowy numer po normalizacji: {destination!r}")
             await params.result_callback({"status": "error", "reason": "invalid_number"})
             return
