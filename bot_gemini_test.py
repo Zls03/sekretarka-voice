@@ -142,7 +142,7 @@ from helpers import get_tenant_by_phone, get_client_profile, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
-    build_transfer_tool,
+    build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
 
@@ -823,6 +823,41 @@ async def vonage_events(request: Request):
     return Response(content="", status_code=200)
 
 
+@app.api_route("/vonage/transfer-fallback", methods=["GET", "POST"])
+async def vonage_transfer_fallback(request: Request):
+    """eventUrl akcji "connect" z transfer_vonage_call (realtime_tools.py) — Vonage odpytuje
+    TU (eventType=synchronous) gdy próba połączenia z właścicielem kończy się timeout/busy/
+    rejected/failed/unanswered. MUSIMY zwrócić nową NCCO, która zastępuje bieżącą — inaczej
+    klient zostaje w martwej ciszy aż połączenie samo się urwie (dokładnie to zaobserwowano
+    na żywym telefonie przed tą zmianą, z domyślnym 60s timeout i brakiem jakiegokolwiek
+    fallbacku). businessName/callerPhone/ownerEmail lecą w query stringu — sami je tam
+    wstawiliśmy w build_transfer_tool, bo ten webhook nie ma dostępu do żadnego stanu
+    rozmowy (nowe, niezależne wywołanie od Vonage)."""
+    try:
+        if request.method == "POST":
+            data = await request.json()
+        else:
+            data = dict(request.query_params)
+    except Exception:
+        data = dict(request.query_params)
+    logger.info(f"📞 [TRANSFER FALLBACK] {data}")
+
+    business_name = request.query_params.get("businessName", "Firma")
+    caller_phone = request.query_params.get("callerPhone", "")
+    owner_email = request.query_params.get("ownerEmail", "")
+    if owner_email:
+        asyncio.create_task(send_missed_transfer_email(business_name, caller_phone, owner_email))
+
+    ncco = [
+        {
+            "action": "talk",
+            "text": "Niestety nie udało się połączyć. Przekażę wiadomość, żeby ktoś oddzwonił.",
+            "language": "pl-PL",
+        }
+    ]
+    return JSONResponse(ncco)
+
+
 @app.websocket("/ws-gemini-test-vonage")
 async def websocket_gemini_test_vonage(websocket: WebSocket):
     tenant_phone = websocket.query_params.get("phone")
@@ -1500,7 +1535,11 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
         # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),
         # nietknięty tym kodem.
-        tools.append(build_transfer_tool(tenant, call_sid, gemini_state, region_url))
+        transfer_host = websocket.headers.get("host", "localhost")
+        tools.append(build_transfer_tool(
+            tenant, call_sid, gemini_state, region_url,
+            caller_phone=caller_phone, host=transfer_host,
+        ))
 
     system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None

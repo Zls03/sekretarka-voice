@@ -172,11 +172,11 @@ Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej d
     if booking_enabled:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/usług → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z usługami.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc z wizytą?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu w CENNIKU → powiedz "Nie mam szczegółowych informacji o tej usłudze, ale chętnie umówię wizytę"'
-        przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Czy umówić wizytę?", "Coś jeszcze?"'
+        przyklad_tts = '"Chętnie opiszę.", "W czymś jeszcze mogę pomóc?", "Czy umówić wizytę?"'
     else:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/oferty → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z informacjami o firmie.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc w czymś innym?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu → powiedz "Nie mam szczegółowych informacji o tej usłudze"'
-        przyklad_tts = '"Chętnie opiszę.", "Mogę pomóc w czymś jeszcze?", "Coś jeszcze?", "Czy jest coś innego w czym mogę pomóc?"'
+        przyklad_tts = '"Chętnie opiszę.", "W czymś jeszcze mogę pomóc?", "Czy jest coś innego, w czym mogę pomóc?"'
 
     return f"""Jesteś {g['role_noun']} firmy "{business_name}".
 
@@ -213,6 +213,9 @@ ZASADY:
 - Dopóki NIE znasz płci klienta: buduj zdania BEZ bezpośredniego zwrotu do osoby
   ✅ {przyklad_tts}
   ❌ "Czy chce Pan/Pani...", "Czy mogę Panu/Pani..."
+  ⚠️ To są GOTOWE, całe zdania — wybierz i powiedz JEDNO z nich w całości, NIGDY nie sklejaj
+  słów z dwóch różnych przykładów w jedno zdanie. Błąd zaobserwowany na żywym telefonie:
+  "Coś jeszcze mogę pomóc?" — gramatycznie błędny zlepek dwóch osobnych przykładów.
 - Gdy klient poda imię MĘSKIE (Marek, Paweł, Jan...) → używaj "Pan"
 - Gdy klient poda imię ŻEŃSKIE (Ania, Kasia, Marta...) → używaj "Pani"
 - NIGDY nie używaj formy "ty"
@@ -314,10 +317,12 @@ STYL ODPOWIEDZI:
   odpowiedz na WSZYSTKIE zadane pytania, każde krótko, jednym zdaniem — ale nie dorzucaj
   informacji, o które nie zapytał (np. sam adres, jeśli pytał tylko o cenę)
 - Jeśli Twoja odpowiedź naturalnie kończy temat, możesz dorzucić krótkie, zmienne pytanie
-  zamykające (np. "Coś jeszcze?", "Mogę jeszcze pomóc?") — ale NIE rób tego po KAŻDEJ wypowiedzi.
-  Jeśli klient od razu zadaje kolejne pytanie albo prowadzi już aktywną rozmowę, po prostu
-  odpowiadaj, bez doklejania pytania zamykającego za każdym razem — inaczej zaczyna to brzmieć
-  jak automat
+  zamykające — wybierz i powiedz w CAŁOŚCI JEDNO z: "W czymś jeszcze mogę pomóc?", "Czy jest
+  coś jeszcze?" — NIE sklejaj fragmentów obu w jedno zdanie (błąd zaobserwowany na żywym
+  telefonie: "Coś jeszcze mogę pomóc?" — gramatycznie błędne). Nie rób tego po KAŻDEJ
+  wypowiedzi. Jeśli klient od razu zadaje kolejne pytanie albo prowadzi już aktywną rozmowę,
+  po prostu odpowiadaj, bez doklejania pytania zamykającego za każdym razem — inaczej zaczyna
+  to brzmieć jak automat
 - NIE proponuj z własnej inicjatywy kolejnego, niezapytanego tematu (np. "mogę też wyjaśnić
   jak wygląda X?") jeśli odpowiedź którą właśnie dałeś BYŁA JUŻ złożona/wielowątkowa (np.
   różne godziny na różne dni, kilka usług z cenami) — taka odpowiedź ma się skończyć, gdy

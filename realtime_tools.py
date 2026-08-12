@@ -35,6 +35,7 @@ import os
 import time
 import uuid
 import asyncio
+from urllib.parse import quote
 
 from loguru import logger
 
@@ -434,7 +435,11 @@ async def maybe_send_call_summary(tenant: dict, caller_phone: str, context: LLMC
     """Woła się w finally: bloku websocket handlera — PO KAŻDEJ rozmowie, niezależnie jak się
     skończyła (cisza, limit czasu, contact_owner, end_conversation, zwykłe rozłączenie).
     Bramkowane tym samym polem co cascade (patrz docstring pliku) — jeśli tenant nie ma
-    włączonego raportu w panelu, nic się nie wysyła."""
+    włączonego raportu w panelu, nic się nie wysyła.
+
+    CELOWO wysyła się ZAWSZE gdy lead_email_enabled=1, nawet jeśli w tej samej rozmowie już
+    poszedł konkretny mail (contact_owner/submit_lead) — użytkownik wprost chce dostawać
+    streszczenie KAŻDEJ rozmowy niezależnie od innych maili, nie tylko tych bez zgłoszenia."""
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     if not lead_email_enabled or not to_email:
@@ -793,6 +798,61 @@ async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str,
 
 VONAGE_API_BASE = "https://api.nexmo.com"
 
+# Ile dzwoni telefon właściciela zanim uznamy że nikt nie odbiera. Domyślny timeout
+# Vonage dla akcji "connect" to 60s (sprawdzone w ncco-reference) — zbyt długo, klient
+# wisiałby w martwej ciszy prawie minutę. 15s (~4 sygnały) to dolna typowa wartość używana
+# w call center/IVR zanim leci fallback na pocztę głosową/wiadomość.
+TRANSFER_RING_TIMEOUT = 15
+
+
+async def send_missed_transfer_email(business_name: str, caller_phone: str, to_email: str) -> bool:
+    """Email gdy próba żywego przekierowania (transfer_to_owner) skończyła się timeout/busy/
+    rejected/failed/unanswered — patrz /vonage/transfer-fallback w bot_gemini_test.py, które
+    woła tę funkcję. Klient w tym samym momencie słyszy zapowiedź (NCCO zwrócone z tego
+    webhooka) że wiadomość zostanie przekazana — to jest ta wiadomość, więc właściciel i tak
+    się dowiaduje mimo nieodebrania. Przyjmuje same stringi (nie tenant dict) — webhook nie ma
+    dostępu do obiektu tenanta, tylko do tego co sami wpisaliśmy w query string eventUrl."""
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        logger.warning("📧 [TRANSFER] RESEND_API_KEY nieskonfigurowany — nie wysyłam")
+        return False
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+        <h2 style="color: #333;">📞 Nieodebrane przekierowanie połączenia</h2>
+        <p style="color: #666; margin-top: -10px;">{business_name}</p>
+        <p>Klient chciał porozmawiać na żywo, ale połączenie nie zostało odebrane w ciągu
+        {TRANSFER_RING_TIMEOUT}s. Oddzwoń, gdy będziesz mógł:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
+        </table>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+        <p style="color: #999; font-size: 12px;">Automatyczne powiadomienie — asystent głosowy (test Realtime) • {business_name}</p>
+    </div>
+    """
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
+                json={
+                    "from": "Voice AI <noreply@bizvoice.pl>",
+                    "to": [to_email],
+                    "subject": f"📞 Nieodebrane przekierowanie — {business_name}",
+                    "html": html_content,
+                },
+                timeout=10.0,
+            )
+            if response.status_code == 200:
+                logger.info("📧 [TRANSFER] Email o nieodebranym przekierowaniu wysłany")
+                return True
+            logger.error(f"📧 [TRANSFER] Resend error: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"📧 [TRANSFER] Send email error: {e}")
+        return False
+
 
 def _generate_vonage_jwt() -> str | None:
     """JWT krótkożyjący (60s) do jednego wywołania REST API — Vonage wymaga nowego
@@ -835,7 +895,8 @@ def _format_transfer_number(raw: str) -> str:
 
 
 async def transfer_vonage_call(
-    call_uuid: str, destination_number: str, from_number: str, announce_text: str, api_base: str | None = None
+    call_uuid: str, destination_number: str, from_number: str, announce_text: str,
+    api_base: str | None = None, fallback_url: str | None = None,
 ) -> bool:
     """PUT /v1/calls/{uuid} — podmienia NCCO trwającego połączenia. `announce_text`
     leci jako "talk" ZANIM Vonage podłączy telefon właściciela (natywny mechanizm
@@ -865,13 +926,23 @@ async def transfer_vonage_call(
 
     base = (api_base or VONAGE_API_BASE).rstrip("/")
 
+    connect_action = {
+        "action": "connect",
+        "from": from_number,
+        "timeout": TRANSFER_RING_TIMEOUT,
+        "endpoint": [{"type": "phone", "number": destination_number}],
+    }
+    if fallback_url:
+        # eventType=synchronous — sprawdzone wprost w dokumentacji Vonage (ncco-reference#connect):
+        # gdy połączenie z endpointem skończy się timeout/busy/rejected/failed/unanswered, Vonage
+        # odpytuje eventUrl i oczekuje NOWEJ NCCO w odpowiedzi, która ZASTĘPUJE bieżącą. Bez tego
+        # (bug zaobserwowany na żywym telefonie): po ring_timeout cała rozmowa po prostu się urywa,
+        # klient słyszy ciszę i rozłączenie zamiast jakiegokolwiek wyjaśnienia.
+        connect_action["eventType"] = "synchronous"
+        connect_action["eventUrl"] = [fallback_url]  # MUSI być lista, nawet z jednym URL-em (schemat Vonage)
     ncco = [
         {"action": "talk", "text": announce_text, "language": "pl-PL"},
-        {
-            "action": "connect",
-            "from": from_number,
-            "endpoint": [{"type": "phone", "number": destination_number}],
-        },
+        connect_action,
     ]
     body = {"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}}
     logger.info(f"📞 [TRANSFER] Wysyłam do Vonage ({base}): uuid={call_uuid} body={body}")
@@ -894,7 +965,10 @@ async def transfer_vonage_call(
         return False
 
 
-def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict, region_url: str | None = None) -> FunctionSchema:
+def build_transfer_tool(
+    tenant: dict, call_sid: str, call_state: dict, region_url: str | None = None,
+    caller_phone: str = "", host: str | None = None,
+) -> FunctionSchema:
     """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane z bot_gemini_test.py
     tylko gdy tenant.get("transfer_enabled")==1 I połączenie idzie przez Vonage (call_sid
     to wtedy prawdziwy Vonage call uuid, przechwycony w /vonage/answer-gemini-live, patrz
@@ -903,7 +977,12 @@ def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict, region_ur
 
     region_url: regionalny host centrum danych Vonage dla TEGO konkretnego połączenia
     (patrz docstring transfer_vonage_call — bez tego 400 Bad Request dla połączeń poza
-    domyślnym regionem)."""
+    domyślnym regionem).
+
+    host: nasz WŁASNY publiczny host (Railway), potrzebny żeby zbudować pełny URL do
+    /vonage/transfer-fallback — TO Vonage odpytuje ten adres z zewnątrz gdy właściciel nie
+    odbierze, więc musi to być URL dostępny z internetu, nie region_url (który jest hostem
+    PO STRONIE VONAGE, kompletnie inna rzecz)."""
 
     async def handle_transfer(params: FunctionCallParams):
         raw_number = (tenant.get("transfer_number") or "").strip()
@@ -918,11 +997,22 @@ def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict, region_ur
             await params.result_callback({"status": "error", "reason": "invalid_number"})
             return
 
+        fallback_url = None
+        if host:
+            owner_email = tenant.get("notification_email") or tenant.get("email") or ""
+            fallback_url = (
+                f"https://{host}/vonage/transfer-fallback"
+                f"?businessName={quote(tenant.get('name') or 'Firma', safe='')}"
+                f"&callerPhone={quote(caller_phone or '', safe='')}"
+                f"&ownerEmail={quote(owner_email, safe='')}"
+            )
+
         from_number = _format_transfer_number(tenant.get("phone_number") or "")
         ok = await transfer_vonage_call(
             call_sid, destination, from_number,
             announce_text="Już łączę z osobą odpowiedzialną, chwileczkę.",
             api_base=region_url,
+            fallback_url=fallback_url,
         )
         await params.result_callback({"status": "ok" if ok else "error"})
         if ok:
