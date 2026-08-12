@@ -767,6 +767,7 @@ async def vonage_events(request: Request):
     call_uuid = data.get("uuid", "")
     duration_str = data.get("duration", "0")
     to_number = data.get("to", "")
+    from_number = data.get("from", "") or "nieznany"
     direction = data.get("direction", "")
 
     logger.info(f"[VONAGE EVENT] {call_uuid} | {status} | {duration_str}s | direction={direction}")
@@ -798,11 +799,19 @@ async def vonage_events(request: Request):
             )
             logger.info(f"📊 [REALTIME TEST/VONAGE] Updated call log: {call_uuid} → {duration}s")
         else:
+            # from_number zamiast zaszytego "nieznany" — bug znaleziony na żywym telefonie:
+            # ten webhook i save_call_transcript() (koniec pipeline'u websocketu) to dwa
+            # niezależne w czasie zdarzenia, ten webhook może przyjść PIERWSZY (potwierdzone
+            # w logu: "Created call log" tu wyprzedziło "Transcript saved"). Kto pierwszy
+            # stworzy wiersz, tego caller_phone zostaje na stałe — save_call_transcript()
+            # widzi że wiersz już istnieje i nie insertuje drugi raz. Wcześniej ten webhook
+            # zawsze wpisywał "nieznany" niezależnie od tego czy dane były dostępne — a SĄ,
+            # Vonage przekazuje numer dzwoniącego jako "from" w tym samym evencie.
             await target_db.execute(
                 """INSERT INTO call_logs
                    (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
-                [f"call_{int(time.time())}", tenant_id, call_uuid, "nieznany", duration, status],
+                [f"call_{int(time.time())}", tenant_id, call_uuid, from_number, duration, status],
             )
             logger.info(f"📊 [REALTIME TEST/VONAGE] Created call log: {call_uuid} → {duration}s")
 
@@ -1467,13 +1476,14 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     gemini_state = make_gemini_state()
     task_box = {"task": None}
     context_box = {"context": None}
+    transfer_available = tenant.get("transfer_enabled", 0) == 1
     tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state),
+        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state, has_transfer_tool=transfer_available),
         build_end_conversation_tool(task_box, gemini_state),
     ]
     if tenant.get("lead_mode", 0) == 1:
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
-    if tenant.get("transfer_enabled", 0) == 1:
+    if transfer_available:
         # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
         # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),
         # nietknięty tym kodem.

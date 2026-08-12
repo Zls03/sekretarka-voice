@@ -150,10 +150,21 @@ def _is_scripted_bot_phrase(text: str) -> bool:
     return any(p in t for p in _SCRIPTED_BOT_PHRASES)
 
 
-def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, call_state: dict) -> FunctionSchema:
+def build_contact_owner_tool(
+    tenant: dict, caller_phone: str, task_box: dict, call_state: dict, has_transfer_tool: bool = False
+) -> FunctionSchema:
     """FunctionSchema z handlerem przypiętym bezpośrednio — LLMContext rejestruje go
     automatycznie (patrz bot_gemini_test.py::build_realtime_llm), bez osobnego
     register_function.
+
+    has_transfer_tool: True gdy w TEJ SAMEJ rozmowie jest też zarejestrowane
+    transfer_to_owner (patrz build_transfer_tool niżej) — czyli Vonage +
+    transfer_enabled=1. Zmienia opis: bez transfer_to_owner "połącz mnie z
+    właścicielem" może oznaczać TYLKO wiadomość (to jedyna dostępna opcja), więc
+    to jednoznaczne. Z transfer_to_owner dostępnym ta sama fraza jest DWUZNACZNA
+    (żywe połączenie czy wiadomość?) — zgłoszone przez użytkownika po testach na
+    żywo jako coś do doprecyzowania, więc opis w tym wariancie każe modelowi
+    wprost zapytać którą opcję klient woli, zamiast zgadywać.
 
     task_box: {"task": None} wypełniane PO stworzeniu PipelineTask — w momencie budowy
     tego tool'a (przed pipeline'em, bo LLMContext potrzebuje tools już przy konstrukcji
@@ -211,13 +222,28 @@ def build_contact_owner_tool(tenant: dict, caller_phone: str, task_box: dict, ca
                     logger.error(f"[REALTIME TEST] EndFrame po contact_owner error: {e}")
             asyncio.create_task(auto_hangup())
 
-    return FunctionSchema(
-        name="contact_owner",
-        description="""Klient chce kontaktu z właścicielem/firmą — zostawić wiadomość. Użyj gdy:
+    if has_transfer_tool:
+        trigger_block = """Klient chce KONTAKTU z właścicielem/firmą. Masz DWA sposoby: ta funkcja
+(zostaw wiadomość, właściciel oddzwoni) ORAZ transfer_to_owner (żywe połączenie TERAZ).
+- Jeśli klient WYRAŹNIE mówi że chce wiadomość/oddzwonienie ("zostawić wiadomość", "niech
+  oddzwoni", "proszę o kontakt zwrotny") → użyj TEJ funkcji wprost, bez dopytywania.
+- Jeśli klient WYRAŹNIE chce żywej rozmowy TERAZ ("połącz mnie", "chcę z kimś porozmawiać
+  natychmiast") → NIE używaj tej funkcji, użyj transfer_to_owner.
+- Jeśli NIE JEST JASNE które z dwóch klient ma na myśli (np. samo "czy mogę porozmawiać z
+  właścicielem?") → ZAPYTAJ wprost, jednym zdaniem: "Czy wolisz żebym połączył od razu, czy
+  wolisz zostawić wiadomość i ktoś oddzwoni?" — i dopiero na podstawie odpowiedzi wybierz
+  właściwą funkcję. NIE zgaduj.
+- klient jest sfrustrowany i potrzebuje pomocy człowieka, a nie jest jasne który wariant → też dopytaj jak wyżej"""
+    else:
+        trigger_block = """Klient chce kontaktu z właścicielem/firmą — zostawić wiadomość. Użyj gdy:
 - "chcę porozmawiać z właścicielem", "proszę o kontakt", "czy mogę zostawić wiadomość"
 - "połącz mnie", "przekieruj mnie", "chcę rozmawiać z człowiekiem"
 - klient jest sfrustrowany i potrzebuje pomocy człowieka
-- nie możesz pomóc i klient potrzebuje właściciela
+- nie możesz pomóc i klient potrzebuje właściciela"""
+
+    return FunctionSchema(
+        name="contact_owner",
+        description=f"""{trigger_block}
 Wywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości). Jeśli czegoś brakuje, zapytaj
 klienta JEDNO krótkie pytanie wprost (np. "Czego dokładnie dotyczy sprawa?" / "Na jakie imię
 mam zapisać?") — NIE zapowiadaj że o to zapytasz, po prostu zapytaj.
