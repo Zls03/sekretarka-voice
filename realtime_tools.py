@@ -834,7 +834,9 @@ def _format_transfer_number(raw: str) -> str:
     return f"48{number}"
 
 
-async def transfer_vonage_call(call_uuid: str, destination_number: str, from_number: str, announce_text: str) -> bool:
+async def transfer_vonage_call(
+    call_uuid: str, destination_number: str, from_number: str, announce_text: str, api_base: str | None = None
+) -> bool:
     """PUT /v1/calls/{uuid} — podmienia NCCO trwającego połączenia. `announce_text`
     leci jako "talk" ZANIM Vonage podłączy telefon właściciela (natywny mechanizm
     Vonage, nie nasz pipeline — unika wyścigu z Gemini Live próbującym powiedzieć
@@ -845,13 +847,23 @@ async def transfer_vonage_call(call_uuid: str, destination_number: str, from_num
     dokumentacji Vonage (ncco-reference#connect): "This must be one of your Vonage
     virtual numbers if you're connecting to a real phone, as the call won't connect
     otherwise" — w praktyce wymagane. To musi być NASZ numer Vonage (tenant['phone_number']),
-    nie numer docelowy (właściciela)."""
+    nie numer docelowy (właściciela).
+
+    api_base: DRUGI bug za 400 (po naprawie "from") — potwierdzone przez Vonage API
+    Support: każde połączenie jest przypisane do konkretnego REGIONALNEGO centrum
+    danych (np. api-eu-3.vonage.com), przekazywanego jako "region_url" TYLKO w evencie
+    Answer. "Jeśli dostajesz 400/404 przy modyfikacji aktywnego połączenia... Twoje
+    połączenie prawdopodobnie siedzi w innym Data Center" — request wysłany na sztywne
+    api.nexmo.com trafia w złe centrum dla połączeń spoza jego regionu. Fallback na
+    VONAGE_API_BASE gdy region_url nie zostało przechwycone (np. jakiś stary/inny call)."""
     token = _generate_vonage_jwt()
     if not token:
         return False
     if not call_uuid:
         logger.warning("📞 [TRANSFER] Brak call_uuid — nie mogę przekierować")
         return False
+
+    base = (api_base or VONAGE_API_BASE).rstrip("/")
 
     ncco = [
         {"action": "talk", "text": announce_text, "language": "pl-PL"},
@@ -862,12 +874,12 @@ async def transfer_vonage_call(call_uuid: str, destination_number: str, from_num
         },
     ]
     body = {"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}}
-    logger.info(f"📞 [TRANSFER] Wysyłam do Vonage: uuid={call_uuid} body={body}")
+    logger.info(f"📞 [TRANSFER] Wysyłam do Vonage ({base}): uuid={call_uuid} body={body}")
     try:
         import httpx
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{VONAGE_API_BASE}/v1/calls/{call_uuid}",
+                f"{base}/v1/calls/{call_uuid}",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 json=body,
                 timeout=10.0,
@@ -882,12 +894,16 @@ async def transfer_vonage_call(call_uuid: str, destination_number: str, from_num
         return False
 
 
-def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict) -> FunctionSchema:
+def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict, region_url: str | None = None) -> FunctionSchema:
     """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane z bot_gemini_test.py
     tylko gdy tenant.get("transfer_enabled")==1 I połączenie idzie przez Vonage (call_sid
     to wtedy prawdziwy Vonage call uuid, przechwycony w /vonage/answer-gemini-live, patrz
     tam). Ten sam checkbox/pole co dla Twilio (transfer_number) — bez nowej konfiguracji
-    w panelu."""
+    w panelu.
+
+    region_url: regionalny host centrum danych Vonage dla TEGO konkretnego połączenia
+    (patrz docstring transfer_vonage_call — bez tego 400 Bad Request dla połączeń poza
+    domyślnym regionem)."""
 
     async def handle_transfer(params: FunctionCallParams):
         raw_number = (tenant.get("transfer_number") or "").strip()
@@ -906,6 +922,7 @@ def build_transfer_tool(tenant: dict, call_sid: str, call_state: dict) -> Functi
         ok = await transfer_vonage_call(
             call_sid, destination, from_number,
             announce_text="Już łączę z osobą odpowiedzialną, chwileczkę.",
+            api_base=region_url,
         )
         await params.result_callback({"status": "ok" if ok else "error"})
         if ok:

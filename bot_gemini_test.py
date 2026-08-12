@@ -89,6 +89,7 @@ import sys
 import json
 import time
 import asyncio
+from urllib.parse import quote
 
 from loguru import logger
 from dotenv import load_dotenv
@@ -1408,7 +1409,15 @@ async def vonage_answer_gemini_live(request: Request):
     to_number = request.query_params.get("to", "")
     from_number = request.query_params.get("from", "")
     call_uuid = request.query_params.get("uuid", "")
-    logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number}")
+    # region_url — bug znaleziony na żywym telefonie (400 Bad Request przy transferze,
+    # mimo poprawnego JSON body): Vonage przypisuje KAŻDE połączenie do konkretnego
+    # regionalnego centrum danych (potwierdzone przez Vonage API Support: "if you
+    # receive a 400 or 404 response... your call is likely residing on a different
+    # Data Center"). Ten region_url przychodzi TYLKO w tym evencie Answer i trzeba go
+    # zapamiętać na całą rozmowę — sztywne api.nexmo.com trafia w złe centrum danych
+    # dla połączeń spoza jego regionu.
+    region_url = request.query_params.get("region_url", "")
+    logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number} (region={region_url or 'brak'})")
 
     tenant = await get_tenant_by_phone(to_number)
     if not tenant:
@@ -1420,7 +1429,10 @@ async def vonage_answer_gemini_live(request: Request):
         return JSONResponse(ncco)
 
     host = request.headers.get("host", "localhost")
-    ws_uri = f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}&callerPhone={from_number}&callSid={call_uuid}"
+    ws_uri = (
+        f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}"
+        f"&callerPhone={from_number}&callSid={call_uuid}&regionUrl={quote(region_url, safe='')}"
+    )
 
     ncco = [
         {
@@ -1442,6 +1454,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     tenant_phone = websocket.query_params.get("phone")
     caller_phone = websocket.query_params.get("callerPhone", "nieznany")
     call_sid = websocket.query_params.get("callSid")
+    region_url = websocket.query_params.get("regionUrl") or None
     if not tenant_phone:
         logger.error("❌ [GEMINI LIVE TEST/VONAGE] Brak phone w query params — zamykam")
         await websocket.close()
@@ -1487,7 +1500,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
         # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),
         # nietknięty tym kodem.
-        tools.append(build_transfer_tool(tenant, call_sid, gemini_state))
+        tools.append(build_transfer_tool(tenant, call_sid, gemini_state, region_url))
 
     system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
