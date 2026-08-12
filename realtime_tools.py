@@ -118,11 +118,23 @@ def _looks_like_vague_meta_message(message: str) -> bool:
     poprawną frazą, nie oznaką pustki) — patrz _looks_too_short() niżej. Pomylenie tych
     dwóch odrzucało w praktyce poprawne, konkretne zgłoszenia (obserwowane na żywym
     telefonie: "Klient chce pomocy w sprawie legalizacji pobytu, dotyczącej wizy."
-    zostało odrzucone tylko dlatego że zaczynało się od "Klient chce")."""
+    zostało odrzucone tylko dlatego że zaczynało się od "Klient chce").
+
+    Bug znaleziony na żywym telefonie (drugi przypadek, w samym contact_owner tym
+    razem): sprawdzanie SAMEGO POCZĄTKU zdania (startswith) odrzucało "Klient prosi
+    o kontakt telefoniczny od właściciela" (ma konkret: "telefoniczny", "od
+    właściciela"), a identyczna treść bez słowa "Klient" na początku ("Prosi o
+    kontakt telefoniczny od właściciela") przechodziła bez problemu — czysty
+    przypadek składni, nie różnica w jakości treści. Fix: liczy się nie TO że zdanie
+    zaczyna się od podejrzanej frazy, tylko czy PO NIEJ zostaje realny konkret."""
     m = message.lower().strip()
     if len(m) < 10:
         return True
-    return any(m.startswith(p) for p in _VAGUE_MESSAGE_STARTS)
+    for p in _VAGUE_MESSAGE_STARTS:
+        if m.startswith(p):
+            remainder = m[len(p):].strip(" .,!?")
+            return len(remainder) < 15
+    return False
 
 
 def _looks_too_short(text: str) -> bool:
