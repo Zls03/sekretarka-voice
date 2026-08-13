@@ -1199,13 +1199,17 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
 
     # === 3. CO KLIENT CHCE ZROBIĆ ===
     if action not in ("cancel", "reschedule"):
-        return _ask_mgmt(call_state, state, f"Chodzi o wizytę: {booking_desc}. Czy chce ją Pan/Pani odwołać, czy przełożyć na inny termin?")
+        # Klient mógł tylko zapytać "czy mam wizytę" bez chęci zmiany czegokolwiek — informuj,
+        # nie zakładaj z góry akcji. Bez "Pan/Pani" ze slashem (TTS czyta to dosłownie jako
+        # "pan ukośnik pani" — złapane na żywym telefonie), zdanie bezpłciowe jak wszędzie
+        # indziej w prompcie (patrz FORMA ZWRACANIA SIĘ w realtime_prompt.py).
+        return _ask_mgmt(call_state, state, f"Tak, jest zaplanowana wizyta: {booking_desc}. Czy chodzi o zmianę tego terminu?")
 
     # === 4A. ANULOWANIE ===
     if action == "cancel":
         if confirmation != "yes":
             state["pending_action"] = "cancel"
-            return _ask_mgmt(call_state, state, f"Potwierdzam: odwołuję wizytę — {booking_desc}. Zgadza się?")
+            return _ask_mgmt(call_state, state, f"Potwierdzam odwołanie wizyty — {booking_desc}. Zgadza się?")
         ok = await _cancel_booking_via_api(tenant, booking["booking_id"])
         if ok:
             return _finish_mgmt(call_state, "Gotowe, wizyta została odwołana.", "cancelled")
@@ -1221,19 +1225,21 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
     if not staff_obj or not service_obj:
         return _finish_mgmt(
             call_state,
-            "Nie mogę automatycznie przełożyć tej wizyty — przekażę wiadomość właścicielowi. Proszę powiedzieć, na kiedy chce Pan/Pani przełożyć.",
+            "Nie mogę automatycznie przełożyć tej wizyty — przekażę wiadomość właścicielowi. Proszę powiedzieć, na kiedy przełożyć.",
             "error",
         )
 
+    if not new_date_text and not new_time_text:
+        state["pending_action"] = "reschedule"
+        return _ask_mgmt(call_state, state, f"Na jaki termin przełożyć wizytę — {booking_desc}?")
+
     if not new_date_text:
         # Model nie odsyła pól ustalonych w poprzednich turach (patrz book_appointment) — jeśli data
-        # była już podana i sparsowana wcześniej w TEJ operacji przełożenia, użyj jej ponownie
-        # zamiast pytać od nowa (ten sam wzorzec co _pending_date w book_appointment).
-        if "_new_date" in state:
-            new_date_text = state["_new_date"]
-        else:
-            state["pending_action"] = "reschedule"
-            return _ask_mgmt(call_state, state, f"Na jaki dzień przełożyć wizytę — {booking_desc}?")
+        # była już podana i sparsowana wcześniej w TEJ operacji przełożenia, użyj jej ponownie.
+        # Jeśli w ogóle nie padła (klient powiedział tylko nową godzinę, np. "przełóż na 13:00")
+        # zakładamy że chodzi o TEN SAM dzień co obecna wizyta — dopytywanie o dzień gdy z
+        # kontekstu jasno wynika o którą wizytę chodzi brzmiało nienaturalnie na żywym telefonie.
+        new_date_text = state.get("_new_date") or booking["scheduled_at"][:10]
 
     date_text_clean = preprocess_date_text(new_date_text)
     _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
@@ -1268,9 +1274,11 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
     if confirmation != "yes":
         state["_new_time"] = parsed_time
         new_date_obj = datetime.strptime(state["_new_date"], "%Y-%m-%d")
+        # Krótko — pełny opis wizyty (usługa/pracownik) już padł raz przy identyfikacji,
+        # powtarzanie go w każdej turze brzmiało sztywno/robotycznie na żywym telefonie.
         return _ask_mgmt(
             call_state, state,
-            f"Przekładam wizytę — {booking_desc} — na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}. Zgadza się?",
+            f"Dobrze, przekładamy wizytę na {format_date_polish(new_date_obj)}, na {format_hour_polish(parsed_time)}. Zgadza się?",
         )
 
     new_date_obj = datetime.strptime(state["_new_date"], "%Y-%m-%d")
@@ -1303,6 +1311,10 @@ def build_manage_booking_tool(tenant: Dict, caller_phone: str, call_state: Dict)
         description="""Klient chce ODWOŁAĆ lub PRZEŁOŻYĆ wizytę którą umówił WCZEŚNIEJ (nie w trakcie
 tej rozmowy — do nowej rezerwacji lub zmiany PRZED zapisaniem służy book_appointment). Użyj gdy klient
 mówi: "chcę odwołać wizytę", "muszę przełożyć termin", "nie mogę przyjść", "zmiana terminu wizyty".
+⛔ NIE wywołuj tego narzędzia gdy klient TYLKO pyta "czy mam jakąś wizytę" / "kiedy mam wizytę" bez
+chęci czegokolwiek zmieniać — na to odpowiadasz OD RAZU z danych w sekcji INFO O KLIENCIE (CRM) w
+promptcie systemowym, bez żadnego wywołania narzędzia. Wywołaj manage_booking dopiero gdy klient
+wyraźnie chce ODWOŁAĆ lub PRZEŁOŻYĆ.
 ⛔ Wizytę znajdujemy PO NUMERZE TELEFONU dzwoniącego automatycznie — NIE pytaj klienta o kod
 rezerwacji ani żadne ID, po prostu wywołaj to narzędzie z tym co klient powiedział.
 ⛔ KRYTYCZNE: wynik niesie pole "say_exactly" — Twoja odpowiedź MUSI być tą treścią słowo w słowo,
