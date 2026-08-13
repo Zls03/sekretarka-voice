@@ -145,6 +145,7 @@ from realtime_tools import (
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
+from realtime_booking import build_book_appointment_tool
 
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -470,17 +471,26 @@ def build_realtime_llm(
     return llm, user_aggregator, assistant_aggregator, context
 
 
-async def apply_crm_when_ready(llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task) -> dict | None:
+async def apply_crm_when_ready(
+    llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task,
+    has_booking: bool = False,
+) -> dict | None:
     """Powitanie leci OD RAZU z generycznym promptem (bez czekania na CRM, ~2-3s HTTP
     do panelu) — ta funkcja czeka na wynik w tle i, jeśli okaże się że dzwoni znany
     klient, dosyła zaktualizowany prompt (session.update) w trakcie rozmowy, żeby
     dane CRM (historia wizyt) były dostępne gdy klient o nie zapyta. include_greeting=False
     (patrz realtime_prompt.py::build_realtime_instructions) — bez tego model mógłby
-    zrozumieć aktualizację jako polecenie przywitania się jeszcze raz."""
+    zrozumieć aktualizację jako polecenie przywitania się jeszcze raz.
+
+    has_booking: MUSI być przekazane z tego samego booking_available co przy budowie
+    tools/system_prompt na starcie połączenia — bez tego ta aktualizacja w trakcie
+    rozmowy nadpisałaby prompt z powrotem na "rezerwacje jeszcze w budowie", mimo że
+    book_appointment cały czas jest zarejestrowane (dokładnie ten sam błąd co wcześniej
+    znaleziony przy transfer_to_owner/has_transfer, patrz historia tego pliku)."""
     client_profile = await client_profile_task
     if client_profile:
         logger.info(f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
-        updated_prompt = build_realtime_instructions(tenant, client_profile, include_greeting=False)
+        updated_prompt = build_realtime_instructions(tenant, client_profile, include_greeting=False, has_booking=has_booking)
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile
 
@@ -607,7 +617,19 @@ async def websocket_gemini_test(websocket: WebSocket):
         # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
         # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
-    system_prompt = build_realtime_instructions(tenant, None)
+    # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
+    # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
+    # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
+    # ("booking_enabled forced to 0 — no staff with calendar+services"), więc to samo
+    # tenanty musi dawać ten sam wynik tutaj, inaczej zachowanie się rozjeżdża między
+    # systemami dla identycznej konfiguracji.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
+    if booking_available:
+        tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box))
+    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -648,7 +670,7 @@ async def websocket_gemini_test(websocket: WebSocket):
         # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu.
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
-        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task))
+        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task, has_booking=booking_available))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
@@ -915,7 +937,19 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
         # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
-    system_prompt = build_realtime_instructions(tenant, None)
+    # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
+    # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
+    # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
+    # ("booking_enabled forced to 0 — no staff with calendar+services"), więc to samo
+    # tenanty musi dawać ten sam wynik tutaj, inaczej zachowanie się rozjeżdża między
+    # systemami dla identycznej konfiguracji.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
+    if booking_available:
+        tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box))
+    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -954,7 +988,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         logger.info("🎤 [REALTIME TEST/VONAGE] Klient połączony — wybudzam Realtime do przywitania")
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
-        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task))
+        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task, has_booking=booking_available))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
@@ -1115,9 +1149,18 @@ async def gemini_say_now(task: PipelineTask, call_state: dict, text: str):
     dokładny tekst — model trzyma się dokładnej treści gdy się go o to jawnie poprosi
     (potwierdzone: powitanie z system promptu wychodzi słowo w słowo).
 
-    Bez tool_choice="none" z wersji OpenAI — trasy Gemini Live świadomie NIE MAJĄ żadnych
-    tools zarejestrowanych (patrz docstring sekcji na górze pliku), więc nie ma ryzyka że
-    ten nudge przypadkiem wywoła jakąś funkcję."""
+    ⚠️ Bez tool_choice="none" z wersji OpenAI — sprawdzone czytaniem źródła pipecat 1.4.0
+    (_create_single_response w gemini_live/llm.py wysyła przez session.send_client_content
+    BEZ żadnej opcji per-turn wyłączającej narzędzia): Gemini Live NIE MA odpowiednika. Trasy
+    Vonage/Twilio MAJĄ zarejestrowane tools (contact_owner/submit_lead/transfer_to_owner/
+    end_conversation) w momencie gdy to leci, więc ten wymuszony nudge TEORETYCZNIE może
+    przypadkiem wywołać funkcję (dokładnie ten bug złapany wcześniej na żywym telefonie dla
+    OpenAI Realtime: "Halo? Czy mnie słyszysz?" wywołało contact_owner). Zabezpieczenie jest
+    PO STRONIE narzędzi, nie tutaj: contact_owner/submit_lead odrzucają treść pasującą do
+    _SCRIPTED_BOT_PHRASES (realtime_tools.py), transfer_to_owner sprawdza wprost
+    call_state["suppress_idle_reset"] (ustawiane niżej) bo nie ma żadnej treści do
+    zweryfikowania. end_conversation nie jest zabezpieczone, ale przypadkowe zakończenie
+    rozmowy w trakcie i tak kończącej się ciszy/limitu czasu nie jest realnym ryzykiem."""
     call_state["suppress_idle_reset"] = True
     await task.queue_frames([
         LLMMessagesAppendFrame(
@@ -1349,8 +1392,20 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     ]
     if tenant.get("lead_mode", 0) == 1:
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
+    # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
+    # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
+    # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
+    # ("booking_enabled forced to 0 — no staff with calendar+services"), więc to samo
+    # tenanty musi dawać ten sam wynik tutaj, inaczej zachowanie się rozjeżdża między
+    # systemami dla identycznej konfiguracji.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
+    if booking_available:
+        tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box))
 
-    system_prompt = build_realtime_instructions(tenant, None)
+    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
@@ -1531,6 +1586,18 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     ]
     if tenant.get("lead_mode", 0) == 1:
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
+    # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
+    # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
+    # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
+    # ("booking_enabled forced to 0 — no staff with calendar+services"), więc to samo
+    # tenanty musi dawać ten sam wynik tutaj, inaczej zachowanie się rozjeżdża między
+    # systemami dla identycznej konfiguracji.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
+    if booking_available:
+        tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box))
     if transfer_available:
         # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
         # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),
@@ -1541,7 +1608,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             caller_phone=caller_phone, host=transfer_host,
         ))
 
-    system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available)
+    system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available, has_booking=booking_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice

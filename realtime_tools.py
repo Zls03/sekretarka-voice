@@ -985,6 +985,18 @@ def build_transfer_tool(
     PO STRONIE VONAGE, kompletnie inna rzecz)."""
 
     async def handle_transfer(params: FunctionCallParams):
+        if call_state.get("suppress_idle_reset"):
+            # Okno wymuszonej wypowiedzi (gemini_say_now — dopytanie o ciszę/limit czasu/pożegnanie,
+            # patrz bot_gemini_test.py). W odróżnieniu od OpenAI Realtime (say_now ma tool_choice="none"),
+            # Gemini Live NIE MA odpowiednika — potwierdzone czytaniem źródła pipecat 1.4.0
+            # (_create_single_response wysyła przez send_client_content bez żadnej opcji per-turn
+            # wyłączającej narzędzia). contact_owner/submit_lead łapią to przez _is_scripted_bot_phrase
+            # (treść wiadomości), ale transfer_to_owner nie przyjmuje żadnych argumentów — nie ma
+            # czego sprawdzić, więc bez tej flagi nic by nie złapało przypadkowego wywołania transferu
+            # w trakcie np. "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!".
+            logger.warning("📞 [TRANSFER] Wywołanie w trakcie wymuszonej wypowiedzi systemowej — odrzucam jako prawdopodobnie przypadkowe")
+            await params.result_callback({"status": "error", "reason": "suppressed"})
+            return
         raw_number = (tenant.get("transfer_number") or "").strip()
         if not raw_number:
             logger.warning(f"📞 [TRANSFER] tenant {tenant.get('id')} ma transfer_enabled ale brak transfer_number")

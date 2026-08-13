@@ -241,7 +241,8 @@ PRZYKŁAD STYLU ODPOWIEDZI:
 
 
 def build_realtime_instructions(
-    tenant: dict, client_profile: dict = None, include_greeting: bool = True, has_transfer: bool = False
+    tenant: dict, client_profile: dict = None, include_greeting: bool = True,
+    has_transfer: bool = False, has_booking: bool = False,
 ) -> str:
     """system_instruction dla OpenAI Realtime: rola+styl+biznes+CRM (jak w cascade) plus
     krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy).
@@ -291,6 +292,31 @@ lub jest sfrustrowany i potrzebuje pomocy człowieka:
 ⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) NIE jest jeszcze dostępne w tej wersji
 testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że to
 jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego."""
+
+    if has_booking:
+        booking_block = """⚠️ REZERWACJE — TO JUŻ DZIAŁA, MASZ book_appointment:
+Jeśli klient chce umówić/zarezerwować wizytę, pyta o wolne terminy, albo chce zmienić lub
+odwołać rezerwację — wywołaj book_appointment, przekazując DOKŁADNIE to co klient powiedział
+w danym polu (nie zgaduj brakujących pól na zapas, jedno pytanie na turę jak zawsze).
+⛔ KRYTYCZNE: wynik niesie pole "say_exactly" — Twoja odpowiedź MUSI być tą treścią SŁOWO W
+SŁOWO, bez zmiany, dodania czy skrócenia choćby jednego słowa. Dotyczy to każdej daty, godziny,
+ceny i potwierdzenia — nie improwizuj przy nich pod żadnym pozorem, nawet jeśli inne fragmenty
+promptu każą Ci mówić "naturalnie własnymi słowami" — TA zasada ma pierwszeństwo dla wyników
+book_appointment. Wywołuj przy KAŻDEJ odpowiedzi klienta dotyczącej rezerwacji, aż wynik
+będzie miał "done": true."""
+    else:
+        booking_block = """⚠️ TRYB TESTOWY — REZERWACJE:
+Rezerwacje wizyt przez telefon NIE są jeszcze obsługiwane w tej wersji testowej. Jeśli klient
+chce się UMÓWIĆ na wizytę — powiedz że rezerwacje telefoniczne są jeszcze w budowie i
+zaproponuj zostawienie wiadomości przez contact_owner zamiast tego. NIE obiecuj że coś
+zarezerwujesz."""
+
+    if tenant.get("lead_mode", 0) != 1:
+        booking_block += """
+
+⚠️ TRYB TESTOWY — ZGŁOSZENIA:
+Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) NIE jest
+jeszcze obsługiwane w tej wersji testowej."""
 
     addendum = f"""{greeting_block}
 
@@ -362,10 +388,6 @@ pożegnanie, nie dwa. Bez wywołania tej funkcji rozmowa NIE ROZŁĄCZY SIĘ sam
 
 {contact_block}
 
-⚠️ TRYB TESTOWY — POZOSTAŁE OGRANICZENIA:
-Rezerwacje wizyt i zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika)
-NIE są jeszcze obsługiwane w tej wersji testowej (kolejne fazy migracji). Jeśli klient chce się
-UMÓWIĆ na wizytę — powiedz że rezerwacje telefoniczne są jeszcze w budowie i zaproponuj zostawienie
-wiadomości przez contact_owner zamiast tego. NIE obiecuj że coś zarezerwujesz."""
+{booking_block}"""
 
     return role_content + addendum
