@@ -294,16 +294,25 @@ testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wia
 jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego."""
 
     if has_booking:
-        booking_block = """⚠️ REZERWACJE — TO JUŻ DZIAŁA, MASZ book_appointment:
-Jeśli klient chce umówić/zarezerwować wizytę, pyta o wolne terminy, albo chce zmienić lub
-odwołać rezerwację — wywołaj book_appointment, przekazując DOKŁADNIE to co klient powiedział
-w danym polu (nie zgaduj brakujących pól na zapas, jedno pytanie na turę jak zawsze).
-⛔ KRYTYCZNE: wynik niesie pole "say_exactly" — Twoja odpowiedź MUSI być tą treścią SŁOWO W
-SŁOWO, bez zmiany, dodania czy skrócenia choćby jednego słowa. Dotyczy to każdej daty, godziny,
-ceny i potwierdzenia — nie improwizuj przy nich pod żadnym pozorem, nawet jeśli inne fragmenty
-promptu każą Ci mówić "naturalnie własnymi słowami" — TA zasada ma pierwszeństwo dla wyników
-book_appointment. Wywołuj przy KAŻDEJ odpowiedzi klienta dotyczącej rezerwacji, aż wynik
-będzie miał "done": true."""
+        booking_block = """⚠️ REZERWACJE — TO JUŻ DZIAŁA, MASZ book_appointment i manage_booking:
+Jeśli klient chce umówić NOWĄ wizytę albo pyta o wolne terminy — wywołaj book_appointment,
+przekazując DOKŁADNIE to co klient powiedział w danym polu (nie zgaduj brakujących pól na zapas,
+jedno pytanie na turę jak zawsze).
+Jeśli klient chce ODWOŁAĆ lub PRZEŁOŻYĆ wizytę którą umówił WCZEŚNIEJ (nie w tej rozmowie) —
+wywołaj manage_booking zamiast tego. Rozpoznajemy tę wizytę automatycznie po numerze telefonu
+dzwoniącego — NIE pytaj o kod rezerwacji ani żadne ID.
+⛔ KRYTYCZNE: wynik OBU narzędzi niesie pole "say_exactly" — Twoja odpowiedź MUSI być tą treścią
+SŁOWO W SŁOWO, bez zmiany, dodania czy skrócenia choćby jednego słowa. Dotyczy to każdej daty,
+godziny, ceny i potwierdzenia — nie improwizuj przy nich pod żadnym pozorem, nawet jeśli inne
+fragmenty promptu każą Ci mówić "naturalnie własnymi słowami" — TA zasada ma pierwszeństwo dla
+wyników book_appointment/manage_booking. Wywołuj przy KAŻDEJ odpowiedzi klienta dotyczącej sprawy,
+aż wynik będzie miał "done": true.
+💬 Sprawdzenie terminu w kalendarzu chwilę trwa (żywy kalendarz, nie pamięć) — jeśli to Twoje
+PIERWSZE wywołanie book_appointment/manage_booking w tej sprawie (klient dopiero poprosił o termin
+albo zmienił usługę/pracownika/dzień), możesz NAJPIERW powiedzieć jedno krótkie słowo w rodzaju
+"Chwileczkę" albo "Momencik, sprawdzam" i DOPIERO POTEM wywołać narzędzie — nie rób tego przy
+KAŻDYM kolejnym wywołaniu w tej samej sprawie (np. gdy tylko potwierdzasz albo pytasz o imię),
+bo to zacznie brzmieć sztucznie."""
     else:
         booking_block = """⚠️ TRYB TESTOWY — REZERWACJE:
 Rezerwacje wizyt przez telefon NIE są jeszcze obsługiwane w tej wersji testowej. Jeśli klient

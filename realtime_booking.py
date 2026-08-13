@@ -78,14 +78,14 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from flows_helpers import (
     format_hour_polish, format_date_polish,
     get_available_slots, get_available_slots_from_api,
-    staff_can_do_service, send_booking_sms, increment_sms_count,
+    staff_can_do_service, send_booking_sms, send_booking_sms_vonage, increment_sms_count,
     get_opening_hours, get_staff_working_hours,
     POLISH_DAYS, build_business_context,
     validate_max_days_ahead, validate_min_advance_hours,
     _assistant_gender, PANEL_API_URL, ADMIN_PANEL_API_URL, PANEL_SLUG,
 )
 from polish_mappings import odmien_imie, detect_gender, natural_list
-from helpers import save_client_visit
+from helpers import save_client_visit, get_client_profile
 
 DATEPARSER_SETTINGS = {
     'PREFER_DATES_FROM': 'future',
@@ -103,22 +103,33 @@ async def get_next_available_days(
 ) -> List[Dict]:
     """Znajduje najbliższe dni z wolnymi terminami.
 
+    Sprawdza dni w PACZKACH równolegle (asyncio.gather), nie jeden po drugim — każde zapytanie
+    do panelu (kalendarz Google) to ~0.7-1.3s HTTP round-trip, a typowy przypadek to "dziś już nic
+    nie ma, jutro jest" — sekwencyjnie to 2 round-tripy z rzędu (widoczne na żywym telefonie jako
+    🔴 2-5s w logach user->bot latency). Paczka po `_BATCH` dni naraz sprowadza to do ~1 round-tripu.
+    Kolejność wyniku zostaje chronologiczna mimo równoległości — gather() zwraca w kolejności
+    argumentów, nie ukończenia, więc "najbliższy termin" nadal znaczy najbliższy kalendarzowo.
+
     Returns: [{"date": datetime, "slots": ["10:00", ...], "slots_count": N}, ...]
     """
+    _BATCH = 4
     results = []
     today = datetime.now()
 
-    for day_offset in range(max_days):
-        check_date = today + timedelta(days=day_offset)
+    async def _check(check_date: datetime) -> Tuple[datetime, List[str]]:
         try:
-            slots = await get_available_slots_from_api(tenant, staff, service, check_date)
+            return check_date, await get_available_slots_from_api(tenant, staff, service, check_date)
+        except Exception as e:
+            logger.warning(f"⚠️ [BOOKING] Error checking date {check_date}: {e}")
+            return check_date, []
+
+    for batch_start in range(0, max_days, _BATCH):
+        batch_dates = [today + timedelta(days=d) for d in range(batch_start, min(batch_start + _BATCH, max_days))]
+        for check_date, slots in await asyncio.gather(*[_check(d) for d in batch_dates]):
             if slots:
                 results.append({"date": check_date, "slots": slots, "slots_count": len(slots)})
                 if len(results) >= limit:
-                    break
-        except Exception as e:
-            logger.warning(f"⚠️ [BOOKING] Error checking date {check_date}: {e}")
-            continue
+                    return results
 
     return results
 
@@ -442,7 +453,7 @@ ZASADY:
 # ============================================================================
 
 async def _handle_book_appointment(
-    args: Dict, tenant: Dict, caller_phone: str, call_state: Dict, context_box: Dict
+    args: Dict, tenant: Dict, caller_phone: str, call_state: Dict, context_box: Dict, channel: str = "twilio"
 ) -> Dict:
     service_text = args.get("service")
     staff_text = args.get("staff")
@@ -463,6 +474,12 @@ async def _handle_book_appointment(
 
     # === OBSŁUGA ANULOWANIA ===
     if confirmation == "no":
+        if not state:
+            # Nic nie było w toku w TEJ rozmowie — "rezerwacja anulowana" byłoby fałszywym
+            # potwierdzeniem (patrz ZAKAZ FAŁSZYWYCH POTWIERDZEŃ w prompcie). Model mógł tu trafić
+            # bo klient chce odwołać wizytę umówioną WCZEŚNIEJ (inna rozmowa) — do tego jest
+            # osobne narzędzie manage_booking, nie to.
+            return _ask(call_state, {}, "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?")
         return _finish(call_state, "Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?", "cancelled")
 
     # === OBSŁUGA ZMIANY ===
@@ -856,10 +873,10 @@ async def _handle_book_appointment(
             return _ask(call_state, state, summary)
 
     # === 7. ZAPIS REZERWACJI ===
-    return await _save_booking(state, tenant, caller_phone, call_state)
+    return await _save_booking(state, tenant, caller_phone, call_state, channel)
 
 
-async def _save_booking(state: Dict, tenant: Dict, caller_phone: str, call_state: Dict) -> Dict:
+async def _save_booking(state: Dict, tenant: Dict, caller_phone: str, call_state: Dict, channel: str = "twilio") -> Dict:
     """Zapisuje rezerwację do API — z PODWÓJNĄ walidacją. 1:1 z _save_booking() w cascade,
     plus obsługa 409 slot_taken (patrz _save_booking_via_api)."""
     logger.info("💾 [BOOKING] SAVING BOOKING...")
@@ -908,7 +925,13 @@ async def _save_booking(state: Dict, tenant: Dict, caller_phone: str, call_state
         sms_info = ""
         if booking_code and caller_phone:
             try:
-                sms_sent = await send_booking_sms(
+                # tenant.get("phone_number") jest numerem VONAGE dla tras vonage, a Twilio wysyłkę
+                # SMS przyjmuje TYLKO z numerów które sam obsługuje ("From" musi być numerem Twilio,
+                # patrz błąd 21659 złapany na żywym telefonie: numer Vonage odrzucony) — stąd wybór
+                # providera po kanale połączenia, nie jeden zaszyty na sztywno jak w cascade
+                # (cascade zawsze ma Twilio, więc tam ten problem nie istnieje).
+                sms_func = send_booking_sms_vonage if channel == "vonage" else send_booking_sms
+                sms_sent = await sms_func(
                     tenant=tenant, customer_phone=caller_phone,
                     service_name=state["service"]["name"], staff_name=state["staff"]["name"],
                     date_str=state["date"].strftime("%d.%m"), time_str=state["time"],
@@ -952,7 +975,7 @@ async def _save_booking(state: Dict, tenant: Dict, caller_phone: str, call_state
 # FunctionSchema — publiczny interfejs (wzorzec build_X_tool z realtime_tools.py)
 # ============================================================================
 
-def build_book_appointment_tool(tenant: Dict, caller_phone: str, call_state: Dict, context_box: Dict) -> FunctionSchema:
+def build_book_appointment_tool(tenant: Dict, caller_phone: str, call_state: Dict, context_box: Dict, channel: str = "twilio") -> FunctionSchema:
     """FunctionSchema dla rezerwacji — WARUNKOWO dołączane z bot_gemini_test.py tylko gdy
     tenant.get("booking_enabled")==1 (nazwa pola do potwierdzenia przy podpinaniu).
 
@@ -968,13 +991,19 @@ def build_book_appointment_tool(tenant: Dict, caller_phone: str, call_state: Dic
     staff_names = [s["name"] for s in staff_list] + ["dowolny"]
 
     async def handle_book_appointment(params: FunctionCallParams):
-        result = await _handle_book_appointment(params.arguments, tenant, caller_phone, call_state, context_box)
+        result = await _handle_book_appointment(params.arguments, tenant, caller_phone, call_state, context_box, channel)
         await params.result_callback(result)
 
     return FunctionSchema(
         name="book_appointment",
-        description="""Umów wizytę. Użyj gdy klient: chce umówić/zarezerwować wizytę, pyta o wolne
-terminy/dostępność, chce zmienić lub odwołać istniejącą rezerwację. Wywołuj przy KAŻDEJ kolejnej
+        description="""Umów NOWĄ wizytę. Użyj gdy klient: chce umówić/zarezerwować wizytę, pyta o wolne
+terminy/dostępność, albo chce coś zmienić W TRAKCIE TEJ ROZMOWY zanim rezerwacja została zapisana
+(np. poprawia datę/godzinę/usługę przed potwierdzeniem).
+⛔ NIE używaj do odwołania/przełożenia wizyty którą klient umówił WCZEŚNIEJ (inna rozmowa/inny dzień)
+— do tego jest osobne narzędzie manage_booking. Ten tool zna tylko rezerwację w toku TEJ rozmowy;
+jeśli jeszcze nic nie zaczęto (confirmation="no" bez wcześniejszych danych), NIE potwierdzi żadnego
+anulowania, bo nie ma czego anulować.
+Wywołuj przy KAŻDEJ kolejnej
 odpowiedzi klienta dotyczącej tej rezerwacji (aż do "done": true) — przekazuj DOKŁADNIE co klient
 powiedział (nie interpretuj, nie zgaduj brakujących pól).
 
@@ -1033,4 +1062,276 @@ Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu, nie tylko jedno.
         },
         required=["confirmation"],
         handler=handle_book_appointment,
+    )
+
+
+# ============================================================================
+# ODWOŁYWANIE / PRZEKŁADANIE ISTNIEJĄCEJ WIZYTY — manage_booking
+#
+# W przeciwieństwie do book_appointment (rezerwacja W TOKU tej rozmowy, trzymana w
+# call_state["booking"]) ten tool operuje na wizytach zapisanych WCZEŚNIEJ, w innych
+# rozmowach — znalezionych po numerze dzwoniącego przez panel CRM (ten sam
+# get_client_profile() co karmi CRM hint w system prompcie, patrz realtime_prompt.py).
+# Klient NIE podaje kodu wizyty — identyfikacja jest wyłącznie po caller_phone, dokładnie
+# jak przy book_appointment (klient też nie zna żadnych wewnętrznych ID).
+#
+# Realny automatyczny cancel/reschedule (nie "zostawię wiadomość właścicielowi" jak w
+# cascade — patrz flows.py::handle_manage_booking) jest możliwy bo panel ma już gotowe
+# PATCH/DELETE /api/panel/{slug}/bookings/{id} (usuwa/odtwarza wydarzenie w Google
+# Calendar, wysyła maila do pracownika) — tylko nikt wcześniej nie podłączył tego pod
+# telefon. Fallback na "brak wizyty" gdy get_client_profile nie widzi nic z booking_id
+# (np. wizyta wpisana ręcznie do CRM bez odpowiadającego rekordu w `bookings`, albo panel
+# offline) — wtedy model ma w opisie narzędzia instrukcję żeby zaproponować contact_owner.
+# ============================================================================
+
+def _parse_iso_dt(iso: str) -> datetime:
+    return datetime.fromisoformat(iso)
+
+
+def _describe_booking(b: Dict) -> str:
+    dt = _parse_iso_dt(b["scheduled_at"])
+    staff_part = f" u {odmien_imie(b['staff'])}" if b.get("staff") else ""
+    return f"{b.get('service') or 'wizyta'}{staff_part}, {format_date_polish(dt)} o {format_hour_polish(dt.strftime('%H:%M'))}"
+
+
+def _match_booking_by_text(bookings: List[Dict], text: str) -> Optional[int]:
+    """Dopasowuje wskazaną przez klienta wizytę po dacie (gdy ma kilka nadchodzących)."""
+    if not text:
+        return None
+    parsed = dateparser.parse(preprocess_date_text(text), languages=['pl'], settings=DATEPARSER_SETTINGS)
+    if not parsed:
+        return None
+    for i, b in enumerate(bookings):
+        if _parse_iso_dt(b["scheduled_at"]).date() == parsed.date():
+            return i
+    return None
+
+
+async def _cancel_booking_via_api(tenant: Dict, booking_id: str) -> bool:
+    slug = tenant.get("slug") or PANEL_SLUG
+    if not slug or not booking_id:
+        return False
+    base_url = ADMIN_PANEL_API_URL if tenant.get("source") == "admin" else PANEL_API_URL
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.delete(f"{base_url}/api/panel/{slug}/bookings/{booking_id}")
+            return response.status_code in (200, 201)
+    except Exception as e:
+        logger.error(f"❌ [MANAGE_BOOKING] Cancel error: {e}")
+        return False
+
+
+async def _reschedule_booking_via_api(tenant: Dict, booking_id: str, date: datetime, time_str: str) -> bool:
+    slug = tenant.get("slug") or PANEL_SLUG
+    if not slug or not booking_id:
+        return False
+    base_url = ADMIN_PANEL_API_URL if tenant.get("source") == "admin" else PANEL_API_URL
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.patch(
+                f"{base_url}/api/panel/{slug}/bookings/{booking_id}",
+                json={"date": date.strftime("%Y-%m-%d"), "time": time_str},
+            )
+            return response.status_code in (200, 201)
+    except Exception as e:
+        logger.error(f"❌ [MANAGE_BOOKING] Reschedule error: {e}")
+        return False
+
+
+def _ask_mgmt(call_state: Dict, state: Dict, text: str) -> Dict:
+    call_state["manage_booking"] = state
+    return {"status": "ask", "say_exactly": text, "done": False}
+
+
+def _finish_mgmt(call_state: Dict, text: str, status: str) -> Dict:
+    call_state["manage_booking"] = {}
+    return {"status": status, "say_exactly": text, "done": True}
+
+
+async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, call_state: Dict) -> Dict:
+    action = args.get("action")
+    new_date_text = args.get("date_text")
+    new_time_text = args.get("time_text")
+    confirmation = args.get("confirmation", "none")
+    which_text = args.get("which_visit")
+
+    state = call_state.get("manage_booking", {})
+
+    logger.info(f"📥 [MANAGE_BOOKING] action={action}, date={new_date_text}, time={new_time_text}, "
+                f"confirm={confirmation}, which={which_text}")
+
+    # === 1. ZNAJDŹ WIZYTĘ(Y) PO NUMERZE — tylko raz na rozmowę o zarządzaniu ===
+    if "bookings" not in state:
+        profile = await get_client_profile(tenant.get("id", ""), caller_phone)
+        candidates = [
+            v for v in ((profile or {}).get("upcoming_visits") or [])
+            if v.get("booking_id")
+        ]
+        if not candidates:
+            return _finish_mgmt(
+                call_state,
+                "Nie widzę żadnej nadchodzącej wizyty przypisanej do tego numeru telefonu. "
+                "Mogę przekazać wiadomość właścicielowi — proszę powiedzieć, czego dokładnie potrzeba.",
+                "not_found",
+            )
+        state["bookings"] = candidates
+
+    bookings = state["bookings"]
+
+    # === OBSŁUGA REZYGNACJI Z CAŁEJ OPERACJI (nie mylić z "no" jako odpowiedzią na inne pytanie) ===
+    if confirmation == "no" and ("selected" in state or "pending_action" in state):
+        return _finish_mgmt(call_state, "Dobrze, zostawiam wizytę bez zmian. W czym jeszcze mogę pomóc?", "no_op")
+
+    # === 2. WYBIERZ KTÓRĄ WIZYTĘ (gdy klient ma kilka nadchodzących) ===
+    if "selected" not in state:
+        if len(bookings) == 1:
+            state["selected"] = 0
+        else:
+            match_idx = _match_booking_by_text(bookings, which_text) if which_text else None
+            if match_idx is not None:
+                state["selected"] = match_idx
+            else:
+                options = natural_list([_describe_booking(b) for b in bookings])
+                return _ask_mgmt(call_state, state, f"Widzę kilka nadchodzących wizyt: {options}. Której z nich dotyczy?")
+
+    booking = bookings[state["selected"]]
+    booking_desc = _describe_booking(booking)
+
+    # === 3. CO KLIENT CHCE ZROBIĆ ===
+    if action not in ("cancel", "reschedule"):
+        return _ask_mgmt(call_state, state, f"Chodzi o wizytę: {booking_desc}. Czy chce ją Pan/Pani odwołać, czy przełożyć na inny termin?")
+
+    # === 4A. ANULOWANIE ===
+    if action == "cancel":
+        if confirmation != "yes":
+            state["pending_action"] = "cancel"
+            return _ask_mgmt(call_state, state, f"Potwierdzam: odwołuję wizytę — {booking_desc}. Zgadza się?")
+        ok = await _cancel_booking_via_api(tenant, booking["booking_id"])
+        if ok:
+            return _finish_mgmt(call_state, "Gotowe, wizyta została odwołana.", "cancelled")
+        return _finish_mgmt(
+            call_state,
+            "Nie udało się automatycznie odwołać wizyty — przekażę to właścicielowi. Proszę powiedzieć, czego dotyczy sprawa.",
+            "error",
+        )
+
+    # === 4B. PRZEŁOŻENIE — reużywa walidacji daty/godziny z book_appointment ===
+    staff_obj = next((s for s in tenant.get("staff", []) if s["name"] == booking.get("staff")), None)
+    service_obj = next((s for s in tenant.get("services", []) if s["name"] == booking.get("service")), None)
+    if not staff_obj or not service_obj:
+        return _finish_mgmt(
+            call_state,
+            "Nie mogę automatycznie przełożyć tej wizyty — przekażę wiadomość właścicielowi. Proszę powiedzieć, na kiedy chce Pan/Pani przełożyć.",
+            "error",
+        )
+
+    if not new_date_text:
+        # Model nie odsyła pól ustalonych w poprzednich turach (patrz book_appointment) — jeśli data
+        # była już podana i sparsowana wcześniej w TEJ operacji przełożenia, użyj jej ponownie
+        # zamiast pytać od nowa (ten sam wzorzec co _pending_date w book_appointment).
+        if "_new_date" in state:
+            new_date_text = state["_new_date"]
+        else:
+            state["pending_action"] = "reschedule"
+            return _ask_mgmt(call_state, state, f"Na jaki dzień przełożyć wizytę — {booking_desc}?")
+
+    date_text_clean = preprocess_date_text(new_date_text)
+    _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
+    parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3))) if _iso else \
+        dateparser.parse(date_text_clean, languages=['pl'], settings=DATEPARSER_SETTINGS)
+
+    if not parsed_date:
+        return _ask_mgmt(call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.")
+    if parsed_date.date() < datetime.now().date():
+        return _ask_mgmt(call_state, state, f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.")
+
+    slots = await get_available_slots_from_api(tenant, staff_obj, service_obj, parsed_date)
+    if not slots:
+        return _ask_mgmt(call_state, state, f"{format_date_polish(parsed_date).capitalize()} nie ma wolnych terminów. Na jaki inny dzień?")
+
+    state["_new_date"] = parsed_date.strftime("%Y-%m-%d")
+    state["_new_slots"] = slots
+
+    if not new_time_text:
+        # Tak samo jak przy dacie — jeśli godzina była już podana wcześniej w tej operacji
+        # (np. klient teraz tylko potwierdza "tak"), użyj jej ponownie zamiast pytać od nowa.
+        if "_new_time" in state:
+            new_time_text = state["_new_time"]
+        else:
+            return _ask_mgmt(call_state, state, f"{format_date_polish(parsed_date).capitalize()} wolne są: {_slots_summary(slots)}. Którą godzinę?")
+
+    parsed_time = _parse_time(new_time_text)
+    slots_normalized = [_normalize_time(s) for s in slots]
+    if not parsed_time or _normalize_time(parsed_time) not in slots_normalized:
+        return _ask_mgmt(call_state, state, f"Ta godzina jest zajęta. Wolne są: {_slots_summary(slots)}. Którą wybrać?")
+
+    if confirmation != "yes":
+        state["_new_time"] = parsed_time
+        new_date_obj = datetime.strptime(state["_new_date"], "%Y-%m-%d")
+        return _ask_mgmt(
+            call_state, state,
+            f"Przekładam wizytę — {booking_desc} — na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}. Zgadza się?",
+        )
+
+    new_date_obj = datetime.strptime(state["_new_date"], "%Y-%m-%d")
+    ok = await _reschedule_booking_via_api(tenant, booking["booking_id"], new_date_obj, parsed_time)
+    if ok:
+        return _finish_mgmt(
+            call_state,
+            f"Gotowe. Wizyta przełożona na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}.",
+            "rescheduled",
+        )
+    return _finish_mgmt(
+        call_state,
+        "Nie udało się automatycznie przełożyć wizyty — przekażę to właścicielowi. Proszę powiedzieć, na kiedy chce Pan/Pani przełożyć.",
+        "error",
+    )
+
+
+def build_manage_booking_tool(tenant: Dict, caller_phone: str, call_state: Dict) -> FunctionSchema:
+    """FunctionSchema do odwoływania/przekładania wizyty umówionej WCZEŚNIEJ (inna rozmowa) —
+    warunkowo dołączane tak samo jak book_appointment (ten sam booking_enabled + staff gate,
+    patrz bot_gemini_test.py). Nie wymaga osobnego call_state klucza poza "manage_booking"
+    (analogicznie do "booking" dla book_appointment) — oba mogą współistnieć w jednej rozmowie."""
+
+    async def handle_manage_booking(params: FunctionCallParams):
+        result = await _handle_manage_booking(params.arguments, tenant, caller_phone, call_state)
+        await params.result_callback(result)
+
+    return FunctionSchema(
+        name="manage_booking",
+        description="""Klient chce ODWOŁAĆ lub PRZEŁOŻYĆ wizytę którą umówił WCZEŚNIEJ (nie w trakcie
+tej rozmowy — do nowej rezerwacji lub zmiany PRZED zapisaniem służy book_appointment). Użyj gdy klient
+mówi: "chcę odwołać wizytę", "muszę przełożyć termin", "nie mogę przyjść", "zmiana terminu wizyty".
+⛔ Wizytę znajdujemy PO NUMERZE TELEFONU dzwoniącego automatycznie — NIE pytaj klienta o kod
+rezerwacji ani żadne ID, po prostu wywołaj to narzędzie z tym co klient powiedział.
+⛔ KRYTYCZNE: wynik niesie pole "say_exactly" — Twoja odpowiedź MUSI być tą treścią słowo w słowo,
+bez zmian i dodatków — dotyczy to dat, godzin i potwierdzeń tak samo jak w book_appointment.
+Jeśli status="not_found" lub "error" — po powiedzeniu say_exactly, jeśli klient odpowie z treścią
+sprawy, wywołaj contact_owner żeby przekazać wiadomość właścicielowi.
+Wywołuj przy KAŻDEJ kolejnej odpowiedzi klienta dotyczącej tej sprawy, aż wynik będzie miał "done": true.""",
+        properties={
+            "action": {
+                "type": "string", "enum": ["cancel", "reschedule", "none"],
+                "description": "cancel=odwołanie wizyty, reschedule=przełożenie na inny termin, none=jeszcze nie wiadomo",
+            },
+            "date_text": {
+                "type": "string",
+                "description": "Nowa data (tylko dla reschedule) w formacie YYYY-MM-DD lub naturalny tekst klienta. Null jeśli nie dotyczy.",
+            },
+            "time_text": {
+                "type": "string",
+                "description": "Nowa godzina (tylko dla reschedule) w formacie HH:MM. Null jeśli nie dotyczy.",
+            },
+            "confirmation": {
+                "type": "string", "enum": ["yes", "no", "none"],
+                "description": "yes=klient potwierdza ostatnio zaproponowaną akcję, no=rezygnuje, none=jeszcze nic",
+            },
+            "which_visit": {
+                "type": "string",
+                "description": "Jeśli klient ma kilka nadchodzących wizyt i wskazał, o którą chodzi (np. wspomniał dzień) — przekaż to tutaj. Null w innym wypadku.",
+            },
+        },
+        required=["action", "confirmation"],
+        handler=handle_manage_booking,
     )

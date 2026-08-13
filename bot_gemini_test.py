@@ -145,7 +145,7 @@ from realtime_tools import (
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
-from realtime_booking import build_book_appointment_tool
+from realtime_booking import build_book_appointment_tool, build_manage_booking_tool
 
 logger.remove()
 logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
@@ -629,6 +629,7 @@ async def websocket_gemini_test(websocket: WebSocket):
     )
     if booking_available:
         tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box))
+        tools.append(build_manage_booking_tool(tenant, caller_phone, call_state))
     system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
@@ -948,7 +949,8 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         for s in tenant.get("staff", [])
     )
     if booking_available:
-        tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box))
+        tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box, channel="vonage"))
+        tools.append(build_manage_booking_tool(tenant, caller_phone, call_state))
     system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
@@ -1404,6 +1406,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     )
     if booking_available:
         tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box))
+        tools.append(build_manage_booking_tool(tenant, caller_phone, gemini_state))
 
     system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
@@ -1597,7 +1600,8 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         for s in tenant.get("staff", [])
     )
     if booking_available:
-        tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box))
+        tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box, channel="vonage"))
+        tools.append(build_manage_booking_tool(tenant, caller_phone, gemini_state))
     if transfer_available:
         # Tylko Vonage (patrz docstring build_transfer_tool w realtime_tools.py) — Twilio
         # ma osobny, już istniejący mechanizm (transfer_requests + /twilio/after-stream),

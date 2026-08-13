@@ -23,7 +23,26 @@
       "PowerShell(python -c \"import pipecat, os; print\\(os.path.dirname\\(pipecat.__file__\\)\\)\")",
       "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\zylso\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\Lib\\\\site-packages\\\\pipecat\\\\services' -Recurse -Filter '*realtime*' | Select-Object -ExpandProperty FullName\")",
       "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\zylso\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\Lib\\\\site-packages\\\\pipecat\\\\services\\\\openai\\\\realtime' -Recurse -File | Select-Object -ExpandProperty FullName\")",
-      "Bash(pip download *)"
+      "Bash(pip download *)",
+      "Bash(./node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(python3 -c ' *)",
+      "WebFetch(domain:developer.vonage.com)",
+      "Bash(python3 -c \"import pipecat, os; print\\(os.path.dirname\\(pipecat.__file__\\)\\)\")",
+      "Bash(python3 -c \"import pipecat; print\\(pipecat.__file__\\)\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/pipecat-ai/pipecat/main/src/pipecat/services/gemini_live/llm.py\" -o /tmp/gemini_live_llm.py)",
+      "Read(//tmp/**)",
+      "Bash(curl -sv \"https://raw.githubusercontent.com/pipecat-ai/pipecat/main/src/pipecat/services/gemini_live/llm.py\")",
+      "Bash(curl -s \"https://api.github.com/search/code?q=GeminiLiveLLMService+repo:pipecat-ai/pipecat\" -H \"Accept: application/vnd.github+json\")",
+      "Bash(gh api *)",
+      "Bash(curl -s \"https://api.github.com/repos/pipecat-ai/pipecat/git/trees/main?recursive=1\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/pipecat-ai/pipecat/1.4.0/src/pipecat/services/google/gemini_live/llm.py\" -o /tmp/gemini_live_llm.py)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/pipecat-ai/pipecat/v1.4.0/src/pipecat/services/google/gemini_live/llm.py\" -o /tmp/gemini_live_llm.py)",
+      "Bash(python3 -)",
+      "Bash(\"./venv/Scripts/python.exe\" -c \"import realtime_booking; import bot_gemini_test; print\\('import OK'\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(./venv/Scripts/python.exe -c ' *)"
     ]
   }
 }
