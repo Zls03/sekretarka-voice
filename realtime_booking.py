@@ -1203,7 +1203,14 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
         # nie zakładaj z góry akcji. Bez "Pan/Pani" ze slashem (TTS czyta to dosłownie jako
         # "pan ukośnik pani" — złapane na żywym telefonie), zdanie bezpłciowe jak wszędzie
         # indziej w prompcie (patrz FORMA ZWRACANIA SIĘ w realtime_prompt.py).
-        return _ask_mgmt(call_state, state, f"Tak, jest zaplanowana wizyta: {booking_desc}. Czy chodzi o zmianę tego terminu?")
+        # Imię z SAMEJ rezerwacji (customer_name), nie z ogólnego profilu klienta — może się
+        # różnić (ktoś dzwoni z domowego numeru i pyta o wizytę innego domownika). Tylko tutaj,
+        # NIE w liście do rozróżnienia kilku wizyt (_describe_booking) — tam ten sam dzwoniący
+        # więc powtarzanie identycznego imienia przy każdej pozycji byłoby zbędne.
+        name_part = ""
+        if booking.get("customer_name"):
+            name_part = f" — na {detect_gender(booking['customer_name'])} {odmien_imie(booking['customer_name'])}"
+        return _ask_mgmt(call_state, state, f"Tak, jest zaplanowana wizyta: {booking_desc}{name_part}. Czy chodzi o zmianę tego terminu?")
 
     # === 4A. ANULOWANIE ===
     if action == "cancel":
