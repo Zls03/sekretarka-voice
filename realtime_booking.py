@@ -489,6 +489,14 @@ async def _handle_book_appointment(
             "service": "usługę", "staff": "pracownika",
             "date": "datę", "time": "godzinę", "name": "imię",
         }
+        # Model czasem ustawia confirmation="change" BEZ change_field gdy klient po prostu SAM
+        # PODAJE inny termin niż zaproponowany (typowo odpowiadając na "zapisać, czy wolisz inny
+        # termin?" własną datą/godziną) — to NIE jest "popraw pole X", to zwykła kontynuacja z
+        # nową wartością. Bez tego cały stan (usługa, pracownik) był kasowany i rozmowa
+        # zapętlała się w "zaczynamy od nowa" w kółko — złapane na żywym telefonie. Wnioskujemy
+        # change_field z tego CO faktycznie przyszło w tym wywołaniu.
+        if not change_field and (date_text or time_text or service_text or staff_text):
+            change_field = "date" if date_text else ("time" if time_text else ("service" if service_text else "staff"))
         if change_field and change_field in field_names:
             if change_field == "service":
                 names = natural_list([s["name"] for s in services[:5]])
@@ -1021,7 +1029,14 @@ możesz też przekazać naturalny tekst klienta ("jutro", "w piątek") — jest 
 Godzina: format HH:MM, zamień słowa klienta na cyfry ("na trzynastą" → "13:00", "wpół do
 dwunastej" → "11:30", "czternasta zero" → "14:00"). Null jeśli klient nie podał.
 Potwierdzenie: klient wyraża zgodę ("tak", "oczywiście", "pasuje") → confirmation="yes";
-rezygnuje → confirmation="no"; chce coś zmienić → confirmation="change" + change_field.
+rezygnuje → confirmation="no".
+⚠️ confirmation="change" jest TYLKO do POPRAWIANIA pola które klient JUŻ WCZEŚNIEJ ustalił/
+potwierdził w tej rozmowie (np. po podsumowaniu mówi "nie, zmieńmy jednak godzinę"). Gdy
+klient po prostu ODPOWIADA na propozycję terminu własną datą/godziną (np. na pytanie
+"zapisać, czy wolisz inny termin?" mówi "wolę we wtorek o dziesiątej") — to jest ZWYKŁA
+kontynuacja: confirmation="none" (albo "yes" jeśli dosłownie akceptuje), wypełnij date_text/
+time_text nową wartością, NIE ustawiaj "change". Błędne użycie "change" tutaj resetuje całą
+rezerwację (usługę, pracownika) do zera, co jest widoczne dla klienta i frustrujące.
 Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu, nie tylko jedno.""",
         properties={
             "service": {

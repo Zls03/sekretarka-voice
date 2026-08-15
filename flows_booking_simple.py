@@ -28,6 +28,7 @@ from flows_helpers import (
     POLISH_DAYS, build_business_context,
     get_available_slots_from_api,
     validate_date_constraints,
+    validate_max_days_ahead, validate_min_advance_hours,
     _assistant_gender,
 )
 from helpers import save_client_visit
@@ -353,6 +354,15 @@ async def handle_book_appointment(args: Dict, flow_manager: FlowManager, tenant:
             "service": "usługę", "staff": "pracownika",
             "date": "datę", "time": "godzinę", "name": "imię"
         }
+        # Model czasem ustawia confirmation="change" BEZ change_field gdy klient po prostu SAM
+        # PODAJE inny termin niż zaproponowany (typowo odpowiadając na "zapisać, czy wolisz inny
+        # termin?" własną datą/godziną) — to NIE jest "popraw pole X", to zwykła kontynuacja z
+        # nową wartością. Bez tego cały stan (usługa, pracownik) był kasowany i rozmowa
+        # zapętlała się w "zaczynamy od nowa" w kółko — złapane na żywym telefonie (odpowiednik
+        # tego toola w realtime_booking.py). Wnioskujemy change_field z tego CO faktycznie
+        # przyszło w tym wywołaniu.
+        if not change_field and (date_text or time_text or service_text or staff_text):
+            change_field = "date" if date_text else ("time" if time_text else ("service" if service_text else "staff"))
         if change_field and change_field in field_names:
             if change_field == "service":
                 names = natural_list([s["name"] for s in services[:5]])
