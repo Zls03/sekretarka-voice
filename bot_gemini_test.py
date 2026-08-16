@@ -108,6 +108,7 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -116,6 +117,7 @@ from pipecat.frames.frames import (
     EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
     TTSStartedFrame, TTSStoppedFrame, TTSSpeakFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame, UserSpeakingFrame,
     LLMMessagesAppendFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
@@ -1146,8 +1148,25 @@ class GeminiUserMonitor(FrameProcessor):
 
     Odświeża też idle_since — GeminiLiveLLMService NIE emituje UserStarted/StoppedSpeakingFrame
     (patrz warning w logu na żywym telefonie), więc w odróżnieniu od OpenAI Realtime (gdzie
-    UserStoppedSpeakingFrame jest dokładniejszym sygnałem) TranscriptionFrame to jedyny
-    potwierdzony-działający sygnał aktywności usera jaki tu mamy."""
+    UserStoppedSpeakingFrame jest dokładniejszym sygnałem) TranscriptionFrame była DOTĄD
+    jedynym potwierdzonym sygnałem aktywności usera — ale przychodzi dopiero PO tym jak
+    Gemini skończy przetwarzać CAŁĄ wypowiedź klienta (nawet kilkanaście sekund mowy+namysłu).
+
+    ⚠️ BUG złapany na żywym telefonie (17.08.2026): jeśli klient mówi dłużej niż
+    IDLE_WARNING_SECONDS, watchdog nie ma o tym pojęcia (idle_since stoi w miejscu od
+    końca ostatniej wypowiedzi bota) i odpala nudge "czy nadal jesteśmy połączeni?"
+    W ŚRODKU wypowiedzi klienta — transkrypcja przychodzi dosłownie sekundę PO nudge'u.
+    Fix: VADUserStartedSpeakingFrame/UserSpeakingFrame z VADProcessor (patrz pipeline
+    niżej) — lokalna analiza audio, bez czekania na Gemini. UserSpeakingFrame leci co
+    ~0.2s PRZEZ CAŁY czas trwania mowy (nie tylko na starcie), więc idle_since jest
+    stale odświeżane podczas długiej wypowiedzi, nie tylko w jej pierwszej sekundzie —
+    to jest kluczowe, bo sam VADUserStartedSpeakingFrame (jednorazowy, na starcie)
+    NIE wystarczyłby dla dłuższych wypowiedzi. Zweryfikowane w źródle pipecat: te typy
+    ramek NIE dziedziczą po UserStartedSpeakingFrame, więc GeminiLiveLLMService (który ma
+    własny handler na UserStartedSpeakingFrame, wysyłający activity_start do Gemini gdy
+    self._vad_disabled=True) w ogóle ich nie złapie — a nawet gdyby złapał, ten kod jest
+    i tak wyłączony w naszej konfiguracji (używamy domyślnego, serwerowego VAD Gemini,
+    nie GeminiVADParams(disabled=True)). Zero wpływu na barge-in/turn-taking Gemini."""
 
     def __init__(self, state: dict):
         super().__init__()
@@ -1155,7 +1174,9 @@ class GeminiUserMonitor(FrameProcessor):
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame):
+        if isinstance(frame, (VADUserStartedSpeakingFrame, UserSpeakingFrame)):
+            self._state["idle_since"] = time.time()
+        elif isinstance(frame, TranscriptionFrame):
             self._state["last_user_frame"] = asyncio.get_event_loop().time()
             self._state["waiting_for_bot_audio"] = True
             self._state["idle_since"] = time.time()
@@ -1573,9 +1594,11 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
-            ),
+            # ⚠️ `vad_analyzer=` TU jest martwym parametrem (17.08.2026, zweryfikowane w
+            # źródle pipecat) — TransportParams/FastAPIWebsocketParams w ogóle nie ma
+            # takiego pola, Pydantic po cichu je ignoruje (extra="ignore" domyślnie).
+            # Realny lokalny VAD jest teraz osobnym procesorem w pipeline (vad_processor
+            # niżej) — patrz komentarz przy jego tworzeniu.
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_sid,
                 params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
@@ -1615,6 +1638,18 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         system_prompt, tools=tools, voice=gemini_voice
     )
     context_box["context"] = llm_context
+    # Lokalny VAD jako wczesny sygnał "klient mówi" dla GeminiUserMonitor (patrz jego
+    # docstring — bug ze złapanym w środku wypowiedzi klienta nudge'em, 17.08.2026).
+    # Siedzi zaraz po transport.input(), PRZED user_aggregator/gemini_user_monitor,
+    # żeby analizować surowe audio jak najwcześniej. Ten sam SileroVADAnalyzer/VADParams
+    # co poprzednio (bezużytecznie) siedział w FastAPIWebsocketParams — teraz faktycznie
+    # coś robi, bo VADProcessor to prawdziwy, wspierany mechanizm w tej wersji pipecat
+    # (nie parametr transportu).
+    vad_processor = VADProcessor(
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+        )
+    )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
     # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
@@ -1660,6 +1695,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
 
     pipeline = Pipeline([
         transport.input(),
+        vad_processor,
         user_aggregator,
         gemini_user_monitor,
         ParallelPipeline([llm], [fallback_tts]),
@@ -1811,9 +1847,8 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
-            ),
+            # ⚠️ `vad_analyzer=` TU jest martwym parametrem — patrz komentarz przy
+            # tej samej sytuacji w websocket_gemini_live_test (trasa Twilio) wyżej.
             serializer=VonageFrameSerializer(
                 params=VonageFrameSerializer.InputParams(vonage_sample_rate=16000),
             ),
@@ -1859,6 +1894,18 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         system_prompt, tools=tools, voice=gemini_voice
     )
     context_box["context"] = llm_context
+    # Lokalny VAD jako wczesny sygnał "klient mówi" dla GeminiUserMonitor (patrz jego
+    # docstring — bug ze złapanym w środku wypowiedzi klienta nudge'em, 17.08.2026).
+    # Siedzi zaraz po transport.input(), PRZED user_aggregator/gemini_user_monitor,
+    # żeby analizować surowe audio jak najwcześniej. Ten sam SileroVADAnalyzer/VADParams
+    # co poprzednio (bezużytecznie) siedział w FastAPIWebsocketParams — teraz faktycznie
+    # coś robi, bo VADProcessor to prawdziwy, wspierany mechanizm w tej wersji pipecat
+    # (nie parametr transportu).
+    vad_processor = VADProcessor(
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+        )
+    )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
     # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
@@ -1904,6 +1951,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
 
     pipeline = Pipeline([
         transport.input(),
+        vad_processor,
         user_aggregator,
         gemini_user_monitor,
         ParallelPipeline([llm], [fallback_tts]),
