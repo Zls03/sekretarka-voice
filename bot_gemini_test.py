@@ -1222,15 +1222,25 @@ class GeminiBotMonitor(FrameProcessor):
                     logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
 
         if isinstance(frame, TTSStoppedFrame):
-            # Ten sam fix co w BotAudioMonitor (sekcja OpenAI Realtime, patrz komentarz tam) —
-            # zegar ciszy musi wystartować na nowo PO zakończeniu KAŻDEJ wypowiedzi bota,
-            # niezależnie od tego czy to była wymuszona dogrywka (suppress_idle_reset=True) czy
-            # zwykła odpowiedź. Wcześniej zamrażał się na starej wartości sprzed nudge'a, przez
-            # co realna odpowiedź bota na aktywne pytanie klienta liczyła się jako cisza i
-            # potrafiła doprowadzić do błędnego rozłączenia (złapane na żywym telefonie 16.08.2026).
+            # ⚠️ DRUGI, NOWY BUG złapany na żywym telefonie (16.08.2026, ta sama rozmowa co
+            # sample_rate fix wyżej): jeśli TTSStoppedFrame z wymuszonej dogrywki
+            # (suppress_idle_reset=True — idle-nudge "czy nadal jesteśmy połączeni?", ostrzeżenie
+            # o limicie czasu) TEŻ resetuje idle_since, to watchdog NIGDY nie osiąga progu
+            # rozłączenia — sam nudge, wywołany WŁAŚNIE DLATEGO że klient milczy, zerował własny
+            # zegar ciszy i powodował nieskończoną pętlę dopytywania zamiast rozłączenia po
+            # ustalonym czasie (potwierdzone: klient zgłosił dokładnie ten objaw). TTSStartedFrame/
+            # TTSAudioRawFrame wyżej już poprawnie honorują suppress_idle_reset (nie ruszają
+            # idle_since podczas dogrywki) — ten branch był jedyną niespójnością.
+            #
+            # Fix: dla wymuszonych dogrywek NIE resetuj idle_since (silence rośnie dalej, nie
+            # przerywana przez własne nagabywanie) — tylko zdejmij flagę, i to od razu tutaj
+            # (precyzyjniej niż timeout 8s w speak_directly), żeby kolejna PRAWDZIWA odpowiedź
+            # Gemini w tym samym oknie znów poprawnie resetowała zegar. Realne odpowiedzi bota
+            # (suppress_idle_reset=False) resetują jak dotychczas.
             if self._state.get("suppress_idle_reset"):
                 self._state["suppress_idle_reset"] = False
-            self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
+            else:
+                self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
 
         await self.push_frame(frame, direction)
 
