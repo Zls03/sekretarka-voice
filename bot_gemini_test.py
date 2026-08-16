@@ -113,12 +113,11 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import (
     EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
-    TTSStartedFrame, TTSStoppedFrame, TTSSpeakFrame,
+    TTSStartedFrame, TTSStoppedFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
     LLMMessagesAppendFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
-from services.tts_factory import create_tts_service
 
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.services.openai.realtime.events import (
@@ -333,7 +332,7 @@ IDLE_WARNING_SECONDS = 6    # tyle ciszy -> "Halo, czy mnie słyszysz?" (skróco
 IDLE_HANGUP_SECONDS = 14    # tyle ciszy (8s po dopytaniu) -> kończymy połączenie
 MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
 SILENT_HANG_TIMEOUT = 5     # Gemini Live: tyle sekund BEZ ŻADNEJ reakcji modelu po tym jak
-                            # klient realnie coś powiedział (patrz GeminiUserMonitor) ->
+                            # wysłaliśmy mu coś (realną turę klienta lub gemini_say_now) ->
                             # uznajemy sesję za cicho zawieszoną (WebSocket otwarty, brak
                             # błędu, ale server_content przestaje przychodzić — znany problem
                             # community, złapany na żywym telefonie 16.08.2026) i wymuszamy
@@ -1094,21 +1093,21 @@ def make_gemini_state() -> dict:
     return {
         "last_user_frame": None,
         "waiting_for_bot_audio": False,
-        # Od tu w dół: pola pod idle-timeout (Faza 2), patrz speak_directly() /
+        # Od tu w dół: pola pod idle-timeout (Faza 2), patrz gemini_say_now() /
         # monitor_gemini_call_health() niżej — te same nazwy pól i ta sama logika
         # co make_call_state()/BotAudioMonitor w sekcji OpenAI Realtime wyżej,
-        # przeniesione 1:1 (nie duplikowane, świadomie skopiowane).
+        # przeniesione 1:1 (nie duplikowane, świadomie skopiowane, bo Gemini Live
+        # ma inny mechanizm "powiedz dokładnie X" niż OpenAI, patrz gemini_say_now).
         "idle_since": now,
         "suppress_idle_reset": False,
         "audio_playback_until": now,
         "ended": False,
         "greeted": False,  # patrz komentarz przy tym samym polu w make_call_state() wyżej
-        "awaiting_model_response_since": None,  # not None = czekamy na odpowiedź MODELU po
-                                                 # tym jak klient realnie coś powiedział (patrz
-                                                 # GeminiUserMonitor — TYLKO realne tury klienta,
-                                                 # nasze własne komunikaty idą przez speak_directly()
-                                                 # niezależnym silnikiem TTS, więc nie czekają na
-                                                 # Gemini w ogóle). Czyszczone w GeminiBotMonitor
+        "awaiting_model_response_since": None,  # not None = czekamy na JAKĄKOLWIEK reakcję
+                                                 # modelu (audio/tekst) po tym jak wysłaliśmy
+                                                 # mu coś — realną turę klienta albo wymuszony
+                                                 # gemini_say_now(). Ustawiane w GeminiUserMonitor
+                                                 # i gemini_say_now(), czyszczone w GeminiBotMonitor
                                                  # na pierwszym dowodzie życia modelu. Jeśli
                                                  # zostaje ustawione dłużej niż SILENT_HANG_TIMEOUT
                                                  # — sesja Gemini Live ucichła bez błędu/wyjątku
@@ -1234,27 +1233,35 @@ class GeminiBotMonitor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-async def speak_directly(task: PipelineTask, call_state: dict, text: str):
-    """Wypowiada DOKŁADNY tekst przez niezależny, awaryjny silnik TTS (patrz
-    fallback_tts w pipeline — utworzony przez create_tts_service(tenant), TEN SAM
-    provider/głos co ma skonfigurowany dany tenant w cascade), z całkowitym
-    pominięciem Gemini Live.
+async def gemini_say_now(task: PipelineTask, call_state: dict, text: str):
+    """Odpowiednik say_now() (sekcja OpenAI Realtime wyżej) dla Gemini Live. Gemini
+    Live nie ma ResponseCreateEvent(instructions=...) — jedynego, jednorazowego
+    "powiedz dokładnie X" z API OpenAI. Zamiast tego reużywamy ten sam mechanizm co
+    przy starcie rozmowy (LLMMessagesAppendFrame -> GeminiLiveLLMService._create_single_response,
+    patrz kick startowy w on_connect niżej), tylko z treścią wprost każącą powiedzieć
+    dokładny tekst — model trzyma się dokładnej treści gdy się go o to jawnie poprosi
+    (potwierdzone: powitanie z system promptu wychodzi słowo w słowo).
 
-    PO CO: wcześniejsza wersja (gemini_say_now, usunięta) prosiła o to SAM MODEL —
-    działało tylko gdy sesja Gemini Live żyje. Złapane na żywym telefonie 16.08.2026:
-    gdy sesja cicho się zawiesza, prośba wysłana DO modelu nie daje efektu, bo nie ma
-    jak wymusić dźwięku z martwego modelu — dokładnie ten sam problem co w cascade rozwiązuje TTSSpeakFrame
-    (idzie prosto do TTS, z pominięciem LLM). Tu robimy dokładnie to samo dla
-    Realtime/Gemini Live: fallback_tts jest osobnym węzłem w pipeline, reaguje na
-    TTSSpeakFrame niezależnie od stanu Gemini — więc TA wypowiedź zawsze dojdzie do
-    klienta, nawet gdy cała reszta sesji jest martwa.
-
-    Dlatego NIE ustawia "awaiting_model_response_since" — nie czekamy tu na Gemini,
-    to pole zostaje zarezerwowane wyłącznie dla wykrywania braku odpowiedzi na
-    REALNE pytania klienta (ustawiane w GeminiUserMonitor), bo to jedyny przypadek
-    gdzie faktycznie potrzebujemy Gemini żeby coś sensownie odpowiedzieć."""
+    ⚠️ Bez tool_choice="none" z wersji OpenAI — sprawdzone czytaniem źródła pipecat 1.4.0
+    (_create_single_response w gemini_live/llm.py wysyła przez session.send_client_content
+    BEZ żadnej opcji per-turn wyłączającej narzędzia): Gemini Live NIE MA odpowiednika. Trasy
+    Vonage/Twilio MAJĄ zarejestrowane tools (contact_owner/submit_lead/transfer_to_owner/
+    end_conversation) w momencie gdy to leci, więc ten wymuszony nudge TEORETYCZNIE może
+    przypadkiem wywołać funkcję (dokładnie ten bug złapany wcześniej na żywym telefonie dla
+    OpenAI Realtime: "Halo? Czy mnie słyszysz?" wywołało contact_owner). Zabezpieczenie jest
+    PO STRONIE narzędzi, nie tutaj: contact_owner/submit_lead odrzucają treść pasującą do
+    _SCRIPTED_BOT_PHRASES (realtime_tools.py), transfer_to_owner sprawdza wprost
+    call_state["suppress_idle_reset"] (ustawiane niżej) bo nie ma żadnej treści do
+    zweryfikowania. end_conversation nie jest zabezpieczone, ale przypadkowe zakończenie
+    rozmowy w trakcie i tak kończącej się ciszy/limitu czasu nie jest realnym ryzykiem."""
     call_state["suppress_idle_reset"] = True
-    await task.queue_frame(TTSSpeakFrame(text=text))
+    call_state["awaiting_model_response_since"] = time.time()
+    await task.queue_frames([
+        LLMMessagesAppendFrame(
+            messages=[{"role": "user", "content": f'Powiedz DOKŁADNIE: "{text}" i nic więcej.'}],
+            run_llm=True,
+        )
+    ])
 
     async def _clear_suppress_after_timeout():
         await asyncio.sleep(8.0)
@@ -1266,8 +1273,7 @@ async def speak_directly(task: PipelineTask, call_state: dict, text: str):
 async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=None):
     """Odpowiednik monitor_call_health() (sekcja OpenAI Realtime wyżej) dla Gemini
     Live — ta sama logika progów (IDLE_WARNING_SECONDS/IDLE_HANGUP_SECONDS/MAX_CALL_DURATION,
-    stałe zdefiniowane raz, wyżej w pliku), tylko wywołuje speak_directly() zamiast say_now()
-    (dawniej gemini_say_now() prosił o to sam model — porzucone, patrz speak_directly()).
+    stałe zdefiniowane raz, wyżej w pliku), tylko wywołuje gemini_say_now() zamiast say_now().
 
     `llm`: instancja GeminiLiveLLMService — potrzebna do wymuszenia reconnectu przy cichym
     zawieszeniu sesji (patrz SILENT_HANG_TIMEOUT). Opcjonalna (None) dla wstecznej zgodności,
@@ -1287,7 +1293,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         elapsed = time.time() - call_start
         silence = time.time() - call_state["idle_since"]
 
-        # Cichy hang sesji: klient realnie coś powiedział (GeminiUserMonitor)
+        # Cichy hang sesji: wysłaliśmy coś modelowi (realną turę klienta albo gemini_say_now)
         # i minęło SILENT_HANG_TIMEOUT bez ŻADNEJ reakcji — ani audio, ani tekstu. To NIE jest
         # zwykła cisza klienta (ta jest obsłużona niżej przez IDLE_*), tylko martwa sesja Gemini
         # Live bez wyjątku po stronie WebSocketu — pipecat sam tego nie wykryje (patrz stała).
@@ -1337,7 +1343,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
                 # Jeśli TA wiadomość też przepadnie (sesja jeszcze się nie rozgrzała) —
                 # kolejne wykrycie trafi w gałąź "już próbowaliśmy" powyżej i po prostu
                 # się rozłączy, zamiast reconnectować w kółko.
-                await speak_directly(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
+                await gemini_say_now(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
             continue
 
         # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
@@ -1353,7 +1359,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         if silence > IDLE_HANGUP_SECONDS:
             logger.warning(f"🔇 [GEMINI LIVE TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
             call_state["ended"] = True
-            await speak_directly(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
+            await gemini_say_now(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
             await asyncio.sleep(3.0)
             await task.queue_frame(EndFrame())
             break
@@ -1361,19 +1367,19 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
             logger.warning(f"🔇 [GEMINI LIVE TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
             idle_warning_given = True
-            await speak_directly(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
+            await gemini_say_now(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
         elif silence < IDLE_WARNING_SECONDS:
             idle_warning_given = False
 
         if elapsed > MAX_CALL_DURATION - 30 and not duration_warning_given:
             duration_warning_given = True
             logger.warning(f"⚠️ [GEMINI LIVE TEST] Zbliża się limit czasu: {elapsed:.0f}s/{MAX_CALL_DURATION}s")
-            await speak_directly(task, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
+            await gemini_say_now(task, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
 
         if elapsed > MAX_CALL_DURATION:
             logger.warning(f"🛑 [GEMINI LIVE TEST] Limit czasu osiągnięty ({elapsed:.0f}s) — kończę połączenie")
             call_state["ended"] = True
-            await speak_directly(task, call_state, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
+            await gemini_say_now(task, call_state, "Przepraszam, czas rozmowy się skończył. Dziękuję i do widzenia!")
             await asyncio.sleep(3.0)
             await task.queue_frame(EndFrame())
             break
@@ -1569,23 +1575,12 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
-    # tts_provider/głos co tenant ma skonfigurowany w cascade (create_tts_service),
-    # więc brzmieniowo spójny, nie obcy wtręt. Pozycja MIĘDZY llm a gemini_bot_monitor:
-    # audio wygenerowane PRZEZ Gemini przechodzi przez ten węzeł nietknięte (fallback_tts
-    # reaguje tylko na TTSSpeakFrame), a audio wygenerowane PRZEZ fallback_tts (na
-    # TTSSpeakFrame wstrzyknięty przez speak_directly) leci dalej do gemini_bot_monitor
-    # dokładnie tak samo jak własna mowa Gemini — dzięki temu cały istniejący
-    # mechanizm idle_since/greeted/suppress_idle_reset działa identycznie niezależnie
-    # od tego, KTÓRY silnik faktycznie wyprodukował dźwięk.
-    fallback_tts = create_tts_service(tenant)
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
         gemini_user_monitor,
         llm,
-        fallback_tts,
         gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
@@ -1784,23 +1779,12 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     context_box["context"] = llm_context
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
-    # tts_provider/głos co tenant ma skonfigurowany w cascade (create_tts_service),
-    # więc brzmieniowo spójny, nie obcy wtręt. Pozycja MIĘDZY llm a gemini_bot_monitor:
-    # audio wygenerowane PRZEZ Gemini przechodzi przez ten węzeł nietknięte (fallback_tts
-    # reaguje tylko na TTSSpeakFrame), a audio wygenerowane PRZEZ fallback_tts (na
-    # TTSSpeakFrame wstrzyknięty przez speak_directly) leci dalej do gemini_bot_monitor
-    # dokładnie tak samo jak własna mowa Gemini — dzięki temu cały istniejący
-    # mechanizm idle_since/greeted/suppress_idle_reset działa identycznie niezależnie
-    # od tego, KTÓRY silnik faktycznie wyprodukował dźwięk.
-    fallback_tts = create_tts_service(tenant)
 
     pipeline = Pipeline([
         transport.input(),
         user_aggregator,
         gemini_user_monitor,
         llm,
-        fallback_tts,
         gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
