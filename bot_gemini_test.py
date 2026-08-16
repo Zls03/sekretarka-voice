@@ -192,6 +192,14 @@ def make_call_state() -> dict:
                                         # audio (patrz BotAudioMonitor) — kumuluje realny czas
                                         # trwania paczek, nie tylko moment ich odebrania
         "ended": False,
+        "greeted": False,              # True dopiero gdy padnie PIERWSZA ramka audio bota
+                                        # (powitanie). Bug złapany na żywym telefonie 16.08.2026:
+                                        # gdy TTFB powitania był anomalnie wolny (11s zamiast
+                                        # ~0.7s), monitor_call_health i tak liczył ten czas jako
+                                        # "ciszę klienta" i wystrzelił wymuszone "czy nadal jesteśmy
+                                        # połączeni?" ZANIM klient usłyszał choćby powitanie —
+                                        # transkrypt pokazał to wprost: (początek rozmowy) →
+                                        # od razu wymuszona dogrywka, bez powitania między nimi.
     }
 
 
@@ -277,6 +285,7 @@ class BotAudioMonitor(FrameProcessor):
             if not self._state.get("suppress_idle_reset"):
                 self._state["idle_since"] = time.time()
         if isinstance(frame, TTSAudioRawFrame):
+            self._state["greeted"] = True
             if not self._state.get("suppress_idle_reset"):
                 # Ciągłe odświeżanie — patrz punkt (3) w docstringu klasy. To jest
                 # GŁÓWNA linia obrony, Start/Stop to tylko brzegowe uzupełnienie.
@@ -390,6 +399,22 @@ async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService,
 
         elapsed = time.time() - call_start
         silence = time.time() - call_state["idle_since"]
+
+        # Dopóki bot nie wypowiedział choćby powitania, nie liczymy "ciszy" wcale —
+        # patrz komentarz przy "greeted" w make_call_state(). Bez tego anomalnie wolny
+        # TTFB samego powitania (np. 11s zamiast ~0.7s, zdarzyło się na żywym telefonie)
+        # sam w sobie wyzwalał wymuszoną dogrywkę zanim klient cokolwiek usłyszał.
+        if not call_state.get("greeted"):
+            # Zabezpieczenie: jeśli powitanie NIGDY nie przyjdzie (model się zawiesił,
+            # padło połączenie z API) — nie trzymamy rozmowy otwartej bez końca. Próg
+            # wyraźnie wyższy niż normalny IDLE_HANGUP_SECONDS, bo to inny scenariusz
+            # (błąd startu, nie cisza klienta).
+            if elapsed > IDLE_HANGUP_SECONDS * 2:
+                logger.warning(f"🔇 [REALTIME TEST] Powitanie nie nadeszło po {elapsed:.0f}s — kończę połączenie")
+                call_state["ended"] = True
+                await task.queue_frame(EndFrame())
+                break
+            continue
 
         if silence > IDLE_HANGUP_SECONDS:
             logger.warning(f"🔇 [REALTIME TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
@@ -1066,6 +1091,7 @@ def make_gemini_state() -> dict:
         "suppress_idle_reset": False,
         "audio_playback_until": now,
         "ended": False,
+        "greeted": False,  # patrz komentarz przy tym samym polu w make_call_state() wyżej
     }
 
 
@@ -1124,6 +1150,7 @@ class GeminiBotMonitor(FrameProcessor):
                 self._state["idle_since"] = time.time()
 
         if isinstance(frame, TTSAudioRawFrame):
+            self._state["greeted"] = True
             if not self._heard_any_bot_audio:
                 self._heard_any_bot_audio = True
                 logger.info("⏱️ [GEMINI LIVE] Pierwsza ramka audio bota dotarła (np. powitanie)")
@@ -1209,6 +1236,16 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
 
         elapsed = time.time() - call_start
         silence = time.time() - call_state["idle_since"]
+
+        # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
+        # Realtime) — dopóki bot nie wypowiedział choćby powitania, nie liczymy ciszy.
+        if not call_state.get("greeted"):
+            if elapsed > IDLE_HANGUP_SECONDS * 2:
+                logger.warning(f"🔇 [GEMINI LIVE TEST] Powitanie nie nadeszło po {elapsed:.0f}s — kończę połączenie")
+                call_state["ended"] = True
+                await task.queue_frame(EndFrame())
+                break
+            continue
 
         if silence > IDLE_HANGUP_SECONDS:
             logger.warning(f"🔇 [GEMINI LIVE TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
