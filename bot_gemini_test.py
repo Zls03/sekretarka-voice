@@ -1113,6 +1113,20 @@ def make_gemini_state() -> dict:
                                                  # Pipecat 1.4.0 reconnectuje TYLKO na wyjątek w
                                                  # pętli odbiorczej (sprawdzone w źródle), więc ten
                                                  # przypadek nigdy by się sam nie naprawił.
+        "silent_hang_reconnect_used": False,    # Reconnect po cichym zawieszeniu próbujemy TYLKO
+                                                 # RAZ na całe połączenie, nie w kółko — złapane na
+                                                 # żywym telefonie 16.08.2026: druga próba, wysłana
+                                                 # zaraz po pierwszym reconnect, sama trafiła w tę
+                                                 # samą ścianę ciszy (bo _reconnect() zwraca się
+                                                 # zanim sesja jest faktycznie w pełni gotowa), co
+                                                 # dawało dwa reconnecty pod rząd zamiast czystego
+                                                 # rozłączenia. Jeśli sesja ucichnie DRUGI raz mimo
+                                                 # reconnectu — kończymy połączenie, tak jak przy
+                                                 # zwykłej długiej ciszy klienta, zamiast prób w
+                                                 # nieskończoność. Reset na False po pierwszej
+                                                 # udanej odpowiedzi modelu (GeminiBotMonitor) —
+                                                 # jeden przejściowy hiccup w długiej rozmowie nie
+                                                 # powinien "zużywać" jedynej próby na stałe.
     }
 
 
@@ -1173,6 +1187,10 @@ class GeminiBotMonitor(FrameProcessor):
             # w make_gemini_state(). Zdejmujemy tu, nie dopiero na audio, żeby watchdog nie
             # zdążył wystrzelić fałszywie w wąskim oknie między startem generowania a audio.
             self._state["awaiting_model_response_since"] = None
+            # Model realnie odpowiedział — jeśli mieliśmy za sobą reconnect po cichym zawieszeniu,
+            # to znaczy że sesja faktycznie wróciła do zdrowia. Odblokuj jedną próbę reconnectu
+            # na wypadek gdyby ucichła ZNOWU później w tej samej, długiej rozmowie.
+            self._state["silent_hang_reconnect_used"] = False
 
         if isinstance(frame, TTSStartedFrame):
             if not self._state.get("suppress_idle_reset"):
@@ -1278,12 +1296,31 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         awaiting_since = call_state.get("awaiting_model_response_since")
         if awaiting_since and (time.time() - awaiting_since) > SILENT_HANG_TIMEOUT:
             hang_s = time.time() - awaiting_since
-            logger.warning(
-                f"🧟 [GEMINI LIVE TEST] Model nie odpowiedział {hang_s:.0f}s po wysłaniu — "
-                "sesja wygląda na cicho zawieszoną, wymuszam reconnect"
-            )
             call_state["awaiting_model_response_since"] = None
             call_state["suppress_idle_reset"] = False
+
+            if call_state.get("silent_hang_reconnect_used"):
+                # Reconnect już raz próbowaliśmy w tej rozmowie i sesja mimo to ucichła
+                # DRUGI raz — złapane na żywym telefonie 16.08.2026: druga próba, wysłana
+                # zaraz po pierwszym reconnect, sama trafiła w tę samą ścianę ciszy (bo
+                # _reconnect() zwraca się zanim sesja jest faktycznie w pełni gotowa), co
+                # dawało dwa reconnecty pod rząd zamiast czystego rozłączenia. Traktujemy to
+                # teraz tak jak zwykłą długą ciszę klienta — kończymy połączenie, bez próby
+                # mówienia pożegnania (ten kanał już dwa razy zawiódł, nie ma sensu próbować
+                # trzeci raz).
+                logger.warning(
+                    f"🧟 [GEMINI LIVE TEST] Model nie odpowiedział {hang_s:.0f}s po wysłaniu, "
+                    "PO RAZ DRUGI mimo reconnectu — kończę połączenie zamiast próbować dalej"
+                )
+                call_state["ended"] = True
+                await task.queue_frame(EndFrame())
+                break
+
+            logger.warning(
+                f"🧟 [GEMINI LIVE TEST] Model nie odpowiedział {hang_s:.0f}s po wysłaniu — "
+                "sesja wygląda na cicho zawieszoną, wymuszam reconnect (jedyna próba na tę rozmowę)"
+            )
+            call_state["silent_hang_reconnect_used"] = True
             reconnect_ok = False
             if llm is not None:
                 try:
@@ -1298,10 +1335,10 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             if reconnect_ok:
                 # KRYTYCZNE dla UX: bez tego klient słyszy martwą ciszę aż do NASTĘPNEGO
                 # normalnego cyklu IDLE_WARNING_SECONDS (do 10s więcej) — sesja jest już
-                # naprawiona, ale nikt mu tego nie mówi. Odzywamy się od razu po reconnect,
-                # zamiast czekać (złapane na żywym telefonie 16.08.2026: reconnect wykonany
-                # o 16:32:14, ale klient usłyszał cokolwiek dopiero po tym jak SAM się odezwał
-                # o 16:32:31 — 17s martwej ciszy zaoszczędzonych tym wywołaniem).
+                # naprawiona, ale nikt mu tego nie mówi. Odzywamy się od razu po reconnect.
+                # Jeśli TA wiadomość też przepadnie (sesja jeszcze się nie rozgrzała) —
+                # kolejne wykrycie trafi w gałąź "już próbowaliśmy" powyżej i po prostu
+                # się rozłączy, zamiast reconnectować w kółko.
                 await gemini_say_now(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
             continue
 
