@@ -1386,8 +1386,23 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
 
             logger.warning(f"🔇 [GEMINI LIVE TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
             call_state["ended"] = True
+            goodbye_started_at = time.time()
             await speak_directly(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
             await asyncio.sleep(3.0)
+            # ⚠️ DRUGA linia obrony (16.08.2026, kolejny test tej samej sesji): 1.5s dogrywka
+            # wyżej nie zawsze wystarcza — transkrypcja Gemini potrafi spóźnić się bardziej
+            # (złapane na żywo: ~2.2s). Jeśli klient JEDNAK zdążył odpowiedzieć W TRAKCIE
+            # mówienia pożegnania lub tego sleep(3.0) — GeminiUserMonitor już zdążył odświeżyć
+            # idle_since na TranscriptionFrame (nie licząc scripted-utterance resetów, te są
+            # wyłączone przez suppress_idle_reset od commitu 6f5e4ca) — cofamy rozłączenie
+            # zamiast ucinać rozmowę EndFrame'em w środku realnej odpowiedzi Gemini na to,
+            # co klient właśnie powiedział. Pojedyncze nałożenie się audio (pożegnanie +
+            # zaczynająca się odpowiedź Gemini) może się zdarzyć — akceptowalne, priorytetem
+            # jest żeby rozmowa się NIE URYWAŁA gdy klient jednak coś powiedział.
+            if call_state["idle_since"] > goodbye_started_at:
+                logger.info("↩️ [GEMINI LIVE TEST] Klient jednak odpowiedział w trakcie pożegnania — anuluję rozłączenie")
+                call_state["ended"] = False
+                continue
             await task.queue_frame(EndFrame())
             break
 
