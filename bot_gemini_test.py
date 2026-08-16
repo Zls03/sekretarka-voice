@@ -327,6 +327,13 @@ class BotAudioMonitor(FrameProcessor):
 IDLE_WARNING_SECONDS = 10   # tyle ciszy -> "Halo, czy mnie słyszysz?"
 IDLE_HANGUP_SECONDS = 20    # tyle ciszy (10s po dopytaniu) -> kończymy połączenie
 MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
+SILENT_HANG_TIMEOUT = 8     # Gemini Live: tyle sekund BEZ ŻADNEJ reakcji modelu po tym jak
+                            # wysłaliśmy mu coś (realną turę klienta lub gemini_say_now) ->
+                            # uznajemy sesję za cicho zawieszoną (WebSocket otwarty, brak
+                            # błędu, ale server_content przestaje przychodzić — znany problem
+                            # community, złapany na żywym telefonie 16.08.2026) i wymuszamy
+                            # reconnect zamiast czekać, aż to sam pipecat wykryje (nie wykryje —
+                            # jego reconnect odpala się tylko na wyjątek w pętli odbiorczej).
 
 
 async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
@@ -1092,6 +1099,20 @@ def make_gemini_state() -> dict:
         "audio_playback_until": now,
         "ended": False,
         "greeted": False,  # patrz komentarz przy tym samym polu w make_call_state() wyżej
+        "awaiting_model_response_since": None,  # not None = czekamy na JAKĄKOLWIEK reakcję
+                                                 # modelu (audio/tekst) po tym jak wysłaliśmy
+                                                 # mu coś — realną turę klienta albo wymuszony
+                                                 # gemini_say_now(). Ustawiane w GeminiUserMonitor
+                                                 # i gemini_say_now(), czyszczone w GeminiBotMonitor
+                                                 # na pierwszym dowodzie życia modelu. Jeśli
+                                                 # zostaje ustawione dłużej niż SILENT_HANG_TIMEOUT
+                                                 # — sesja Gemini Live ucichła bez błędu/wyjątku
+                                                 # (potwierdzony na żywym telefonie 16.08.2026,
+                                                 # znany problem community — WebSocket zostaje
+                                                 # otwarty, ale server_content przestaje przychodzić).
+                                                 # Pipecat 1.4.0 reconnectuje TYLKO na wyjątek w
+                                                 # pętli odbiorczej (sprawdzone w źródle), więc ten
+                                                 # przypadek nigdy by się sam nie naprawił.
     }
 
 
@@ -1118,6 +1139,10 @@ class GeminiUserMonitor(FrameProcessor):
             self._state["last_user_frame"] = asyncio.get_event_loop().time()
             self._state["waiting_for_bot_audio"] = True
             self._state["idle_since"] = time.time()
+            # Klient realnie coś powiedział — model MUSI zareagować. Jeśli nie zareaguje
+            # w SILENT_HANG_TIMEOUT sekund, monitor_gemini_call_health uzna sesję za
+            # zawieszoną (patrz "awaiting_model_response_since" niżej).
+            self._state["awaiting_model_response_since"] = time.time()
             logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
         await self.push_frame(frame, direction)
 
@@ -1144,6 +1169,10 @@ class GeminiBotMonitor(FrameProcessor):
 
         if isinstance(frame, TTSTextFrame) and frame.text:
             logger.info(f"⏱️ [GEMINI LIVE/BOT] mówi: {frame.text!r}")
+            # Najwcześniejszy możliwy dowód że model żyje — patrz "awaiting_model_response_since"
+            # w make_gemini_state(). Zdejmujemy tu, nie dopiero na audio, żeby watchdog nie
+            # zdążył wystrzelić fałszywie w wąskim oknie między startem generowania a audio.
+            self._state["awaiting_model_response_since"] = None
 
         if isinstance(frame, TTSStartedFrame):
             if not self._state.get("suppress_idle_reset"):
@@ -1204,6 +1233,7 @@ async def gemini_say_now(task: PipelineTask, call_state: dict, text: str):
     zweryfikowania. end_conversation nie jest zabezpieczone, ale przypadkowe zakończenie
     rozmowy w trakcie i tak kończącej się ciszy/limitu czasu nie jest realnym ryzykiem."""
     call_state["suppress_idle_reset"] = True
+    call_state["awaiting_model_response_since"] = time.time()
     await task.queue_frames([
         LLMMessagesAppendFrame(
             messages=[{"role": "user", "content": f'Powiedz DOKŁADNIE: "{text}" i nic więcej.'}],
@@ -1218,10 +1248,14 @@ async def gemini_say_now(task: PipelineTask, call_state: dict, text: str):
     asyncio.create_task(_clear_suppress_after_timeout())
 
 
-async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
+async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=None):
     """Odpowiednik monitor_call_health() (sekcja OpenAI Realtime wyżej) dla Gemini
     Live — ta sama logika progów (IDLE_WARNING_SECONDS/IDLE_HANGUP_SECONDS/MAX_CALL_DURATION,
-    stałe zdefiniowane raz, wyżej w pliku), tylko wywołuje gemini_say_now() zamiast say_now()."""
+    stałe zdefiniowane raz, wyżej w pliku), tylko wywołuje gemini_say_now() zamiast say_now().
+
+    `llm`: instancja GeminiLiveLLMService — potrzebna do wymuszenia reconnectu przy cichym
+    zawieszeniu sesji (patrz SILENT_HANG_TIMEOUT). Opcjonalna (None) dla wstecznej zgodności,
+    ale bez niej watchdog tylko zaloguje problem, nie naprawi go."""
     call_start = time.time()
     call_state["idle_since"] = call_start
     idle_warning_given = False
@@ -1236,6 +1270,30 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict):
 
         elapsed = time.time() - call_start
         silence = time.time() - call_state["idle_since"]
+
+        # Cichy hang sesji: wysłaliśmy coś modelowi (realną turę klienta albo gemini_say_now)
+        # i minęło SILENT_HANG_TIMEOUT bez ŻADNEJ reakcji — ani audio, ani tekstu. To NIE jest
+        # zwykła cisza klienta (ta jest obsłużona niżej przez IDLE_*), tylko martwa sesja Gemini
+        # Live bez wyjątku po stronie WebSocketu — pipecat sam tego nie wykryje (patrz stała).
+        awaiting_since = call_state.get("awaiting_model_response_since")
+        if awaiting_since and (time.time() - awaiting_since) > SILENT_HANG_TIMEOUT:
+            hang_s = time.time() - awaiting_since
+            logger.warning(
+                f"🧟 [GEMINI LIVE TEST] Model nie odpowiedział {hang_s:.0f}s po wysłaniu — "
+                "sesja wygląda na cicho zawieszoną, wymuszam reconnect"
+            )
+            call_state["awaiting_model_response_since"] = None
+            call_state["suppress_idle_reset"] = False
+            if llm is not None:
+                try:
+                    await llm._reconnect()
+                    logger.info("🔄 [GEMINI LIVE TEST] Reconnect po cichym zawieszeniu wykonany")
+                except Exception as e:
+                    logger.error(f"🔄 [GEMINI LIVE TEST] Reconnect po cichym zawieszeniu NIEUDANY: {e}")
+            # Po reconnect dajemy modelowi świeży zegar ciszy zamiast od razu liczyć dalej —
+            # inaczej mogłoby natychmiast wystrzelić IDLE_HANGUP poniżej na starym idle_since.
+            call_state["idle_since"] = time.time()
+            continue
 
         # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
         # Realtime) — dopóki bot nie wypowiedział choćby powitania, nie liczymy ciszy.
@@ -1516,7 +1574,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
             )
         ])
         logger.info("🎤 [GEMINI LIVE TEST] Kick startowy wysłany bez wyjątku")
-        asyncio.create_task(monitor_gemini_call_health(task, gemini_state))
+        asyncio.create_task(monitor_gemini_call_health(task, gemini_state, llm))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
@@ -1707,7 +1765,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             )
         ])
         logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Kick startowy wysłany bez wyjątku")
-        asyncio.create_task(monitor_gemini_call_health(task, gemini_state))
+        asyncio.create_task(monitor_gemini_call_health(task, gemini_state, llm))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):
