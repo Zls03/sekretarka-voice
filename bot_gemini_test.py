@@ -1593,7 +1593,26 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     # gałęzi (nie w żadnej z nich), żeby widzieć ZMERGOWANE audio z obu źródeł —
     # inaczej nie zauważyłby mowy fallbacku i idle_since/greeted by się nie
     # odświeżały poprawnie po awaryjnej wypowiedzi.
-    fallback_tts = create_tts_service(tenant)
+    #
+    # ⚠️ DRUGI, ODDZIELNY BUG złapany na żywym telefonie (16.08.2026) PO
+    # wdrożeniu ParallelPipeline powyżej: FastAPIWebsocketOutputTransport ma
+    # JEDEN, per-połączeniowy, stanowy resampler (SOXRStreamAudioResampler),
+    # współdzielony przez WSZYSTKIE źródła audio przechodzące przez transport
+    # (Gemini I fallback_tts kończą w tym samym miejscu — to jest OK i
+    # oczekiwane, obie gałęzie muszą trafić do tej samej linii telefonicznej).
+    # Ten resampler PINUJE się na pierwszej parze (in_rate, out_rate) jaką
+    # zobaczy i RZUCA WYJĄTKIEM (nie: reinicjalizuje się) przy każdej kolejnej
+    # innej parze. Gemini Live emituje natywnie 24000 Hz — jeśli fallback_tts
+    # dostanie sample_rate providera dobrany pod kaskadę (Google/Cartesia/
+    # Azure = 8000 Hz), KAŻDA ramka audio fallbacku ginie jako ErrorFrame i
+    # nigdy nie dociera do rozmówcy. Gorzej: TTSStoppedFrame z fallbacku i tak
+    # przechodzi przez gemini_bot_monitor PRZED zepsutym resamplerem, więc
+    # zegar ciszy (idle_since) resetuje się mimo że nikt nic nie usłyszał —
+    # połączenie wisi w nieskończonej cichej pętli zamiast się rozłączyć.
+    # Fix: wymusić sample_rate=24000 (ten sam co Gemini) niezależnie od
+    # providera, żeby resampler przez cały czas trwania połączenia widział
+    # tylko JEDNĄ parę (in_rate, out_rate).
+    fallback_tts = create_tts_service(tenant, sample_rate=24000)
 
     pipeline = Pipeline([
         transport.input(),
@@ -1818,7 +1837,26 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     # gałęzi (nie w żadnej z nich), żeby widzieć ZMERGOWANE audio z obu źródeł —
     # inaczej nie zauważyłby mowy fallbacku i idle_since/greeted by się nie
     # odświeżały poprawnie po awaryjnej wypowiedzi.
-    fallback_tts = create_tts_service(tenant)
+    #
+    # ⚠️ DRUGI, ODDZIELNY BUG złapany na żywym telefonie (16.08.2026) PO
+    # wdrożeniu ParallelPipeline powyżej: FastAPIWebsocketOutputTransport ma
+    # JEDEN, per-połączeniowy, stanowy resampler (SOXRStreamAudioResampler),
+    # współdzielony przez WSZYSTKIE źródła audio przechodzące przez transport
+    # (Gemini I fallback_tts kończą w tym samym miejscu — to jest OK i
+    # oczekiwane, obie gałęzie muszą trafić do tej samej linii telefonicznej).
+    # Ten resampler PINUJE się na pierwszej parze (in_rate, out_rate) jaką
+    # zobaczy i RZUCA WYJĄTKIEM (nie: reinicjalizuje się) przy każdej kolejnej
+    # innej parze. Gemini Live emituje natywnie 24000 Hz — jeśli fallback_tts
+    # dostanie sample_rate providera dobrany pod kaskadę (Google/Cartesia/
+    # Azure = 8000 Hz), KAŻDA ramka audio fallbacku ginie jako ErrorFrame i
+    # nigdy nie dociera do rozmówcy. Gorzej: TTSStoppedFrame z fallbacku i tak
+    # przechodzi przez gemini_bot_monitor PRZED zepsutym resamplerem, więc
+    # zegar ciszy (idle_since) resetuje się mimo że nikt nic nie usłyszał —
+    # połączenie wisi w nieskończonej cichej pętli zamiast się rozłączyć.
+    # Fix: wymusić sample_rate=24000 (ten sam co Gemini) niezależnie od
+    # providera, żeby resampler przez cały czas trwania połączenia widział
+    # tylko JEDNĄ parę (in_rate, out_rate).
+    fallback_tts = create_tts_service(tenant, sample_rate=24000)
 
     pipeline = Pipeline([
         transport.input(),

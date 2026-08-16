@@ -106,12 +106,20 @@ async def _expand_abbreviations(text: str, aggregation_type=None) -> str:
 # Główna fabryka
 # ---------------------------------------------------------------------------
 
-def create_tts_service(tenant: dict):
+def create_tts_service(tenant: dict, sample_rate: int | None = None):
     """
     Zwraca zainicjalizowany serwis TTS dla danego tenanta.
 
     Wybór providera na podstawie pola tenant['tts_provider'].
     Domyślnie: ElevenLabs.
+
+    sample_rate: opcjonalne nadpisanie częstotliwości audio (domyślnie None —
+    każdy provider używa swojej dotychczasowej wartości dobranej pod telefonię
+    w kaskadzie). Używane m.in. przez trasy Gemini Live (bot_gemini_test.py),
+    gdzie fallback_tts musi generować audio na TEJ SAMEJ częstotliwości co
+    Gemini Live (24000 Hz) — output transport ma jeden, współdzielony, stanowy
+    resampler (SOXRStreamAudioResampler), który rzuca wyjątkiem przy drugiej,
+    innej parze (in_rate, out_rate) zamiast się przeinicjalizować.
     """
     tts_provider = tenant.get('tts_provider', 'elevenlabs')
 
@@ -123,7 +131,7 @@ def create_tts_service(tenant: dict):
             voice_id=cartesia_voice,
             model_id="sonic-3.5",
             language="pl",
-            sample_rate=8000,
+            sample_rate=sample_rate or 8000,
             speed=1.0,
             pitch=0.0,
         )
@@ -136,7 +144,7 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("OPENAI_API_KEY"),
             model="tts-1",
             voice="alloy",
-            sample_rate=24000,
+            sample_rate=sample_rate or 24000,
         )
         tts.add_text_transformer(_expand_abbreviations)
         return tts
@@ -148,7 +156,7 @@ def create_tts_service(tenant: dict):
             api_key=os.getenv("AZURE_SPEECH_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
             voice=azure_voice,
-            sample_rate=8000,
+            sample_rate=sample_rate or 8000,
             params=AzureTTSService.InputParams(
                 language=Language.PL,
                 rate="1.04",
@@ -172,7 +180,7 @@ def create_tts_service(tenant: dict):
             tts = GoogleTTSService(
                 credentials_path=creds_path,
                 voice_id=google_voice,
-                sample_rate=8000,
+                sample_rate=sample_rate or 8000,
                 params=GoogleTTSService.InputParams(
                     language=Language.PL_PL,
                     speaking_rate=speaking_rate,
@@ -191,6 +199,7 @@ def create_tts_service(tenant: dict):
         api_key=os.getenv("ELEVENLABS_API_KEY"),
         voice_id=voice_id,
         model="eleven_flash_v2_5",
+        sample_rate=sample_rate,
         output_format="pcm_16000",
         stability=0.55,
         similarity_boost=0.75,
