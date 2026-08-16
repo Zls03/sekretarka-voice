@@ -1365,6 +1365,25 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             continue
 
         if silence > IDLE_HANGUP_SECONDS:
+            # ⚠️ Race złapany na żywym telefonie (16.08.2026, ta sama sesja co sample_rate/
+            # idle-nudge fixy wyżej): transkrypcja Gemini ma opóźnienie ~1-2s względem
+            # faktycznej mowy klienta. Gdy klient zaczął odpowiadać dosłownie w tej samej
+            # sekundzie w której ten warunek się spełnił, jego transkrypcja (i reset idle_since
+            # w GeminiUserMonitor) potrafiła dotrzeć KILKASET MS PO TYM jak już zdążyliśmy
+            # zakolejkować pożegnanie — efekt zaobserwowany na żywo: prawdziwa odpowiedź
+            # Gemini ("Najtańszy pakiet, czyli Starter...") i nasze "Nie słyszę odpowiedzi..."
+            # zaczęły grać JEDNOCZEŚNIE (dwie niezależne gałęzie audio w ParallelPipeline), a
+            # samo rozłączenie i tak się odwlokło aż do końca tej realnej odpowiedzi
+            # (GeminiLiveLLMService sam odkłada EndFrame do końca tury bota — "Deferring
+            # handling EndFrame until bot turn is finished"). Fix: krótka dogrywka na
+            # dogonienie STT tuż PRZED nieodwracalnym rozłączeniem — jeśli w tym oknie
+            # idle_since jednak się odświeżył (klient naprawdę coś powiedział), odpuszczamy
+            # TĘ próbę zamiast mówić na raz z prawdziwą odpowiedzią.
+            await asyncio.sleep(1.5)
+            silence = time.time() - call_state["idle_since"]
+            if call_state.get("ended") or silence <= IDLE_HANGUP_SECONDS:
+                continue
+
             logger.warning(f"🔇 [GEMINI LIVE TEST] Brak odpowiedzi {silence:.0f}s — kończę połączenie")
             call_state["ended"] = True
             await speak_directly(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
