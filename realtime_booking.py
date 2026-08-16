@@ -64,6 +64,7 @@ CO ŚWIADOMIE NIE ZOSTAŁO PRZENIESIONE (i dlaczego):
 """
 
 import re
+import random
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple, List
@@ -383,6 +384,18 @@ async def _save_booking_via_api(
 # ============================================================================
 # WYNIK — kontrakt zwracany przez result_callback (patrz opis narzędzia niżej)
 # ============================================================================
+
+_CLOSING_QUESTIONS = ["W czymś jeszcze mogę pomóc?", "Czy mogę jeszcze w czymś pomóc?", "Czy jest coś jeszcze?"]
+
+
+def _closing_question() -> str:
+    """Losowe pytanie zamykające do doklejenia w say_exactly PO udanej akcji (odwołanie/
+    zapisanie/przełożenie). Musi być wpisane na sztywno w tekst, bo say_exactly wprost
+    ZAKAZUJE modelowi dodawania czegokolwiek przed/po (żeby nie psuł gramatyki sklejając
+    fragmenty — patrz "Coś jeszcze mogę pomóc?" złapane wcześniej na żywym telefonie) —
+    bez tego rozmowa po udanej rezerwacji urywała się bez zaproszenia do dalszych pytań."""
+    return random.choice(_CLOSING_QUESTIONS)
+
 
 def _ask(call_state: Dict, state: Dict, text: str) -> Dict:
     """Pośredni krok — model MUSI powiedzieć dokładnie `text`, rozmowa trwa dalej."""
@@ -970,7 +983,7 @@ async def _save_booking(state: Dict, tenant: Dict, caller_phone: str, call_state
         final_text = (
             f"Gotowe. {state['service']['name']} u {staff_name}, "
             f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
-            f"{notes_confirm}{sms_info}"
+            f"{notes_confirm}{sms_info} {_closing_question()}"
         )
         return _finish(call_state, final_text, "booked")
 
@@ -1234,7 +1247,7 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
             return _ask_mgmt(call_state, state, f"Potwierdzam odwołanie wizyty — {booking_desc}. Zgadza się?")
         ok = await _cancel_booking_via_api(tenant, booking["booking_id"])
         if ok:
-            return _finish_mgmt(call_state, "Gotowe, wizyta została odwołana.", "cancelled")
+            return _finish_mgmt(call_state, f"Gotowe, wizyta została odwołana. {_closing_question()}", "cancelled")
         return _finish_mgmt(
             call_state,
             "Nie udało się automatycznie odwołać wizyty — przekażę to właścicielowi. Proszę powiedzieć, czego dotyczy sprawa.",
@@ -1308,7 +1321,7 @@ async def _handle_manage_booking(args: Dict, tenant: Dict, caller_phone: str, ca
     if ok:
         return _finish_mgmt(
             call_state,
-            f"Gotowe. Wizyta przełożona na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}.",
+            f"Gotowe. Wizyta przełożona na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}. {_closing_question()}",
             "rescheduled",
         )
     return _finish_mgmt(
