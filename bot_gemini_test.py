@@ -296,10 +296,18 @@ class BotAudioMonitor(FrameProcessor):
                     icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
                     logger.info(f"⏱️ [TOTAL user->bot audio] {ms:.0f}ms {icon}")
         if isinstance(frame, TTSStoppedFrame):
+            # BUG (znaleziony na żywym telefonie 16.08.2026): poprzednio, gdy suppress_idle_reset
+            # było True, ta gałąź TYLKO czyściła flagę i pomijała odświeżenie idle_since —
+            # zegar zamrażał się na starej wartości sprzed nudge'a. Jeśli klient odpowiedział
+            # realnie w trakcie/tuż po nudge'u, czas mówienia bota (odpowiedź na PRAWDZIWE
+            # pytanie) i tak liczył się jako "cisza", aż przekraczał IDLE_HANGUP_SECONDS i
+            # rozłączał połączenie mimo aktywnej rozmowy. Flaga ma chronić TYLKO ramki Start/Audio
+            # PODCZAS wypowiedzi nudge'a (żeby jego własne audio nie resetowało zegara w kółko) —
+            # PO jej zakończeniu zegar zawsze powinien wystartować na nowo, tak jak po każdej
+            # innej wypowiedzi bota.
             if self._state.get("suppress_idle_reset"):
                 self._state["suppress_idle_reset"] = False
-            else:
-                self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
+            self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
         await self.push_frame(frame, direction)
 
 
@@ -1134,10 +1142,15 @@ class GeminiBotMonitor(FrameProcessor):
                     logger.info(f"⏱️ [GEMINI LIVE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
 
         if isinstance(frame, TTSStoppedFrame):
+            # Ten sam fix co w BotAudioMonitor (sekcja OpenAI Realtime, patrz komentarz tam) —
+            # zegar ciszy musi wystartować na nowo PO zakończeniu KAŻDEJ wypowiedzi bota,
+            # niezależnie od tego czy to była wymuszona dogrywka (suppress_idle_reset=True) czy
+            # zwykła odpowiedź. Wcześniej zamrażał się na starej wartości sprzed nudge'a, przez
+            # co realna odpowiedź bota na aktywne pytanie klienta liczyła się jako cisza i
+            # potrafiła doprowadzić do błędnego rozłączenia (złapane na żywym telefonie 16.08.2026).
             if self._state.get("suppress_idle_reset"):
                 self._state["suppress_idle_reset"] = False
-            else:
-                self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
+            self._state["idle_since"] = time.time() + self.BOT_STOP_GRACE_SECONDS
 
         await self.push_frame(frame, direction)
 
