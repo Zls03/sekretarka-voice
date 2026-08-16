@@ -324,10 +324,14 @@ class BotAudioMonitor(FrameProcessor):
 # IDLE TIMEOUT + MAX CALL DURATION (Faza 2)
 # ==========================================
 
-IDLE_WARNING_SECONDS = 10   # tyle ciszy -> "Halo, czy mnie słyszysz?"
-IDLE_HANGUP_SECONDS = 20    # tyle ciszy (10s po dopytaniu) -> kończymy połączenie
+IDLE_WARNING_SECONDS = 6    # tyle ciszy -> "Halo, czy mnie słyszysz?" (skrócone z 10s
+                            # 16.08.2026 — żywy telefon pokazał, że przy cichym zawieszeniu
+                            # sesji Gemini Live klient siedział w martwej ciszy do ~29s zanim
+                            # padło JAKIEKOLWIEK pytanie/rozłączenie; krótsze progi nie naprawiają
+                            # przyczyny, ale skracają czas oczekiwania klienta w ciszy)
+IDLE_HANGUP_SECONDS = 14    # tyle ciszy (8s po dopytaniu) -> kończymy połączenie
 MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
-SILENT_HANG_TIMEOUT = 8     # Gemini Live: tyle sekund BEZ ŻADNEJ reakcji modelu po tym jak
+SILENT_HANG_TIMEOUT = 5     # Gemini Live: tyle sekund BEZ ŻADNEJ reakcji modelu po tym jak
                             # wysłaliśmy mu coś (realną turę klienta lub gemini_say_now) ->
                             # uznajemy sesję za cicho zawieszoną (WebSocket otwarty, brak
                             # błędu, ale server_content przestaje przychodzić — znany problem
