@@ -1647,7 +1647,10 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     # (nie parametr transportu).
     vad_processor = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
-            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+            # stop_secs=0.2 — zgodnie z zalecanym domyślnym progiem pipecat, na którym
+            # oparte są ich wbudowane szacunki latencji P99 dla Smart Turn (WARNING w
+            # logu przy 0.3: "Built-in p99 latency values assume stop_secs=0.2").
+            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4)
         )
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
@@ -1903,7 +1906,10 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     # (nie parametr transportu).
     vad_processor = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
-            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
+            # stop_secs=0.2 — zgodnie z zalecanym domyślnym progiem pipecat, na którym
+            # oparte są ich wbudowane szacunki latencji P99 dla Smart Turn (WARNING w
+            # logu przy 0.3: "Built-in p99 latency values assume stop_secs=0.2").
+            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4)
         )
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
