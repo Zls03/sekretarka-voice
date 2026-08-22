@@ -60,7 +60,7 @@ URUCHOMIENIE OBOK ISTNIEJĄCEGO bot.py:
   realtime_tools.py to zwykłe pliki .py w tym samym repo, żadna konfiguracja Railway
   nie musi się zmienić.
 
-CO ZOSTAJE NA PÓŹNIEJ (świadomie NIE tutaj):
+CO ZOSTAJE NA PÓŹNIEJ (świadomie NIE tutaj) — STAN NA COMMIT TWORZĄCY TEN PLIK, NIEAKTUALNE:
   - Reszta Fazy 4: zbieranie zgłoszeń (lead collection, wieloturowe), SMS, raport email po rozmowie
   - Żywe przekierowanie rozmowy (transfer) — ani dla Twilio (brak /twilio/after-stream w tym
     pliku) ani dla Vonage (brak mechanizmu w ogóle, wymaga Vonage REST API) — patrz docstring
@@ -68,8 +68,13 @@ CO ZOSTAJE NA PÓŹNIEJ (świadomie NIE tutaj):
   - Faza 3: sprawdz_dostepnosc()/zarezerwuj() jako function-calling tools (ostatnia, bo
     najbardziej ryzykowna — patrz wyżej)
   - Faza 5: credits + call_logs
-  Prompt (realtime_prompt.py) wprost mówi klientowi, że rezerwacje/zgłoszenia/żywe
-  przekierowanie są jeszcze w budowie — żeby model niczego nie obiecywał, czego nie umie wykonać.
+  ⚠️ POPRAWKA 2026-08-22: powyższe jest już NIEAKTUALNE — booking (book_appointment/
+  manage_booking) i transfer (transfer_to_owner, Vonage) SĄ zaimplementowane, patrz has_booking/
+  has_transfer w realtime_prompt.py i build_gemini_live_llm/build_contact_owner_tool niżej. Są
+  to jednak per-TENANT przełączniki (booking_enabled, transfer_enabled), nie "jeszcze w budowie"
+  globalnie — gdy wyłączone na danym tenancie, prompt ma mówić że opcja "nie jest włączona na tej
+  linii", NIE że jest w budowie/to wersja testowa (był tu bug: sztywny tekst "jeszcze w budowie"
+  mylił brak-per-tenanta z brakiem-funkcji-w-ogóle, złapane na demo-tenancie BizVoice).
 
 FAZA 2 — jak działa wykrywanie ciszy/limitu (patrz monitor_call_health poniżej):
   10s ciszy -> "Przepraszam, czy nadal jesteśmy połączeni?" | 20s ciszy -> pożegnanie + rozłączenie
@@ -117,7 +122,7 @@ from pipecat.frames.frames import (
     EndFrame, TranscriptionFrame, TTSAudioRawFrame, TTSTextFrame,
     TTSStartedFrame, TTSStoppedFrame, TTSSpeakFrame,
     UserStartedSpeakingFrame, UserStoppedSpeakingFrame,
-    VADUserStartedSpeakingFrame, UserSpeakingFrame,
+    VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame, UserSpeakingFrame,
     LLMMessagesAppendFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
@@ -1082,11 +1087,16 @@ teście.
 
 GeminiLiveLLMService NIE emituje UserStartedSpeakingFrame/UserStoppedSpeakingFrame
 (server VAD Gemini nie ma odpowiednika tych zdarzeń w pipecat, patrz docstring
-serwisu) — stąd pomiar latencji niżej kotwiczy się o TranscriptionFrame (moment
-dotarcia transkrypcji), tak jak w pierwotnym izolowanym teście tego pliku (patrz
-git log, commit z pierwszej wersji). Mniej precyzyjne niż w sekcji OpenAI Realtime
-(TranscriptionFrame to boczny kanał, przychodzi z pewnym opóźnieniem względem
-faktycznego końca mowy), ale wystarczające do zgrubnego porównania.
+serwisu) — pierwotnie pomiar latencji niżej kotwiczył się więc o TranscriptionFrame
+(moment dotarcia transkrypcji). POPRAWKA 2026-08-18: to dawało fałszywie niskie
+liczby — na żywej rozmowie TranscriptionFrame przychodził ~2.8s PO realnym końcu
+mowy (Gemini batchuje/opóźnia transkrypcję), więc "TOTAL user->bot audio" pokazywał
+np. 286ms, podczas gdy realny TTFB logowany przez GeminiLiveLLMService (i policzony
+ręcznie z timestampów VAD-stop -> pierwsze audio bota) wynosił 3.1s. Anchor
+przełączony na VADUserStoppedSpeakingFrame z lokalnego VADProcessor (patrz pipeline
+niżej — analizuje audio lokalnie, niezależnie od Gemini) — to ten sam sygnał co
+GeminiUserMonitor już i tak używa do odświeżania idle_since na starcie mowy
+(VADUserStartedSpeakingFrame), więc żadnej nowej zależności nie dokłada.
 """
 
 GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
@@ -1147,10 +1157,13 @@ class GeminiUserMonitor(FrameProcessor):
     mimo że audio realnie leciało — stąd zero zmierzonych opóźnień w poprzednim teście.
 
     Odświeża też idle_since — GeminiLiveLLMService NIE emituje UserStarted/StoppedSpeakingFrame
-    (patrz warning w logu na żywym telefonie), więc w odróżnieniu od OpenAI Realtime (gdzie
-    UserStoppedSpeakingFrame jest dokładniejszym sygnałem) TranscriptionFrame była DOTĄD
-    jedynym potwierdzonym sygnałem aktywności usera — ale przychodzi dopiero PO tym jak
-    Gemini skończy przetwarzać CAŁĄ wypowiedź klienta (nawet kilkanaście sekund mowy+namysłu).
+    (patrz warning w logu na żywym telefonie). Pomiar TTFB/"user->bot audio" (last_user_frame)
+    kotwiczy się o VADUserStoppedSpeakingFrame z lokalnego VADProcessor, NIE o TranscriptionFrame
+    — poprawka 2026-08-18, patrz komentarz przy anchorze niżej i docstring modułu wyżej.
+    TranscriptionFrame zostaje TYLKO do odświeżania idle_since/awaiting_model_response_since
+    (potwierdzenie że Gemini realnie usłyszał treść) i do logowania transkryptu — jako sygnał
+    czasowy jest bezużyteczny, bo przychodzi dopiero PO tym jak Gemini skończy przetwarzać
+    CAŁĄ wypowiedź klienta (nawet kilkanaście sekund mowy+namysłu).
 
     ⚠️ BUG złapany na żywym telefonie (17.08.2026): jeśli klient mówi dłużej niż
     IDLE_WARNING_SECONDS, watchdog nie ma o tym pojęcia (idle_since stoi w miejscu od
@@ -1176,13 +1189,24 @@ class GeminiUserMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, (VADUserStartedSpeakingFrame, UserSpeakingFrame)):
             self._state["idle_since"] = time.time()
-        elif isinstance(frame, TranscriptionFrame):
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            # Anchor pomiaru TTFB/"user->bot audio" — patrz poprawka 2026-08-18: lokalny VAD
+            # (moment realnego końca mowy) zamiast TranscriptionFrame (przychodzi z boku,
+            # zmierzone opóźnienie względem VAD-stop na żywej rozmowie: ~2.8s), więc dawało
+            # to fałszywie niskie liczby ("286ms 🟢" przy realnym TTFB logowanym przez
+            # GeminiLiveLLMService na 3.1s). Nadpisywane przy KAŻDYM VAD-stopie w obrębie tej
+            # samej tury (klient robi pauzę, potem mówi dalej -> kilka VAD-stopów zanim padnie
+            # EndOfTurnState.COMPLETE) — więc w momencie gdy bot faktycznie odpowie, tu i tak
+            # zostaje timestamp OSTATNIEGO, właściwego końca wypowiedzi.
             self._state["last_user_frame"] = asyncio.get_event_loop().time()
             self._state["waiting_for_bot_audio"] = True
+        elif isinstance(frame, TranscriptionFrame):
             self._state["idle_since"] = time.time()
             # Klient realnie coś powiedział — model MUSI zareagować. Jeśli nie zareaguje
             # w SILENT_HANG_TIMEOUT sekund, monitor_gemini_call_health uzna sesję za
-            # zawieszoną (patrz "awaiting_model_response_since" niżej).
+            # zawieszoną (patrz "awaiting_model_response_since" niżej). Zostaje na
+            # TranscriptionFrame (nie VAD-stop) świadomie — to jedyny sygnał potwierdzający,
+            # że Gemini realnie usłyszał treść, a nie sam szum/krótki VAD blip.
             self._state["awaiting_model_response_since"] = time.time()
             logger.info(f"⏱️ [GEMINI LIVE/USER] transkrypcja: {frame.text!r}")
         await self.push_frame(frame, direction)

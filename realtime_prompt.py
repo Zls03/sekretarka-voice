@@ -282,6 +282,12 @@ lub jest sfrustrowany i potrzebuje pomocy człowieka — patrz szczegółowy opi
 - Wiadomość/oddzwonienie → contact_owner (dopytaj o imię i treść, potem wywołaj)
 - Niejasne które → dopytaj wprost, bez formy "ty" """
     else:
+        # POPRAWKA 2026-08-22: było "NIE jest jeszcze dostępne w tej wersji testowej" / "jeszcze
+        # w budowie" — mylące, bo transfer_to_owner realnie ISTNIEJE jako funkcja (patrz gałąź
+        # has_transfer=True wyżej), tylko konkretnie na TYM tenancie transfer_enabled=0. Złapane
+        # na żywym telefonie na demo-tenancie BizVoice, który ma booking/transfer/leady świadomie
+        # wyłączone (informacyjny tryb sprzedażowy) — model mówił klientowi że funkcja "jest w
+        # budowie", co brzmi jak niedokończony produkt, zamiast "nie włączona na tej linii".
         contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM — TO JUŻ DZIAŁA:
 Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
 lub jest sfrustrowany i potrzebuje pomocy człowieka:
@@ -289,9 +295,10 @@ lub jest sfrustrowany i potrzebuje pomocy człowieka:
    (czego dotyczy sprawa). Jedno pytanie na turę, jak zawsze.
 2. Gdy masz oba → wywołaj funkcję contact_owner(customer_name, message). NIE pytaj o nic więcej.
 3. Po wywołaniu powiedz krótko że wiadomość została przekazana właścicielowi i grzecznie zakończ rozmowę.
-⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) NIE jest jeszcze dostępne w tej wersji
-testowej — jeśli klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że to
-jeszcze w budowie i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego."""
+⛔ Bezpośrednie POŁĄCZENIE na żywo (przekierowanie rozmowy) nie jest włączone na tej linii — jeśli
+klient WYRAŹNIE żąda połączenia na żywo (nie samej wiadomości), powiedz że bezpośrednie połączenie
+nie jest teraz dostępne, i zaproponuj zostawienie wiadomości przez contact_owner zamiast tego.
+NIE mów że to "jeszcze w budowie" ani że to wersja testowa — po prostu nie jest tu włączone."""
 
     if has_booking:
         booking_block = """⚠️ REZERWACJE — TO JUŻ DZIAŁA, MASZ book_appointment i manage_booking:
@@ -314,18 +321,26 @@ albo zmienił usługę/pracownika/dzień), możesz NAJPIERW powiedzieć jedno kr
 KAŻDYM kolejnym wywołaniu w tej samej sprawie (np. gdy tylko potwierdzasz albo pytasz o imię),
 bo to zacznie brzmieć sztucznie."""
     else:
-        booking_block = """⚠️ TRYB TESTOWY — REZERWACJE:
-Rezerwacje wizyt przez telefon NIE są jeszcze obsługiwane w tej wersji testowej. Jeśli klient
-chce się UMÓWIĆ na wizytę — powiedz że rezerwacje telefoniczne są jeszcze w budowie i
-zaproponuj zostawienie wiadomości przez contact_owner zamiast tego. NIE obiecuj że coś
-zarezerwujesz."""
+        # POPRAWKA 2026-08-22: tak samo jak przy contact_block wyżej — book_appointment jest
+        # gotową, działającą funkcją (patrz gałąź has_booking=True), tylko na TYM tenancie
+        # booking_available wyszło False (booking_enabled=0 albo brak pracownika z kalendarzem+
+        # usługami). "Jeszcze w budowie"/"wersja testowa" sugerowało klientowi niedokończony
+        # produkt zamiast świadomie wyłączonej opcji na tej konkretnej linii.
+        booking_block = """⚠️ REZERWACJE — NIEDOSTĘPNE NA TEJ LINII:
+Rezerwacje wizyt przez telefon nie są tu włączone. Jeśli klient chce się UMÓWIĆ na wizytę —
+powiedz wprost, że rezerwacja telefoniczna nie jest teraz dostępna, i zaproponuj zostawienie
+wiadomości przez contact_owner zamiast tego (przekażesz prośbę właścicielowi, który się
+skontaktuje). NIE mów że to "jeszcze w budowie" ani że to wersja testowa — po prostu nie jest
+tu włączone. NIE obiecuj że coś zarezerwujesz."""
 
     if tenant.get("lead_mode", 0) != 1:
         booking_block += """
 
-⚠️ TRYB TESTOWY — ZGŁOSZENIA:
-Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) NIE jest
-jeszcze obsługiwane w tej wersji testowej."""
+⚠️ ZGŁOSZENIA — NIEDOSTĘPNE NA TEJ LINII:
+Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
+włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, potraktuj to jak
+zwykłą prośbę o kontakt z właścicielem (patrz KONTAKT Z WŁAŚCICIELEM wyżej) — dopytaj o imię i
+treść sprawy, i wywołaj contact_owner, NIE traktuj tego jako osobne, niedostępne zgłoszenie."""
 
     addendum = f"""{greeting_block}
 
