@@ -143,6 +143,7 @@ from pipecat.services.openai.realtime.events import (
 # pliku, route'y "-gemini-live"). Nie dotyka niczego z OpenAI Realtime powyżej.
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transcriptions.language import Language
+from google.genai.types import ThinkingConfig
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
@@ -1507,7 +1508,22 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     obserwowanego na żywych telefonach nawet po ustawieniu language=Language.PL. Naprawa
     wymagałaby nadpisania wewnętrznej metody connect() biblioteki (fragile, może się
     zepsuć przy update pipecat) — świadomie NIE zrobione teraz, bo problem wystąpił
-    rzadko (0 razy w 2 ostatnich pełnych testach) i ryzyko łatki nie jest tego warte."""
+    rzadko (0 razy w 2 ostatnich pełnych testach) i ryzyko łatki nie jest tego warte.
+
+    thinking=ThinkingConfig(thinking_level="minimal") — POPRAWKA 2026-08-22, analiza
+    latencji po testowych rozmowach (TTFB 1.3-2.8s na zwykłych turach, nie ~0.6s jak
+    sugerowała wcześniejsza notatka w CLAUDE.md o samym powitaniu). Sprawdzone w źródle
+    pipecat 1.4.0 (services/google/gemini_live/llm.py): gdy `thinking` zostaje None (co
+    było tu domyślnie), pipecat NIE wysyła w ogóle thinking_config do Gemini — a
+    ThinkingConfig w google-genai SDK dokumentuje że dla modeli Gemini 3 (nasz
+    gemini-3.1-flash-live-preview się łapie) brak jawnego ustawienia oznacza domyślne
+    "high". Dla porównania: zwykły (nie-Live) GoogleLLMService w tej samej wersji pipecat
+    MA wbudowaną automatyczną optymalizację ustawiającą minimalny thinking dla modeli
+    flash właśnie w scenariuszach realtime — wariant Live tej automatyki nie ma, trzeba
+    ręcznie. Kompromis: "minimal" to maksymalna szybkość kosztem najmniejszego namysłu
+    modelu — jeśli po wdrożeniu pogorszy się trzymanie sztywnych reguł promptu (np.
+    dosłowne say_exactly przy rezerwacji, wybór właściwej funkcji kontaktowej) rozważyć
+    podniesienie do "low"."""
     resolved_voice = voice or "Kore"
     logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, voice={resolved_voice}, tools={[t.name for t in (tools or [])]}")
     llm = GeminiLiveLLMService(
@@ -1516,6 +1532,7 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
             model=GEMINI_LIVE_MODEL,
             voice=resolved_voice,
             language=Language.PL,
+            thinking=ThinkingConfig(thinking_level="minimal"),
         ),
         system_instruction=system_prompt,
     )
