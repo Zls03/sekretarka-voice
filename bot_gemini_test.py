@@ -1405,8 +1405,12 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
                 # telefonie 23.08.2026: klient zadał pytanie, sesja ucichła, po reconnect
                 # usłyszał "czy nadal jesteśmy połączeni?" i pomyślał że to on nie został
                 # usłyszany od początku — musiał powtarzać pytanie od nowa. Nowy tekst prosi
-                # wprost o powtórzenie, zamiast sugerować że to klient zamilkł.
-                await speak_directly(task, call_state, "Przepraszam, mogłabym prosić o powtórzenie pytania?")
+                # wprost o powtórzenie, zamiast sugerować że to klient zamilkł. Celowo BEZ
+                # "mogłabym"/"mogłabym" itp. (forma żeńska) — to zdanie leci sztywno przez TTS
+                # dla KAŻDEGO tenanta, niezależnie od głosu (żeński/męski), więc musi być
+                # tak samo neutralne jak reszta scripted-utterance w tym pliku (bezokolicznik
+                # po "proszę", zero odmiany przez rodzaj).
+                await speak_directly(task, call_state, "Przepraszam, proszę powtórzyć pytanie.")
             continue
 
         # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
