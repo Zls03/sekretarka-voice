@@ -1397,7 +1397,16 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
                 # Jeśli TA wiadomość też przepadnie (sesja jeszcze się nie rozgrzała) —
                 # kolejne wykrycie trafi w gałąź "już próbowaliśmy" powyżej i po prostu
                 # się rozłączy, zamiast reconnectować w kółko.
-                await speak_directly(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
+                #
+                # POPRAWKA 2026-08-23: było to samo zdanie co przy zwykłej ciszy klienta
+                # ("czy nadal jesteśmy połączeni?") — mylące, bo tu to NIE klient milczał,
+                # tylko model nie odpowiedział na coś co klient realnie powiedział (stąd w
+                # ogóle SILENT_HANG_TIMEOUT/reconnect, patrz gałąź wyżej). Złapane na żywym
+                # telefonie 23.08.2026: klient zadał pytanie, sesja ucichła, po reconnect
+                # usłyszał "czy nadal jesteśmy połączeni?" i pomyślał że to on nie został
+                # usłyszany od początku — musiał powtarzać pytanie od nowa. Nowy tekst prosi
+                # wprost o powtórzenie, zamiast sugerować że to klient zamilkł.
+                await speak_directly(task, call_state, "Przepraszam, mogłabym prosić o powtórzenie pytania?")
             continue
 
         # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
