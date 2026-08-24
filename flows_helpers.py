@@ -479,11 +479,19 @@ async def get_available_slots_from_working_hours(
     
     # Filtruj przeszłe sloty jeśli dziś
     # Filtruj przeszłe sloty i respektuj min_booking_hours
+    #
+    # POPRAWKA 2026-08-24: ujednolicone z validate_min_advance_hours() (autorytatywna
+    # walidacja przy zapisie, patrz wyżej w tym pliku) — ta funkcja miała inną kolejność
+    # kluczy I inny default (1h zamiast 12h). Ta funkcja to lokalny fallback (używany tylko
+    # gdy Calendar API zwróci błąd, patrz get_available_slots()/validate_slot_available()),
+    # ale realnie osiągalny — bez ujednolicenia mógł zaproponować klientowi termin za ~1h,
+    # który finalna walidacja przy zapisie i tak odrzuciłaby (wymagając 12h), dając mylący,
+    # niespójny komunikat.
     now = datetime.now()
     try:
-        min_advance_hours = int(staff.get("min_booking_hours") or staff.get("min_advance_hours") or 1)
+        min_advance_hours = int(staff.get("min_advance_hours") or staff.get("min_booking_hours") or 12)
     except (ValueError, TypeError):
-        min_advance_hours = 1
+        min_advance_hours = 12
     
     min_time = now + timedelta(hours=min_advance_hours)
     min_minutes_from_midnight = min_time.hour * 60 + min_time.minute
@@ -901,14 +909,25 @@ def build_business_context(tenant: dict) -> str:
     
     # Ostrzeżenie na końcu
     has_additional_info = bool(tenant.get("additional_info", "").strip())
-    
-    if has_additional_info:
+
+    # POPRAWKA 2026-08-24: booking_enabled sprawdzany PIERWSZY, niezależnie od
+    # has_additional_info. Wcześniej gdy additional_info było niepuste (nawet jeśli to
+    # tylko ogólny opis produktu, np. marketingowe "umawia wizytę do Google Calendar"),
+    # model dostawał wprost instrukcję żeby to traktować jako źródło prawdy o sposobach
+    # rezerwacji — CAŁKOWICIE z pominięciem booking_enabled. Złapane na żywym telefonie
+    # 24.08.2026: tenant z wyłączonym bookingiem, ale niepustym additional_info opisującym
+    # produkt ogólnie — model mieszał opis produktu z realnym stanem tej linii.
+    if not booking_enabled:
+        reservation_rule = (
+            "- NIE mów że można rezerwować online/telefonicznie jeśli nie ma takiej informacji "
+            "w DODATKOWYCH INFO. DODATKOWE INFO może opisywać usługę ogólnie (np. jako część "
+            "opisu produktu) — to NIE oznacza że rezerwacja jest dostępna na TEJ linii. "
+            "Kieruj się instrukcją REZERWACJE dalej w prompcie."
+        )
+    elif has_additional_info:
         reservation_rule = "- Sposoby rezerwacji podawaj TYLKO na podstawie DODATKOWYCH INFO powyżej — nie wymyślaj innych"
     else:
-        if booking_enabled:
-            reservation_rule = "- Rezerwacje przyjmuj PRZEZ AGENTA — nie odsyłaj do innych miejsc jeśli nie ma takiej informacji"
-        else:
-            reservation_rule = "- NIE mów że można rezerwować online jeśli nie ma takiej informacji w DODATKOWYCH INFO"
+        reservation_rule = "- Rezerwacje przyjmuj PRZEZ AGENTA — nie odsyłaj do innych miejsc jeśli nie ma takiej informacji"
     
     parts.append(f"""⚠️ WAŻNE ZASADY:
 - Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji
