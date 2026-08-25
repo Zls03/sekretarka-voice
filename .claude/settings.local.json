@@ -42,7 +42,18 @@
       "Bash(\"./venv/Scripts/python.exe\" -c \"import realtime_booking; import bot_gemini_test; print\\('import OK'\\)\")",
       "Bash(npx tsc *)",
       "Bash(echo \"EXIT:$?\")",
-      "Bash(./venv/Scripts/python.exe -c ' *)"
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(curl *)",
+      "Bash(\"./venv/Scripts/python.exe\" -c \"import realtime_booking; print\\('OK'\\)\")",
+      "Bash(node -e \"require\\('@babel/core'\\)\")",
+      "Bash(npm run *)",
+      "Bash(railway --version)",
+      "Bash(railway whoami *)",
+      "Bash(npx --no-install eslint src/app/page.jsx)",
+      "Bash(awk -F: '$1>1440 && $1<1800')",
+      "Bash(git revert *)",
+      "Bash(./venv/Scripts/python.exe -m pip show pipecat-ai)",
+      "Bash(pwd -W)"
     ]
   }
 }
