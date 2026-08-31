@@ -49,10 +49,14 @@ WYMAGANE ZMIENNE ŚRODOWISKOWE (te same co w Railway):
                           zwróci klientowi uczciwy błąd zamiast fałszywie potwierdzić wysyłkę
 
 PODŁĄCZENIE (Twilio):
-  1) Wybierz numer testowy w konsoli Twilio (osobny lub tymczasowo przełącz istniejący)
-  2) W ustawieniach numeru: "A call comes in" -> Webhook
-     POST https://<twoj-railway-host>/twilio/incoming-gemini-test
-  3. To wystarczy — nic więcej w konfiguracji Twilio nie trzeba zmieniać.
+  1) W ustawieniach numeru: "A call comes in" -> Webhook (POST)
+     https://<twoj-railway-host>/twilio/incoming-gemini-live-test
+  2) "Primary handler fails" -> Webhook (POST), ten sam host, /twilio/fallback
+     — UWAGA: tej trasy NIE MA w tym pliku (nieużywana), zostaw puste jeśli Twilio wymaga.
+  3) "Call status changes" -> Webhook (POST)
+     https://<twoj-railway-host>/twilio/status
+     — bez tego apply_call_charge() nigdy się nie odpala dla połączeń Twilio (kredyty/minuty
+     się nie naliczają, patrz handler /twilio/status niżej, dodany 2026-08-31).
 
 PODŁĄCZENIE (Vonage): patrz sekcja "VONAGE" niżej — bez zmian względem wcześniejszej wersji.
 
@@ -244,6 +248,63 @@ async def vonage_events(request: Request):
         logger.error(f"[REALTIME TEST/VONAGE] vonage_events error: {e}")
 
     return Response(content="", status_code=200)
+
+
+@app.post("/twilio/status")
+async def twilio_status_gemini_live_test(request: Request):
+    """Status callback od Twilio — odpowiednik /vonage/events powyżej, dla numerów Twilio
+    podpiętych pod ten plik (/twilio/incoming-gemini-live-test, oraz /twilio/incoming-gemini-test
+    z bot_openai_realtime.py — router jest zamontowany w tym samym `app`, więc ta jedna trasa
+    obsługuje obie ścieżki, tak jak /vonage/events obsługuje obie ścieżki Vonage).
+
+    Bez tego apply_call_charge() nigdy się nie wywoływał dla połączeń Twilio na tym pliku —
+    kredyty/minuty się nie naliczały, call_logs miał zerowy/pusty duration_seconds."""
+    form = await request.form()
+
+    call_sid = form.get("CallSid", "")
+    call_status = form.get("CallStatus", "")
+    call_duration = form.get("CallDuration", "0")
+    to_number = form.get("To", "")
+    from_number = form.get("From", "") or "nieznany"
+
+    logger.info(f"[TWILIO STATUS] {call_sid} | {call_status} | {call_duration}s")
+
+    if call_status not in ("completed", "busy", "no-answer", "failed", "canceled") or not call_sid:
+        return Response(content="OK", media_type="text/plain")
+
+    try:
+        duration = int(call_duration) if call_duration else 0
+
+        tenant = await get_tenant_by_phone(to_number) if to_number else None
+        if not tenant:
+            logger.warning(f"⚠️ [TWILIO STATUS] Nie znaleziono tenanta dla {to_number}")
+            return Response(content="OK", media_type="text/plain")
+
+        tenant_id = tenant["id"]
+        is_saas_tenant = tenant.get("source") == "saas"
+        target_db = saas_db if is_saas_tenant else db
+
+        existing = await target_db.execute("SELECT id FROM call_logs WHERE call_sid = ?", [call_sid])
+        if existing:
+            await target_db.execute(
+                "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?",
+                [duration, call_status, call_sid],
+            )
+            logger.info(f"📊 [TWILIO STATUS] Updated call log: {call_sid} → {duration}s")
+        else:
+            await target_db.execute(
+                """INSERT INTO call_logs
+                   (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+                [f"call_{int(time.time())}", tenant_id, call_sid, from_number, duration, call_status],
+            )
+            logger.info(f"📊 [TWILIO STATUS] Created call log: {call_sid} → {duration}s")
+
+        await apply_call_charge(tenant_id, is_saas_tenant, call_sid, call_status, duration)
+    except Exception as e:
+        logger.error(f"[TWILIO STATUS] twilio_status error: {e}")
+
+    return Response(content="OK", media_type="text/plain")
 
 
 @app.api_route("/vonage/transfer-fallback", methods=["GET", "POST"])
