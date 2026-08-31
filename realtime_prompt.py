@@ -329,12 +329,23 @@ bo to zacznie brzmieć sztucznie."""
         # booking_available wyszło False (booking_enabled=0 albo brak pracownika z kalendarzem+
         # usługami). "Jeszcze w budowie"/"wersja testowa" sugerowało klientowi niedokończony
         # produkt zamiast świadomie wyłączonej opcji na tej konkretnej linii.
+        # POPRAWKA 2026-08-31: NIE proponuj z automatu contact_owner przy próbie rezerwacji —
+        # złapane na żywym telefonie: tenant z opisanym w FAQ alternatywnym sposobem rejestracji
+        # (np. "rejestracja wyłącznie online na X.eu") mimo to dostawał od modelu "przekażę
+        # wiadomość właścicielowi, na jakie imię mam zapisać?" — czyli zaczynał zbierać dane
+        # osobowe i obiecywał oddzwonienie, którego nigdy nie będzie, zamiast po prostu podać
+        # już znany z FAQ/DODATKOWYCH INFO sposób rejestracji. contact_owner zostaje TYLKO jako
+        # ostateczność gdy naprawdę nie ma żadnej innej informacji o rejestracji.
         booking_block = """⚠️ REZERWACJE — NIEDOSTĘPNE NA TEJ LINII:
 Rezerwacje wizyt przez telefon nie są tu włączone. Jeśli klient chce się UMÓWIĆ na wizytę —
-powiedz wprost, że rezerwacja telefoniczna nie jest teraz dostępna, i zaproponuj zostawienie
-wiadomości przez contact_owner zamiast tego (przekażesz prośbę właścicielowi, który się
-skontaktuje). NIE mów że to "jeszcze w budowie" ani że to wersja testowa — po prostu nie jest
-tu włączone. NIE obiecuj że coś zarezerwujesz."""
+powiedz wprost, że rezerwacja telefoniczna nie jest teraz dostępna. Jeśli w FAQ lub DODATKOWYCH
+INFO jest opisany inny sposób rejestracji (np. strona internetowa, aplikacja) — podaj TEN sposób
+dokładnie tak jak jest opisany, i na tym zakończ temat. NIE proponuj wtedy przekazania wiadomości
+przez contact_owner — to nie to samo co rezerwacja i sugeruje klientowi, że ktoś oddzwoni w tej
+sprawie, co się nie wydarzy. Dopiero jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji —
+zaproponuj zostawienie wiadomości przez contact_owner zamiast tego (przekażesz prośbę
+właścicielowi, który się skontaktuje). NIE mów że to "jeszcze w budowie" ani że to wersja testowa
+— po prostu nie jest tu włączone. NIE obiecuj że coś zarezerwujesz."""
 
     if tenant.get("lead_mode", 0) != 1:
         booking_block += """
