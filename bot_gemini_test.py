@@ -752,9 +752,25 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             break
 
         if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
-            logger.warning(f"🔇 [GEMINI LIVE TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
-            idle_warning_given = True
-            await speak_directly(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
+            if call_state.get("waiting_for_bot_audio"):
+                # POPRAWKA 2026-08-31: złapane na żywym telefonie — klient zadał dłuższe
+                # pytanie, lokalny VAD poprawnie zarejestrował koniec jego wypowiedzi
+                # (waiting_for_bot_audio=True), ale Gemini tym razem potrzebował >6s na
+                # odpowiedź (zaobserwowane TTFB do 7.7s w tej samej rozmowie — normalna
+                # zmienność, nie zawieszenie). idle_since nie ma jak się odświeżyć w tym
+                # oknie (nic nowego nie leci ani od klienta, ani od bota), więc licznik
+                # ciszy rósł mimo że klient WŁAŚNIE skończył mówić — nudge "czy nadal
+                # jesteśmy połączeni?" (fallback_tts) wystartował i zagrał RÓWNOLEGLE z
+                # prawdziwą odpowiedzią Gemini, gdy ta w końcu nadeszła sekundę później.
+                # Fix: dopóki lokalnie wiemy że czekamy na odpowiedź po realnej wypowiedzi
+                # klienta, nie traktuj tego jak ciszy — pomiń TEN cykl ostrzeżenia.
+                # IDLE_HANGUP_SECONDS niżej (znacznie dłuższy próg) i tak zabezpiecza przed
+                # realnym zawieszeniem sesji niezależnie od tej flagi.
+                pass
+            else:
+                logger.warning(f"🔇 [GEMINI LIVE TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")
+                idle_warning_given = True
+                await speak_directly(task, call_state, "Przepraszam, czy nadal jesteśmy połączeni?")
         elif silence < IDLE_WARNING_SECONDS:
             idle_warning_given = False
 
