@@ -576,42 +576,12 @@ class GeminiBotMonitor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class GeminiAudioMuter(FrameProcessor):
-    """Siedzi MIĘDZY `llm` i `tts` w pipeline. Blokuje WŁASNE audio Gemini
-    (TTSAudioRawFrame/TTSStartedFrame/TTSStoppedFrame, generowane wewnątrz
-    GeminiLiveLLMService z realnego audio modelu, modalities=AUDIO — patrz
-    build_gemini_live_llm po co) — te ramki nigdy nie docierają do `tts` ani do
-    transportu, więc natywny głos Gemini nigdy nie jest słyszalny na linii.
-
-    Blokuje TEŻ TTSTextFrame — POPRAWKA 2026-09-01 po realnym teście: pierwsza
-    wersja przepuszczała TTSTextFrame (transkrypt Gemini) do `tts`, licząc że to
-    jedyna droga tekstu do syntezy. W praktyce _push_output_transcription_text_frames
-    (źródło pipecat) wysyła TĘ SAMĄ treść RÓWNOLEGLE jako DWIE ramki: LLMTextFrame
-    (zwykły strumień, append_to_context=False) I TTSTextFrame. `tts` (TTSService)
-    traktuje je zupełnie inaczej: LLMTextFrame idzie przez normalne buforowanie do
-    pełnych zdań (_process_text_frame — jak w zwykłej kaskadzie), ale TTSTextFrame
-    jako AggregatedTextFrame jest syntetyzowany NATYCHMIAST, bez buforowania (patrz
-    źródło pipecat tts_service.py: `elif isinstance(frame, AggregatedTextFrame):
-    await self._push_tts_frames(frame)`). Efekt na żywym telefonie: KAŻDY mały
-    fragment transkryptu Gemini ("Dzień", " dobry,", " tu"...) syntetyzowany osobno
-    i od razu (urywana, postrzępiona mowa słowo-po-słowie) NAŁOŻONY na drugą,
-    opóźnioną syntezę tego samego, już złożonego zdania z LLMTextFrame — podwójna,
-    chaotyczna mowa. Fix: przepuszczamy WYŁĄCZNIE LLMTextFrame, `tts` samo buforuje
-    je do naturalnych fragmentów i syntetyzuje raz na zdanie, płynnie."""
-
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, (TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSTextFrame)):
-            return
-        await self.push_frame(frame, direction)
-
-
 async def speak_directly(task: PipelineTask, call_state: dict, text: str):
-    """Wypowiada DOKŁADNY tekst przez `tts`, z całkowitym pominięciem Gemini Live —
-    wstrzykuje TTSSpeakFrame prosto do kolejki pipeline'u, więc leci przez ten sam
-    TTSService co normalne odpowiedzi bota (patrz build_gemini_live_llm — od
-    2026-09-01 Gemini działa w modalities=TEXT, więc TO `tts` jest jedynym głosem w
-    rozmowie, nie osobny fallback silnik). TTSService ma zdefiniowaną obsługę
+    """Wypowiada DOKŁADNY tekst przez `fallback_tts`, z całkowitym pominięciem Gemini
+    Live — wstrzykuje TTSSpeakFrame prosto do kolejki pipeline'u. Gemini mówi zawsze
+    własnym głosem (modalities=AUDIO); `fallback_tts` siedzi w osobnej gałęzi
+    ParallelPipeline wyłącznie pod TTSSpeakFrame (idle-nudge, patrz komentarz przy
+    budowie pipeline'u) — tam TTSService ma zdefiniowaną obsługę
     TTSSpeakFrame jako niezależnej, doraźnej wypowiedzi (patrz źródło pipecat
     tts_service.py) — działa tak samo, gdy Gemini akurat też coś streamuje.
 
@@ -850,23 +820,13 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     zepsuć przy update pipecat) — świadomie NIE zrobione teraz, bo problem wystąpił
     rzadko (0 razy w 2 ostatnich pełnych testach) i ryzyko łatki nie jest tego warte.
 
-    HYBRYDA GŁOSU (dodane 2026-09-01, POPRAWIONE tego samego dnia po realnym teście):
-    Powód: polski głos natywnego audio Gemini Live jest wyraźnie słabszy niż ElevenLabs
-    (ocena użytkownika, porównanie na żywo). Pierwsza próba ustawiała
-    modalities=GeminiModalities.TEXT (Gemini miał generować TYLKO tekst) — złapane na
-    żywym telefonie: model gemini-3.1-flash-live-preview TWARDO odrzuca tę kombinację
-    („1007 ... The requested combination of response modalities (TEXT) is not
-    supported by the model"), połączenie z Gemini w ogóle się nie nawiązywało, całkowita
-    cisza. Zostajemy więc przy DOMYŚLNYM modalities=AUDIO (nie ustawiane tu jawnie).
-
-    Zamiast tego: Gemini w AUDIO i tak wysyła RÓWNOLEGLE z audio własny transkrypt tego
-    co mówi jako TTSTextFrame (output_transcription, sprawdzone w źródle pipecat —
-    GeminiBotMonitor niżej już od dawna na to nasłuchuje do pomiaru latencji). Blokujemy
-    WŁASNE audio Gemini (TTSAudioRawFrame/TTSStartedFrame/TTSStoppedFrame) filtrem
-    GeminiAudioMuter wstawionym między `llm` i `tts` w pipeline (patrz jego docstring),
-    a transkrypt (TTSTextFrame) przepuszczamy — `tts` (create_tts_service, ElevenLabs)
-    go realnie syntetyzuje. Efekt: Gemini nadal "mówi" wewnętrznie (wymagane przez model),
-    ale na linię telefoniczną trafia tylko audio z ElevenLabs, nigdy natywny głos Gemini.
+    HYBRYDA GŁOSU (dodana i usunięta 2026-09-01): próba podmiany natywnego głosu
+    Gemini na ElevenLabs (przez blokowanie własnego audio Gemini filtrem i syntezę
+    transkryptu przez zewnętrzny TTS) — po pomiarze na żywych połączeniach usunięta:
+    ~4.1s śr. user->bot audio z ElevenLabs vs ~2.4s natywnie (SimpleTextAggregator
+    czeka na całe zdanie z Gemini zanim wyśle tekst do TTS), różnica w jakości głosu
+    nie rekompensowała tej różnicy w opóźnieniu. Zostajemy przy DOMYŚLNYM
+    modalities=AUDIO (nie ustawiane tu jawnie) i natywnym głosie Gemini zawsze.
 
     thinking=ThinkingConfig(thinking_level="minimal") — POPRAWKA 2026-08-22, analiza
     latencji po testowych rozmowach (TTFB 1.3-2.8s na zwykłych turach, nie ~0.6s jak
@@ -1057,34 +1017,17 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Przełącznik per-tenant (panel: zakładka "Głos agenta" → "🎙️ Gemini Live" vs
-    # "ElevenLabs"/"Głos zapasowy") — DWIE różne architektury pipeline'u, nie jeden
-    # uniwersalny wariant, bo mają różne wymagania:
-    gemini_native_voice = bool(int(tenant.get("gemini_native_voice_enabled") or 0))
-    if gemini_native_voice:
-        # Gemini mówi WŁASNYM głosem (modalities=AUDIO, bez filtra) — najniższa latencja,
-        # ale polski głos wyraźnie słabszy niż ElevenLabs (stąd w ogóle ta cała hybryda
-        # istnieje jako domyślna opcja). To jest DOKŁADNIE architektura sprzed 2026-09-01
-        # (patrz historia gita) — fallback_tts musi siedzieć w OSOBNEJ gałęzi
-        # ParallelPipeline z wymuszonym sample_rate=24000 (ten sam co natywne audio
-        # Gemini), bo speak_directly() (idle-nudge, "czy nadal jesteśmy połączeni?") wciąż
-        # potrzebuje niezależnego silnika TTS — Gemini nie da się w niezawodny sposób
-        # poprosić o wypowiedzenie DOKŁADNEGO tekstu z zewnątrz, gdy jego sesja akurat
-        # ucichła (to pierwotny powód istnienia fallback_tts, patrz speak_directly()).
-        logger.info("🎙️ [GEMINI LIVE TEST] Gemini native voice (ElevenLabs/Google TYLKO jako fallback)")
-        fallback_tts = create_tts_service(tenant, sample_rate=24000)
-        voice_steps = [ParallelPipeline([llm], [fallback_tts])]
-    else:
-        # Domyślna hybryda (od 2026-09-01) — Gemini technicznie nadal generuje własne
-        # audio (model odrzuca modalities=TEXT, patrz build_gemini_live_llm), ale
-        # audio_muter blokuje je (TTSAudioRawFrame/TTSStarted/Stopped/TTSTextFrame)
-        # zanim dotrze do `tts`, który zamiast tego syntetyzuje LLMTextFrame (transkrypt
-        # Gemini) — patrz GeminiAudioMuter. `tts` jest tu JEDYNYM silnikiem, więc
-        # speak_directly() (TTSSpeakFrame) trafia w niego bezpośrednio, bez potrzeby
-        # osobnej gałęzi.
-        tts = create_tts_service(tenant)
-        audio_muter = GeminiAudioMuter()
-        voice_steps = [llm, audio_muter, tts]
+    # Zawsze natywny głos Gemini (modalities=AUDIO) — hybryda z ElevenLabs jako
+    # głównym głosem (2026-09-01) usunięta: mierzalnie wolniejsza (SimpleTextAggregator
+    # czeka na CAŁE zdanie z Gemini zanim w ogóle wyśle tekst do TTS, patrz logi z
+    # 2026-09-01 — user->bot audio ~4.1s śr. z ElevenLabs vs ~2.4s natywnie), a jakość
+    # głosu nie rekompensowała tej różnicy w ocenie na żywo. fallback_tts zostaje w
+    # OSOBNEJ gałęzi ParallelPipeline z wymuszonym sample_rate=24000 (ten sam co natywne
+    # audio Gemini) wyłącznie pod speak_directly() (idle-nudge, "czy nadal jesteśmy
+    # połączeni?") — Gemini nie da się w niezawodny sposób poprosić o wypowiedzenie
+    # DOKŁADNEGO tekstu z zewnątrz, gdy jego sesja akurat ucichła.
+    fallback_tts = create_tts_service(tenant, sample_rate=24000)
+    voice_steps = [ParallelPipeline([llm], [fallback_tts])]
 
     pipeline = Pipeline([
         transport.input(),
@@ -1310,34 +1253,17 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Przełącznik per-tenant (panel: zakładka "Głos agenta" → "🎙️ Gemini Live" vs
-    # "ElevenLabs"/"Głos zapasowy") — DWIE różne architektury pipeline'u, nie jeden
-    # uniwersalny wariant, bo mają różne wymagania:
-    gemini_native_voice = bool(int(tenant.get("gemini_native_voice_enabled") or 0))
-    if gemini_native_voice:
-        # Gemini mówi WŁASNYM głosem (modalities=AUDIO, bez filtra) — najniższa latencja,
-        # ale polski głos wyraźnie słabszy niż ElevenLabs (stąd w ogóle ta cała hybryda
-        # istnieje jako domyślna opcja). To jest DOKŁADNIE architektura sprzed 2026-09-01
-        # (patrz historia gita) — fallback_tts musi siedzieć w OSOBNEJ gałęzi
-        # ParallelPipeline z wymuszonym sample_rate=24000 (ten sam co natywne audio
-        # Gemini), bo speak_directly() (idle-nudge, "czy nadal jesteśmy połączeni?") wciąż
-        # potrzebuje niezależnego silnika TTS — Gemini nie da się w niezawodny sposób
-        # poprosić o wypowiedzenie DOKŁADNEGO tekstu z zewnątrz, gdy jego sesja akurat
-        # ucichła (to pierwotny powód istnienia fallback_tts, patrz speak_directly()).
-        logger.info("🎙️ [GEMINI LIVE TEST] Gemini native voice (ElevenLabs/Google TYLKO jako fallback)")
-        fallback_tts = create_tts_service(tenant, sample_rate=24000)
-        voice_steps = [ParallelPipeline([llm], [fallback_tts])]
-    else:
-        # Domyślna hybryda (od 2026-09-01) — Gemini technicznie nadal generuje własne
-        # audio (model odrzuca modalities=TEXT, patrz build_gemini_live_llm), ale
-        # audio_muter blokuje je (TTSAudioRawFrame/TTSStarted/Stopped/TTSTextFrame)
-        # zanim dotrze do `tts`, który zamiast tego syntetyzuje LLMTextFrame (transkrypt
-        # Gemini) — patrz GeminiAudioMuter. `tts` jest tu JEDYNYM silnikiem, więc
-        # speak_directly() (TTSSpeakFrame) trafia w niego bezpośrednio, bez potrzeby
-        # osobnej gałęzi.
-        tts = create_tts_service(tenant)
-        audio_muter = GeminiAudioMuter()
-        voice_steps = [llm, audio_muter, tts]
+    # Zawsze natywny głos Gemini (modalities=AUDIO) — hybryda z ElevenLabs jako
+    # głównym głosem (2026-09-01) usunięta: mierzalnie wolniejsza (SimpleTextAggregator
+    # czeka na CAŁE zdanie z Gemini zanim w ogóle wyśle tekst do TTS, patrz logi z
+    # 2026-09-01 — user->bot audio ~4.1s śr. z ElevenLabs vs ~2.4s natywnie), a jakość
+    # głosu nie rekompensowała tej różnicy w ocenie na żywo. fallback_tts zostaje w
+    # OSOBNEJ gałęzi ParallelPipeline z wymuszonym sample_rate=24000 (ten sam co natywne
+    # audio Gemini) wyłącznie pod speak_directly() (idle-nudge, "czy nadal jesteśmy
+    # połączeni?") — Gemini nie da się w niezawodny sposób poprosić o wypowiedzenie
+    # DOKŁADNEGO tekstu z zewnątrz, gdy jego sesja akurat ucichła.
+    fallback_tts = create_tts_service(tenant, sample_rate=24000)
+    voice_steps = [ParallelPipeline([llm], [fallback_tts])]
 
     pipeline = Pipeline([
         transport.input(),
