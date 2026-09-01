@@ -582,15 +582,25 @@ class GeminiAudioMuter(FrameProcessor):
     build_gemini_live_llm po co) — te ramki nigdy nie docierają do `tts` ani do
     transportu, więc natywny głos Gemini nigdy nie jest słyszalny na linii.
 
-    Gemini RÓWNOLEGLE z tym audio wysyła też transkrypt tego co mówi jako osobny
-    TTSTextFrame (output_transcription) — TEN frame nie jest tu filtrowany, leci
-    dalej do `tts`, który go realnie syntetyzuje (ElevenLabs). Stąd rozmówca słyszy
-    tylko ElevenLabs, mimo że Gemini cały czas technicznie "mówi" w tle (wymagane,
-    bo model odrzuca modalities=TEXT — patrz build_gemini_live_llm)."""
+    Blokuje TEŻ TTSTextFrame — POPRAWKA 2026-09-01 po realnym teście: pierwsza
+    wersja przepuszczała TTSTextFrame (transkrypt Gemini) do `tts`, licząc że to
+    jedyna droga tekstu do syntezy. W praktyce _push_output_transcription_text_frames
+    (źródło pipecat) wysyła TĘ SAMĄ treść RÓWNOLEGLE jako DWIE ramki: LLMTextFrame
+    (zwykły strumień, append_to_context=False) I TTSTextFrame. `tts` (TTSService)
+    traktuje je zupełnie inaczej: LLMTextFrame idzie przez normalne buforowanie do
+    pełnych zdań (_process_text_frame — jak w zwykłej kaskadzie), ale TTSTextFrame
+    jako AggregatedTextFrame jest syntetyzowany NATYCHMIAST, bez buforowania (patrz
+    źródło pipecat tts_service.py: `elif isinstance(frame, AggregatedTextFrame):
+    await self._push_tts_frames(frame)`). Efekt na żywym telefonie: KAŻDY mały
+    fragment transkryptu Gemini ("Dzień", " dobry,", " tu"...) syntetyzowany osobno
+    i od razu (urywana, postrzępiona mowa słowo-po-słowie) NAŁOŻONY na drugą,
+    opóźnioną syntezę tego samego, już złożonego zdania z LLMTextFrame — podwójna,
+    chaotyczna mowa. Fix: przepuszczamy WYŁĄCZNIE LLMTextFrame, `tts` samo buforuje
+    je do naturalnych fragmentów i syntetyzuje raz na zdanie, płynnie."""
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, (TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame)):
+        if isinstance(frame, (TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSTextFrame)):
             return
         await self.push_frame(frame, direction)
 
