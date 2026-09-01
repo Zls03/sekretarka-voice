@@ -117,6 +117,21 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
     )
     first_message = build_greeting_message(tenant)
 
+    agent_override = {
+        "prompt": {"prompt": prompt_text},
+        "first_message": first_message,
+        "language": "pl",
+    }
+    conversation_config_override = {"agent": agent_override}
+    # Głos per-tenant — jedna, wspólna "szablonowa" konfiguracja agenta w ElevenLabs
+    # (patrz docstring modułu) obsługuje wszystkie firmy, więc głos NIE jest ustawiony
+    # tam na sztywno — nadpisujemy go tu, tak samo jak prompt, na podstawie panelu
+    # (pole elevenlabs_agent_voice_id, patrz helpers.py). Puste = zostaje domyślny głos
+    # z agenta szablonowego.
+    voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
+    if voice_id:
+        conversation_config_override["tts"] = {"voice_id": voice_id}
+
     client = _get_elevenlabs_client()
     twiml = await asyncio.to_thread(
         client.conversational_ai.twilio.register_call,
@@ -125,13 +140,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         to_number=called_number,
         direction="inbound",
         conversation_initiation_client_data={
-            "conversation_config_override": {
-                "agent": {
-                    "prompt": {"prompt": prompt_text},
-                    "first_message": first_message,
-                    "language": "pl",
-                }
-            },
+            "conversation_config_override": conversation_config_override,
             "dynamic_variables": {
                 "business_name": tenant.get("name") or "",
                 "caller_phone": caller_phone,

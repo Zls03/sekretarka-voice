@@ -373,6 +373,13 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "tts_provider":        actual_provider,
         "azure_voice_id":      actual_voice_id,
         "elevenlabs_voice_id": actual_voice_id if actual_provider == "elevenlabs" else None,
+        # Surowa wartość kolumny, NIEZALEŻNA od tts_provider/actual_provider powyżej —
+        # ten sam głos ElevenLabs co wybór providera kaskady (jedna kolumna w bazie),
+        # ale tu odczytany zawsze, bo bot_elevenlabs_agent.py::build_register_call_twiml
+        # potrzebuje wyboru głosu per-tenant NIEZALEŻNIE od tego, czy tts_provider akurat
+        # wskazuje na elevenlabs — realtime_engine (Gemini Live/OpenAI/ElevenLabs) i
+        # tts_provider (kaskada) to dwa osobne, niepowiązane przełączniki.
+        "elevenlabs_agent_voice_id": firm.get("elevenlabs_voice_id") or "",
         "speaking_rate":       float(firm.get("speaking_rate") or 1.06),
         "realtime_voice":      firm.get("realtime_voice") or "",
         "gemini_voice":        firm.get("gemini_voice") or "",
