@@ -112,7 +112,6 @@ from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response, JSONResponse
 
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.transports.websocket.fastapi import (
@@ -137,7 +136,7 @@ from services.tts_factory import create_tts_service
 
 # Gemini Live — TYLKO do szybkiego testu porównawczego latencji (patrz sekcja na końcu
 # pliku, route'y "-gemini-live"). Nie dotyka niczego z bot_openai_realtime.py.
-from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiModalities
 from pipecat.transcriptions.language import Language
 from google.genai.types import ThinkingConfig
 
@@ -577,24 +576,19 @@ class GeminiBotMonitor(FrameProcessor):
 
 
 async def speak_directly(task: PipelineTask, call_state: dict, text: str):
-    """Wypowiada DOKŁADNY tekst przez niezależny, awaryjny silnik TTS (fallback_tts —
-    utworzony przez create_tts_service(tenant), TEN SAM provider/głos co ma
-    skonfigurowany dany tenant w cascade), z całkowitym pominięciem Gemini Live.
+    """Wypowiada DOKŁADNY tekst przez `tts`, z całkowitym pominięciem Gemini Live —
+    wstrzykuje TTSSpeakFrame prosto do kolejki pipeline'u, więc leci przez ten sam
+    TTSService co normalne odpowiedzi bota (patrz build_gemini_live_llm — od
+    2026-09-01 Gemini działa w modalities=TEXT, więc TO `tts` jest jedynym głosem w
+    rozmowie, nie osobny fallback silnik). TTSService ma zdefiniowaną obsługę
+    TTSSpeakFrame jako niezależnej, doraźnej wypowiedzi (patrz źródło pipecat
+    tts_service.py) — działa tak samo, gdy Gemini akurat też coś streamuje.
 
     PO CO: poprzednia wersja (gemini_say_now) prosiła o to SAM MODEL — działało
     tylko gdy sesja Gemini Live żyje. Złapane na żywym telefonie 16.08.2026: gdy
     sesja cicho się zawiesza, prośba wysłana DO modelu nie daje efektu. Rozwiązanie
     z cascade to TTSSpeakFrame idący prosto do TTS z pominięciem LLM — tu robimy to
     samo dla Realtime/Gemini Live.
-
-    ⚠️ DRUGIE PODEJŚCIE (16.08.2026, pierwsze zepsuło żywe połączenia): fallback_tts
-    NIE MOŻE siedzieć w głównym łańcuchu bezpośrednio po `llm` — TTSService reaguje
-    na KAŻDĄ TextFrame (sprawdzone w źródle pipecat), a TTSTextFrame (własny
-    transkrypt Gemini) dziedziczy po TextFrame, więc fallback próbował na nowo
-    syntetyzować WSZYSTKO co Gemini już powiedziało. Poprawka: fallback_tts siedzi
-    w OSOBNEJ gałęzi ParallelPipeline([llm], [fallback_tts]) — gałęzie dzielą tylko
-    wspólne WEJŚCIE (audio z telefonu + ten TTSSpeakFrame), własna mowa Gemini
-    powstaje wewnątrz gałęzi z `llm` i fizycznie nie dociera do gałęzi fallbacku.
 
     Dlatego NIE ustawia "awaiting_model_response_since" — nie czekamy tu na Gemini,
     to pole zostaje zarezerwowane wyłącznie dla wykrywania braku odpowiedzi na
@@ -825,6 +819,19 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     zepsuć przy update pipecat) — świadomie NIE zrobione teraz, bo problem wystąpił
     rzadko (0 razy w 2 ostatnich pełnych testach) i ryzyko łatki nie jest tego warte.
 
+    modalities=GeminiModalities.TEXT — HYBRYDA (dodane 2026-09-01): Gemini generuje
+    TYLKO tekst (LLMTextFrame), NIGDY własnego audio — głos mówi `tts`
+    (create_tts_service, ten sam ElevenLabs co w cascade) postawiony bezpośrednio po
+    `llm` w pipeline. Powód: polski głos natywnego audio Gemini Live jest wyraźnie
+    słabszy niż ElevenLabs (ocena użytkownika, porównanie na żywo 01.09.2026).
+    Sprawdzone w źródle pipecat 1.4.0: GeminiLiveAssistantContextAggregator i tak
+    filtruje LLMTextFrame i buduje kontekst rozmowy z TTSTextFrame — czyli ten
+    hybrydowy układ (LLM emituje tekst, osobny TTSService emituje TTSTextFrame po
+    syntezie) jest dokładnie tym, pod co ten aggregator był zaprojektowany, nie
+    obejściem. Efekt uboczny: Gemini nie generuje już własnego audio, więc
+    ParallelPipeline+wymuszone sample_rate dla fallback_tts (patrz pipeline niżej)
+    przestały być potrzebne — patrz komentarz przy budowie pipeline.
+
     thinking=ThinkingConfig(thinking_level="minimal") — POPRAWKA 2026-08-22, analiza
     latencji po testowych rozmowach (TTFB 1.3-2.8s na zwykłych turach, nie ~0.6s jak
     sugerowała wcześniejsza notatka w CLAUDE.md o samym powitaniu). Sprawdzone w źródle
@@ -848,6 +855,7 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
             voice=resolved_voice,
             language=Language.PL,
             thinking=ThinkingConfig(thinking_level="minimal"),
+            modalities=GeminiModalities.TEXT,
         ),
         system_instruction=system_prompt,
     )
@@ -1014,53 +1022,28 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
-    # tts_provider/głos co tenant ma skonfigurowany w cascade (create_tts_service).
+    # Jedyny silnik głosu w tej rozmowie (create_tts_service, ten sam
+    # tts_provider/głos co tenant ma skonfigurowany w cascade) — używany zarówno do
+    # normalnych odpowiedzi Gemini (llm w modalities=TEXT emituje LLMTextFrame, `tts`
+    # zaraz po nim je syntetyzuje, dokładnie jak w kaskadzie) jak i do awaryjnych,
+    # wstrzykiwanych wprost fraz z speak_directly() (TTSSpeakFrame — ten sam
+    # TTSService poprawnie obsługuje oba przypadki, patrz źródło pipecat tts_service.py).
     #
-    # ⚠️ MUSI siedzieć w OSOBNEJ gałęzi ParallelPipeline, NIE bezpośrednio po `llm`
-    # w jednym łańcuchu — pierwsza próba (16.08.2026) tak zrobiła i zepsuła żywe
-    # połączenia: TTSService reaguje na KAŻDĄ TextFrame (sprawdzone w źródle
-    # pipecat), a TTSTextFrame (własny transkrypt Gemini) dziedziczy po TextFrame,
-    # więc fallback zaczynał od nowa syntetyzować WSZYSTKO co Gemini już powiedziało
-    # (kaskada błędów resamplera, słyszalne psucie audio). ParallelPipeline([llm],
-    # [fallback_tts]) dzieli gałęzie tak, że mają WSPÓLNE tylko wejście (audio z
-    # telefonu + nasz TTSSpeakFrame wstrzyknięty przez speak_directly) — mowa
-    # wygenerowana PRZEZ Gemini powstaje wewnątrz gałęzi z `llm` i fizycznie nigdy
-    # nie dociera do gałęzi z fallback_tts. Sprawdzone w źródle pipecat 1.4.0:
-    # transkrypcja, którą Gemini wypycha "w górę" (UPSTREAM), poprawnie przebija
-    # się z powrotem przez ParallelPipeline do gemini_user_monitor (przez
-    # PipelineSource/_parallel_push_frame), więc pomiar latencji i wykrywanie
-    # ciszy per-turn nie są tym zaburzone. gemini_bot_monitor siedzi PO parze
-    # gałęzi (nie w żadnej z nich), żeby widzieć ZMERGOWANE audio z obu źródeł —
-    # inaczej nie zauważyłby mowy fallbacku i idle_since/greeted by się nie
-    # odświeżały poprawnie po awaryjnej wypowiedzi.
-    #
-    # ⚠️ DRUGI, ODDZIELNY BUG złapany na żywym telefonie (16.08.2026) PO
-    # wdrożeniu ParallelPipeline powyżej: FastAPIWebsocketOutputTransport ma
-    # JEDEN, per-połączeniowy, stanowy resampler (SOXRStreamAudioResampler),
-    # współdzielony przez WSZYSTKIE źródła audio przechodzące przez transport
-    # (Gemini I fallback_tts kończą w tym samym miejscu — to jest OK i
-    # oczekiwane, obie gałęzie muszą trafić do tej samej linii telefonicznej).
-    # Ten resampler PINUJE się na pierwszej parze (in_rate, out_rate) jaką
-    # zobaczy i RZUCA WYJĄTKIEM (nie: reinicjalizuje się) przy każdej kolejnej
-    # innej parze. Gemini Live emituje natywnie 24000 Hz — jeśli fallback_tts
-    # dostanie sample_rate providera dobrany pod kaskadę (Google/Cartesia/
-    # Azure = 8000 Hz), KAŻDA ramka audio fallbacku ginie jako ErrorFrame i
-    # nigdy nie dociera do rozmówcy. Gorzej: TTSStoppedFrame z fallbacku i tak
-    # przechodzi przez gemini_bot_monitor PRZED zepsutym resamplerem, więc
-    # zegar ciszy (idle_since) resetuje się mimo że nikt nic nie usłyszał —
-    # połączenie wisi w nieskończonej cichej pętli zamiast się rozłączyć.
-    # Fix: wymusić sample_rate=24000 (ten sam co Gemini) niezależnie od
-    # providera, żeby resampler przez cały czas trwania połączenia widział
-    # tylko JEDNĄ parę (in_rate, out_rate).
-    fallback_tts = create_tts_service(tenant, sample_rate=24000)
+    # Wcześniej (Gemini w modalities=AUDIO, więc generował WŁASNE audio) to musiało
+    # siedzieć w osobnej gałęzi ParallelPipeline z wymuszonym sample_rate=24000, żeby
+    # nie kolidować z audio Gemini na współdzielonym resamplerze transportu — patrz
+    # historia gita tego pliku po szczegóły tamtych dwóch bugów. W modalities=TEXT
+    # Gemini NIGDY nie generuje audio, więc jest już tylko jedno źródło dźwięku —
+    # oba tamte problemy strukturalnie nie mogą wystąpić, stąd zwykły, liniowy pipeline.
+    tts = create_tts_service(tenant)
 
     pipeline = Pipeline([
         transport.input(),
         vad_processor,
         user_aggregator,
         gemini_user_monitor,
-        ParallelPipeline([llm], [fallback_tts]),
+        llm,
+        tts,
         gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
@@ -1279,53 +1262,28 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     )
     gemini_user_monitor = GeminiUserMonitor(gemini_state)
     gemini_bot_monitor = GeminiBotMonitor(gemini_state)
-    # Awaryjny TTS, niezależny od Gemini Live — patrz speak_directly(). TEN SAM
-    # tts_provider/głos co tenant ma skonfigurowany w cascade (create_tts_service).
+    # Jedyny silnik głosu w tej rozmowie (create_tts_service, ten sam
+    # tts_provider/głos co tenant ma skonfigurowany w cascade) — używany zarówno do
+    # normalnych odpowiedzi Gemini (llm w modalities=TEXT emituje LLMTextFrame, `tts`
+    # zaraz po nim je syntetyzuje, dokładnie jak w kaskadzie) jak i do awaryjnych,
+    # wstrzykiwanych wprost fraz z speak_directly() (TTSSpeakFrame — ten sam
+    # TTSService poprawnie obsługuje oba przypadki, patrz źródło pipecat tts_service.py).
     #
-    # ⚠️ MUSI siedzieć w OSOBNEJ gałęzi ParallelPipeline, NIE bezpośrednio po `llm`
-    # w jednym łańcuchu — pierwsza próba (16.08.2026) tak zrobiła i zepsuła żywe
-    # połączenia: TTSService reaguje na KAŻDĄ TextFrame (sprawdzone w źródle
-    # pipecat), a TTSTextFrame (własny transkrypt Gemini) dziedziczy po TextFrame,
-    # więc fallback zaczynał od nowa syntetyzować WSZYSTKO co Gemini już powiedziało
-    # (kaskada błędów resamplera, słyszalne psucie audio). ParallelPipeline([llm],
-    # [fallback_tts]) dzieli gałęzie tak, że mają WSPÓLNE tylko wejście (audio z
-    # telefonu + nasz TTSSpeakFrame wstrzyknięty przez speak_directly) — mowa
-    # wygenerowana PRZEZ Gemini powstaje wewnątrz gałęzi z `llm` i fizycznie nigdy
-    # nie dociera do gałęzi z fallback_tts. Sprawdzone w źródle pipecat 1.4.0:
-    # transkrypcja, którą Gemini wypycha "w górę" (UPSTREAM), poprawnie przebija
-    # się z powrotem przez ParallelPipeline do gemini_user_monitor (przez
-    # PipelineSource/_parallel_push_frame), więc pomiar latencji i wykrywanie
-    # ciszy per-turn nie są tym zaburzone. gemini_bot_monitor siedzi PO parze
-    # gałęzi (nie w żadnej z nich), żeby widzieć ZMERGOWANE audio z obu źródeł —
-    # inaczej nie zauważyłby mowy fallbacku i idle_since/greeted by się nie
-    # odświeżały poprawnie po awaryjnej wypowiedzi.
-    #
-    # ⚠️ DRUGI, ODDZIELNY BUG złapany na żywym telefonie (16.08.2026) PO
-    # wdrożeniu ParallelPipeline powyżej: FastAPIWebsocketOutputTransport ma
-    # JEDEN, per-połączeniowy, stanowy resampler (SOXRStreamAudioResampler),
-    # współdzielony przez WSZYSTKIE źródła audio przechodzące przez transport
-    # (Gemini I fallback_tts kończą w tym samym miejscu — to jest OK i
-    # oczekiwane, obie gałęzie muszą trafić do tej samej linii telefonicznej).
-    # Ten resampler PINUJE się na pierwszej parze (in_rate, out_rate) jaką
-    # zobaczy i RZUCA WYJĄTKIEM (nie: reinicjalizuje się) przy każdej kolejnej
-    # innej parze. Gemini Live emituje natywnie 24000 Hz — jeśli fallback_tts
-    # dostanie sample_rate providera dobrany pod kaskadę (Google/Cartesia/
-    # Azure = 8000 Hz), KAŻDA ramka audio fallbacku ginie jako ErrorFrame i
-    # nigdy nie dociera do rozmówcy. Gorzej: TTSStoppedFrame z fallbacku i tak
-    # przechodzi przez gemini_bot_monitor PRZED zepsutym resamplerem, więc
-    # zegar ciszy (idle_since) resetuje się mimo że nikt nic nie usłyszał —
-    # połączenie wisi w nieskończonej cichej pętli zamiast się rozłączyć.
-    # Fix: wymusić sample_rate=24000 (ten sam co Gemini) niezależnie od
-    # providera, żeby resampler przez cały czas trwania połączenia widział
-    # tylko JEDNĄ parę (in_rate, out_rate).
-    fallback_tts = create_tts_service(tenant, sample_rate=24000)
+    # Wcześniej (Gemini w modalities=AUDIO, więc generował WŁASNE audio) to musiało
+    # siedzieć w osobnej gałęzi ParallelPipeline z wymuszonym sample_rate=24000, żeby
+    # nie kolidować z audio Gemini na współdzielonym resamplerze transportu — patrz
+    # historia gita tego pliku po szczegóły tamtych dwóch bugów. W modalities=TEXT
+    # Gemini NIGDY nie generuje audio, więc jest już tylko jedno źródło dźwięku —
+    # oba tamte problemy strukturalnie nie mogą wystąpić, stąd zwykły, liniowy pipeline.
+    tts = create_tts_service(tenant)
 
     pipeline = Pipeline([
         transport.input(),
         vad_processor,
         user_aggregator,
         gemini_user_monitor,
-        ParallelPipeline([llm], [fallback_tts]),
+        llm,
+        tts,
         gemini_bot_monitor,
         transport.output(),
         assistant_aggregator,
