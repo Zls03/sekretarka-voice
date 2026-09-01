@@ -123,17 +123,17 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         "language": "pl",
     }
     conversation_config_override = {"agent": agent_override}
-    # ⚠️ Nadpisywanie głosu TYMCZASOWO WYŁĄCZONE (2026-09-02) — pierwszy live test z
-    # conversation_config_override["tts"]["voice_id"] zakończył się natychmiastowym
-    # "status": "failed", "termination_reason": "Override for field 'voice_id'..." (log
-    # ucięty, dokładny dalszy tekst nieznany). Nie potwierdzone czy to zły voice_id tego
-    # konkretnego tenanta (zaszłość sprzed dzisiejszych zmian) czy nadpisywanie tts przez
-    # register_call w ogóle nie jest wspierane dla połączeń telefonicznych — do wyjaśnienia
-    # PRZED ponownym włączeniem. Na razie zostaje domyślny głos agenta-szablonu
-    # (Pawel Pro - Polish), żeby połączenia w ogóle działały.
-    # voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
-    # if voice_id:
-    #     conversation_config_override["tts"] = {"voice_id": voice_id}
+    # Głos per-tenant — patrz elevenlabs_agent_voice_id w helpers.py (kolumna
+    # elevenlabs_voice_id w bazie, ustawiana per firma w panelu, niezależnie od
+    # tts_provider kaskady). PRZYWRÓCONE 2026-09-02 po tym jak pierwszy test padał z
+    # "Override for field 'voice_id'..." — przyczyną był stary/nieprawidłowy voice_id
+    # zaszły w bazie z wcześniejszych testów (sprzed dzisiejszych zmian), NIE brak
+    # wsparcia dla nadpisywania tts w register_call. Potwierdzone poprawnym, świeżo
+    # dodanym do "My Voices" głosem (Aleksandra) — jeśli mimo to znów padnie z tym samym
+    # błędem, podejrzewaj format/uprawnienia konkretnego voice_id, nie sam mechanizm.
+    voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
+    if voice_id:
+        conversation_config_override["tts"] = {"voice_id": voice_id}
 
     client = _get_elevenlabs_client()
     twiml = await asyncio.to_thread(
