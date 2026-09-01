@@ -455,7 +455,7 @@ def build_realtime_llm(
 
 async def apply_crm_when_ready(
     llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task,
-    has_booking: bool = False,
+    has_booking: bool = False, has_contact_owner: bool = True,
 ) -> dict | None:
     """Powitanie leci OD RAZU z generycznym promptem (bez czekania na CRM, ~2-3s HTTP
     do panelu) — ta funkcja czeka na wynik w tle i, jeśli okaże się że dzwoni znany
@@ -472,7 +472,10 @@ async def apply_crm_when_ready(
     client_profile = await client_profile_task
     if client_profile:
         logger.info(f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
-        updated_prompt = build_realtime_instructions(tenant, client_profile, include_greeting=False, has_booking=has_booking)
+        updated_prompt = build_realtime_instructions(
+            tenant, client_profile, include_greeting=False, has_booking=has_booking,
+            has_contact_owner=has_contact_owner,
+        )
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile
 
@@ -590,10 +593,11 @@ async def websocket_gemini_test(websocket: WebSocket):
     task_box = {"task": None}
     context_box = {"context": None}
     call_state = make_call_state()
-    tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
-        build_end_conversation_tool(task_box, call_state),
-    ]
+    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    tools = []
+    if contact_owner_available:
+        tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, call_state))
+    tools.append(build_end_conversation_tool(task_box, call_state))
     if tenant.get("lead_mode", 0) == 1:
         # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
         # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
@@ -612,7 +616,9 @@ async def websocket_gemini_test(websocket: WebSocket):
     if booking_available:
         tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box))
         tools.append(build_manage_booking_tool(tenant, caller_phone, call_state))
-    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
+    system_prompt = build_realtime_instructions(
+        tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
+    )
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -653,7 +659,10 @@ async def websocket_gemini_test(websocket: WebSocket):
         # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu.
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
-        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task, has_booking=booking_available))
+        asyncio.create_task(apply_crm_when_ready(
+            llm, tenant, client_profile_task, has_booking=booking_available,
+            has_contact_owner=contact_owner_available,
+        ))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
@@ -799,10 +808,11 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     task_box = {"task": None}
     context_box = {"context": None}
     call_state = make_call_state()
-    tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box, call_state),
-        build_end_conversation_tool(task_box, call_state),
-    ]
+    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    tools = []
+    if contact_owner_available:
+        tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, call_state))
+    tools.append(build_end_conversation_tool(task_box, call_state))
     if tenant.get("lead_mode", 0) == 1:
         # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
         # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
@@ -821,7 +831,9 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     if booking_available:
         tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box, channel="vonage"))
         tools.append(build_manage_booking_tool(tenant, caller_phone, call_state))
-    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
+    system_prompt = build_realtime_instructions(
+        tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
+    )
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -860,7 +872,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         logger.info("🎤 [REALTIME TEST/VONAGE] Klient połączony — wybudzam Realtime do przywitania")
         await user_aggregator.push_context_frame()
         asyncio.create_task(monitor_call_health(task, llm, call_state))
-        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task, has_booking=booking_available))
+        asyncio.create_task(apply_crm_when_ready(
+            llm, tenant, client_profile_task, has_booking=booking_available,
+            has_contact_owner=contact_owner_available,
+        ))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect_vonage(transport, client):

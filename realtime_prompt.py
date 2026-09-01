@@ -242,7 +242,7 @@ PRZYKŁAD STYLU ODPOWIEDZI:
 
 def build_realtime_instructions(
     tenant: dict, client_profile: dict = None, include_greeting: bool = True,
-    has_transfer: bool = False, has_booking: bool = False,
+    has_transfer: bool = False, has_booking: bool = False, has_contact_owner: bool = True,
 ) -> str:
     """system_instruction dla OpenAI Realtime: rola+styl+biznes+CRM (jak w cascade) plus
     krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy).
@@ -257,7 +257,17 @@ def build_realtime_instructions(
     blok promptu na sztywno mówił "połączenie na żywo jeszcze w budowie" NIEZALEŻNIE od
     tego czy transfer_to_owner był akurat dostępny — model więc odmawiał przekierowania
     nawet gdy klient wprost o nie poprosił i narzędzie realnie istniało (sprzeczność z
-    opisem samego narzędzia w realtime_tools.py::build_contact_owner_tool)."""
+    opisem samego narzędzia w realtime_tools.py::build_contact_owner_tool).
+
+    has_contact_owner: False gdy tenant świadomie wyłączył zbieranie/przekazywanie wiadomości
+    właścicielowi (panel: "Zbieranie wiadomości dla właściciela" = off, pole
+    contact_owner_enabled=0) — narzędzie contact_owner wtedy w ogóle NIE jest rejestrowane
+    (patrz bot_gemini_test.py/bot_openai_realtime.py), więc model i tak nie mógłby go wywołać;
+    ten blok tylko dopilnowuje żeby nie próbował OBIECAĆ przekazania wiadomości ani zbierać
+    imienia/treści na darmo. Case zgłoszony 2026-09-01: tenant chce, żeby przy prośbie o
+    kontakt z lekarzem/właścicielem model po prostu podał sposób kontaktu opisany w
+    FAQ/DODATKOWYCH INFO (np. adres email) i na tym skończył — bez własnego zbierania
+    wiadomości i fałszywej obietnicy "przekażę"."""
     role_content = build_role_prompt(tenant, client_profile)
 
     greeting_block = ""
@@ -273,7 +283,19 @@ Zacznij rozmowę od razu, mówiąc DOKŁADNIE I WYŁĄCZNIE: "{greeting_text}"
   sam o to nie zapyta. Powitanie to CAŁA Twoja pierwsza wypowiedź, nic więcej.
 - Nie witaj się drugi raz później w rozmowie"""
 
-    if has_transfer:
+    if not has_contact_owner:
+        contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM/LEKARZEM — TYLKO INFORMACJA, NIC NIE ZBIERASZ:
+Nie masz tu żadnej funkcji do przekazywania wiadomości właścicielowi — nie próbuj jej wywoływać
+ani obiecywać że coś przekażesz. Jeśli klient chce się skontaktować z właścicielem/lekarzem,
+prosi o rozmowę z człowiekiem, jest sfrustrowany lub pyta jak się z kimś skontaktować:
+→ Podaj SPOSÓB KONTAKTU dokładnie tak jak jest opisany w FAQ lub DODATKOWYCH INFO powyżej
+  (np. adres email, numer, godziny) i na tym zakończ temat.
+→ NIE dopytuj o imię ani treść sprawy — to nie Twoja rola na tej linii.
+→ NIE mów że "przekażesz wiadomość" ani że "ktoś oddzwoni" — to się nie wydarzy, bo nic nie
+  wysyłasz.
+Jeśli w FAQ/DODATKOWYCH INFO NIE MA żadnej informacji o sposobie kontaktu — powiedz krótko że
+bezpośredni kontakt nie jest teraz dostępny."""
+    elif has_transfer:
         contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM — DWIE ŚCIEŻKI, MASZ contact_owner ORAZ transfer_to_owner:
 Jeśli klient chce zostawić wiadomość dla właściciela, prosi o kontakt, chce z kimś porozmawiać,
 lub jest sfrustrowany i potrzebuje pomocy człowieka — patrz szczegółowy opis obu funkcji
@@ -336,25 +358,39 @@ bo to zacznie brzmieć sztucznie."""
         # osobowe i obiecywał oddzwonienie, którego nigdy nie będzie, zamiast po prostu podać
         # już znany z FAQ/DODATKOWYCH INFO sposób rejestracji. contact_owner zostaje TYLKO jako
         # ostateczność gdy naprawdę nie ma żadnej innej informacji o rejestracji.
-        booking_block = """⚠️ REZERWACJE — NIEDOSTĘPNE NA TEJ LINII:
+        booking_fallback = (
+            "Dopiero jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji — "
+            "zaproponuj zostawienie wiadomości przez contact_owner zamiast tego (przekażesz prośbę "
+            "właścicielowi, który się skontaktuje)."
+            if has_contact_owner else
+            "Jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji — powiedz że rezerwacja "
+            "telefoniczna nie jest teraz dostępna i na tym zakończ (NIE oferuj zostawienia wiadomości —"
+            " tej opcji tu nie ma)."
+        )
+        booking_block = f"""⚠️ REZERWACJE — NIEDOSTĘPNE NA TEJ LINII:
 Rezerwacje wizyt przez telefon nie są tu włączone. Jeśli klient chce się UMÓWIĆ na wizytę —
 powiedz wprost, że rezerwacja telefoniczna nie jest teraz dostępna. Jeśli w FAQ lub DODATKOWYCH
 INFO jest opisany inny sposób rejestracji (np. strona internetowa, aplikacja) — podaj TEN sposób
 dokładnie tak jak jest opisany, i na tym zakończ temat. NIE proponuj wtedy przekazania wiadomości
 przez contact_owner — to nie to samo co rezerwacja i sugeruje klientowi, że ktoś oddzwoni w tej
-sprawie, co się nie wydarzy. Dopiero jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji —
-zaproponuj zostawienie wiadomości przez contact_owner zamiast tego (przekażesz prośbę
-właścicielowi, który się skontaktuje). NIE mów że to "jeszcze w budowie" ani że to wersja testowa
-— po prostu nie jest tu włączone. NIE obiecuj że coś zarezerwujesz."""
+sprawie, co się nie wydarzy. {booking_fallback} NIE mów że to "jeszcze w budowie" ani że to wersja
+testowa — po prostu nie jest tu włączone. NIE obiecuj że coś zarezerwujesz."""
 
     if tenant.get("lead_mode", 0) != 1:
-        booking_block += """
-
-⚠️ ZGŁOSZENIA — NIEDOSTĘPNE NA TEJ LINII:
-Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
+        if has_contact_owner:
+            zgloszenia_block = """Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
 włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, potraktuj to jak
 zwykłą prośbę o kontakt z właścicielem (patrz KONTAKT Z WŁAŚCICIELEM wyżej) — dopytaj o imię i
 treść sprawy, i wywołaj contact_owner, NIE traktuj tego jako osobne, niedostępne zgłoszenie."""
+        else:
+            zgloszenia_block = """Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
+włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, potraktuj to jak
+zwykłą prośbę o kontakt z właścicielem/lekarzem (patrz KONTAKT Z WŁAŚCICIELEM/LEKARZEM wyżej) —
+podaj sposób kontaktu z FAQ/DODATKOWYCH INFO, NIE zbieraj imienia ani treści sprawy."""
+        booking_block += f"""
+
+⚠️ ZGŁOSZENIA — NIEDOSTĘPNE NA TEJ LINII:
+{zgloszenia_block}"""
 
     addendum = f"""{greeting_block}
 

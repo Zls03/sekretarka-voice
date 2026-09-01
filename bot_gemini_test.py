@@ -968,10 +968,11 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     # Reużywamy WPROST build_*_tool z realtime_tools.py (patrz docstring
     # build_gemini_live_llm) — call_state=gemini_state, bo ma już pole "ended"
     # którego te handlery potrzebują (patrz make_gemini_state()).
-    tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state),
-        build_end_conversation_tool(task_box, gemini_state),
-    ]
+    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    tools = []
+    if contact_owner_available:
+        tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state))
+    tools.append(build_end_conversation_tool(task_box, gemini_state))
     if tenant.get("lead_mode", 0) == 1:
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
@@ -988,7 +989,9 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         tools.append(build_book_appointment_tool(tenant, caller_phone, gemini_state, context_box))
         tools.append(build_manage_booking_tool(tenant, caller_phone, gemini_state))
 
-    system_prompt = build_realtime_instructions(tenant, None, has_booking=booking_available)
+    system_prompt = build_realtime_instructions(
+        tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
+    )
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
@@ -1218,10 +1221,13 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     task_box = {"task": None}
     context_box = {"context": None}
     transfer_available = tenant.get("transfer_enabled", 0) == 1
-    tools = [
-        build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state, has_transfer_tool=transfer_available),
-        build_end_conversation_tool(task_box, gemini_state),
-    ]
+    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    tools = []
+    if contact_owner_available:
+        tools.append(build_contact_owner_tool(
+            tenant, caller_phone, task_box, gemini_state, has_transfer_tool=transfer_available
+        ))
+    tools.append(build_end_conversation_tool(task_box, gemini_state))
     if tenant.get("lead_mode", 0) == 1:
         tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
@@ -1247,7 +1253,10 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             caller_phone=caller_phone, host=transfer_host,
         ))
 
-    system_prompt = build_realtime_instructions(tenant, None, has_transfer=transfer_available, has_booking=booking_available)
+    system_prompt = build_realtime_instructions(
+        tenant, None, has_transfer=transfer_available, has_booking=booking_available,
+        has_contact_owner=contact_owner_available,
+    )
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
