@@ -164,7 +164,7 @@ app = FastAPI()
 from bot_openai_realtime import router as openai_realtime_router
 app.include_router(openai_realtime_router)
 
-from bot_elevenlabs_agent import router as elevenlabs_agent_router
+from bot_elevenlabs_agent import router as elevenlabs_agent_router, build_register_call_twiml
 app.include_router(elevenlabs_agent_router)
 
 
@@ -893,11 +893,28 @@ async def twilio_incoming_gemini_live_test(request: Request):
             media_type="application/xml",
         )
 
+    # realtime_engine ('gemini'/'openai'/'elevenlabs', panel: zakładka "Głos agenta")
+    # decyduje który silnik odbiera ten numer — SAM numer telefonu obsługuje wszystkie
+    # trzy, tu jest jedyne miejsce rozgałęzienia.
+    if tenant.get("realtime_engine") == "elevenlabs":
+        # "Bring your own Twilio" (patrz bot_elevenlabs_agent.py, punkt 4 w docstringu) —
+        # MY wołamy ich API i przekazujemy TwiML dalej, Twilio nigdy nie jest podpięte
+        # bezpośrednio pod ElevenLabs. Fallback na błąd: krótki komunikat + rozłączenie,
+        # NIE cisza — błąd konfiguracji ElevenLabs nie może zostawić klienta bez info.
+        try:
+            twiml = await build_register_call_twiml(tenant, caller, called)
+            return Response(content=twiml, media_type="application/xml")
+        except Exception as e:
+            logger.error(f"❌ [GEMINI LIVE TEST] register_call ElevenLabs nieudany: {e}")
+            return Response(
+                content='<?xml version="1.0"?><Response><Say language="pl-PL">'
+                        'Przepraszamy, wystąpił błąd. Spróbuj ponownie później.</Say><Hangup/></Response>',
+                media_type="application/xml",
+            )
+
     host = request.headers.get("host", "localhost")
-    # realtime_engine ('gemini'/'openai', panel: zakładka "Głos agenta") decyduje który
-    # pipeline odbiera ten numer — SAM numer telefonu obsługuje oba silniki, tu jest
-    # jedyne miejsce rozgałęzienia. /ws-gemini-test to websocket z bot_openai_realtime.py
-    # (montowany w tym samym Railway deployu), identyczny zestaw Parameter co niżej.
+    # /ws-gemini-test to websocket z bot_openai_realtime.py (montowany w tym samym
+    # Railway deployu), identyczny zestaw Parameter co niżej.
     ws_path = "ws-gemini-test" if tenant.get("realtime_engine") == "openai" else "ws-gemini-live-test"
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>

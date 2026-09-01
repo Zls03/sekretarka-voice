@@ -40,3 +40,11 @@ cryptography
 # Vonage REST API (transfer żywej rozmowy) — JWT RS256 podpisywany kluczem
 # prywatnym Aplikacji Vonage, patrz realtime_tools.py::build_transfer_tool
 PyJWT
+
+# Oficjalny SDK ElevenLabs — WYŁĄCZNIE do wywołania
+# conversational_ai.twilio.register_call() w bot_elevenlabs_agent.py
+# ("bring your own Twilio" — Twilio zostaje podpięty pod NASZ webhook,
+# a to jest jedyne miejsce gdzie MY wołamy ICH API, nie odwrotnie).
+# NIE mylić z pipecat-ai[elevenlabs] w requirements.txt (tamto to klient
+# websocket do samego streamingu TTS, zupełnie inna zależność/inny cel).
+elevenlabs

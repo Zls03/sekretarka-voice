@@ -26,6 +26,21 @@ platformą a naszymi danymi/logiką biznesową, wołany PRZEZ ElevenLabs, nie pr
    workspace, nie per-agent) — nalicza minuty/kredyty tym samym apply_call_charge() co
    Gemini Live/OpenAI Realtime.
 
+4. build_register_call_twiml() — WOŁANE PRZEZ NAS (odwrotny kierunek niż 1-3), z
+   twilio_incoming_gemini_live_test() w bot_gemini_test.py, gdy tenant["realtime_engine"]
+   == "elevenlabs". Powód istnienia: "Importuj numer -> Z Twilio" w dashboardzie ElevenLabs
+   miało (wg ich docs) samo nadpisać webhook Twilio numeru na ich infrastrukturę — na żywo
+   sprawdzone 2026-09-02 że NIE nadpisuje (numer nadal wskazywał na nasz Railway po dwóch
+   próbach importu), a ręczne wpisanie ich webhooka było niemożliwe bez udokumentowanego
+   adresu (ryzyko całkowitego wyłączenia numeru realnego klienta przy błędnym zgadnięciu).
+   To "bring your own Twilio" API (conversational_ai.twilio.register_call, patrz
+   elevenlabs.io/docs/eleven-agents/phone-numbers/twilio-integration/register-call)
+   odwraca kierunek: Twilio zostaje podpięty pod NASZ webhook (nic nie trzeba zmieniać w
+   Twilio ani importować numeru do ElevenLabs), a MY przy każdym połączeniu wołamy ich API
+   z agent_id + from/to number, dostajemy z powrotem TwiML i przekazujemy je Twilio 1:1.
+   Prompt/pierwsza wiadomość budowane 1:1 jak w (1), ale przekazane INLINE w
+   conversation_initiation_client_data zamiast osobnego webhooka — mniej round-tripów.
+
 ⚠️ AUTORYZACJA — DWIE RÓŻNE, ŻADNA NIEZWERYFIKOWANA NA ŻYWYM WEBHOOKU W MOMENCIE
 NAPISANIA (2026-09-02):
 - (1) i (2): prosty shared secret w nagłówku (ELEVENLABS_SHARED_SECRET) — ustaw ten sam
@@ -47,6 +62,7 @@ potwierdzimy dopiero na pierwszym prawdziwym połączeniu telefonicznym.
 
 import os
 import json
+import asyncio
 
 from loguru import logger
 from fastapi import APIRouter, Request
@@ -62,6 +78,68 @@ from realtime_tools import (
 )
 
 router = APIRouter()
+
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+# Domyślny agent na czas testu jednego tenanta — patrz TEST_TENANT_ID w
+# bot_openai_realtime.py dla analogicznego wzorca. Docelowo (wielu tenantów)
+# to powinno być polem per-tenant w panelu (elevenlabs_agent_id), nie stałą
+# środowiskową — świadomie uproszczone teraz, żeby dało się w ogóle przetestować.
+ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
+
+_elevenlabs_client = None
+
+
+def _get_elevenlabs_client():
+    """Leniwa inicjalizacja — import/klient tworzony tylko gdy realtime_engine
+    faktycznie wybiera ElevenLabs, żeby brak ELEVENLABS_API_KEY nie wywalał
+    reszty serwisu (Gemini Live/OpenAI Realtime) przy starcie."""
+    global _elevenlabs_client
+    if _elevenlabs_client is None:
+        from elevenlabs.client import ElevenLabs
+        _elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    return _elevenlabs_client
+
+
+async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str) -> str:
+    """"Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
+    gotowe do zwrócenia bezpośrednio Twilio (media_type="application/xml").
+
+    Rzuca wyjątek przy braku ELEVENLABS_API_KEY/ELEVENLABS_AGENT_ID lub błędzie
+    API — wołający (bot_gemini_test.py) łapie to i zwraca bezpieczny TwiML
+    fallback, żeby błąd konfiguracji ElevenLabs nie zostawiał klienta w ciszy
+    bez żadnego komunikatu."""
+    if not ELEVENLABS_API_KEY or not ELEVENLABS_AGENT_ID:
+        raise RuntimeError("ELEVENLABS_API_KEY lub ELEVENLABS_AGENT_ID nieskonfigurowane")
+
+    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    prompt_text = build_realtime_instructions(
+        tenant, None, include_greeting=False, has_contact_owner=contact_owner_available,
+    )
+    first_message = build_greeting_message(tenant)
+
+    client = _get_elevenlabs_client()
+    twiml = await asyncio.to_thread(
+        client.conversational_ai.twilio.register_call,
+        agent_id=ELEVENLABS_AGENT_ID,
+        from_number=caller_phone,
+        to_number=called_number,
+        direction="inbound",
+        conversation_initiation_client_data={
+            "conversation_config_override": {
+                "agent": {
+                    "prompt": {"prompt": prompt_text},
+                    "first_message": first_message,
+                    "language": "pl",
+                }
+            },
+            "dynamic_variables": {
+                "business_name": tenant.get("name") or "",
+                "caller_phone": caller_phone,
+            },
+        },
+    )
+    logger.info(f"📞 [ELEVENLABS AGENT] register_call OK dla {tenant.get('name')} ({caller_phone} → {called_number})")
+    return twiml
 
 ELEVENLABS_SHARED_SECRET = os.getenv("ELEVENLABS_SHARED_SECRET", "")
 
