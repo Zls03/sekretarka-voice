@@ -289,7 +289,17 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
                 decrypted_token = decrypt_token(raw_user_token) if raw_user_token else ""
 
     # ── Mapowanie TTS provider + voice_id ──
-    raw_provider = firm.get("tts_provider") or "google"
+    # db_provider = surowa wartość z bazy PRZED domyślnym "google" — potrzebna żeby
+    # odróżnić "pole naprawdę puste" od "jawnie ustawione na google". Bez tego
+    # rozróżnienia poniższe gałęzie oparte na voice_id (zabezpieczenie na stare dane)
+    # nadpisywały KAŻDY jawny wybór providera (np. "elevenlabs") stale zostawionym
+    # polem voice_id — voice_id dostaje wartość Google Chirp3 jako efekt uboczny
+    # wyboru głosu w zakładce "Gemini Live" panelu (synchronizacja z zakładką "Głos
+    # zapasowy"), niezależnie od tego jaki provider jest faktycznie aktywny. Błąd
+    # złapany na żywo 2026-09-01: ElevenLabs zapisywał się poprawnie w bazie, ale
+    # rozmowa i tak leciała przez Google, bo to właśnie ta gałąź go nadpisywała.
+    db_provider  = firm.get("tts_provider")
+    raw_provider = db_provider or "google"
     raw_voice_id = firm.get("voice_id") or ""
 
     # Zabezpieczenie na stare dane gdzie nazwa głosu była wpisana do tts_provider
@@ -310,11 +320,14 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     elif raw_provider == "cartesia":
         actual_provider = "cartesia"
         actual_voice_id = firm.get("azure_voice_id") or "575a5d29-1fdc-4d4e-9afa-5a9a71759864"
-    elif raw_voice_id in google_voices:
-        # voice_id wskazuje na głos Google — wymuś google niezależnie od tts_provider
+    elif not db_provider and raw_voice_id in google_voices:
+        # Tylko gdy tts_provider w bazie jest PUSTE (naprawdę stare dane, sprzed
+        # istnienia tego pola) — voice_id jako jedyny dostępny sygnał. Gdy
+        # db_provider jest jawnie ustawione (np. "elevenlabs"), to ono wygrywa,
+        # nawet jeśli voice_id zostało z wcześniejszego, niepowiązanego wyboru.
         actual_provider = "google"
         actual_voice_id = raw_voice_id
-    elif raw_voice_id in azure_voices:
+    elif not db_provider and raw_voice_id in azure_voices:
         actual_provider = "azure"
         actual_voice_id = raw_voice_id
     else:
