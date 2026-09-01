@@ -377,6 +377,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "realtime_voice":      firm.get("realtime_voice") or "",
         "gemini_voice":        firm.get("gemini_voice") or "",
         "gemini_native_voice_enabled": int(firm.get("gemini_native_voice_enabled") or 0),
+        "realtime_engine": firm.get("realtime_engine") or "gemini",
 
         "is_active":        int(firm.get("is_active") or 1),
         "is_blocked":       int(firm.get("is_blocked") or 0),

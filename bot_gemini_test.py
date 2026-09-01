@@ -891,10 +891,15 @@ async def twilio_incoming_gemini_live_test(request: Request):
         )
 
     host = request.headers.get("host", "localhost")
+    # realtime_engine ('gemini'/'openai', panel: zakładka "Głos agenta") decyduje który
+    # pipeline odbiera ten numer — SAM numer telefonu obsługuje oba silniki, tu jest
+    # jedyne miejsce rozgałęzienia. /ws-gemini-test to websocket z bot_openai_realtime.py
+    # (montowany w tym samym Railway deployu), identyczny zestaw Parameter co niżej.
+    ws_path = "ws-gemini-test" if tenant.get("realtime_engine") == "openai" else "ws-gemini-live-test"
     twiml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="wss://{host}/ws-gemini-live-test">
+        <Stream url="wss://{host}/{ws_path}">
             <Parameter name="callSid" value="{call_sid}" />
             <Parameter name="phone" value="{tenant['phone_number']}" />
             <Parameter name="callerPhone" value="{caller}" />
@@ -1135,10 +1140,21 @@ async def vonage_answer_gemini_live(request: Request):
         return JSONResponse(ncco)
 
     host = request.headers.get("host", "localhost")
-    ws_uri = (
-        f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}"
-        f"&callerPhone={from_number}&callSid={call_uuid}&regionUrl={quote(region_url, safe='')}"
-    )
+    # realtime_engine ('gemini'/'openai', panel: zakładka "Głos agenta") decyduje który
+    # pipeline odbiera ten numer — SAM numer telefonu obsługuje oba silniki, tu jest
+    # jedyne miejsce rozgałęzienia. /ws-gemini-test-vonage to websocket z
+    # bot_openai_realtime.py (montowany w tym samym Railway deployu) — bez regionUrl,
+    # bo ta ścieżka go nie czyta (nie robi transferu Vonage, patrz jej handler).
+    if tenant.get("realtime_engine") == "openai":
+        ws_uri = (
+            f"wss://{host}/ws-gemini-test-vonage?phone={tenant['phone_number']}"
+            f"&callerPhone={from_number}&callSid={call_uuid}"
+        )
+    else:
+        ws_uri = (
+            f"wss://{host}/ws-gemini-live-test-vonage?phone={tenant['phone_number']}"
+            f"&callerPhone={from_number}&callSid={call_uuid}&regionUrl={quote(region_url, safe='')}"
+        )
 
     ncco = [
         {
