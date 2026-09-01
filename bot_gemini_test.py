@@ -164,6 +164,9 @@ app = FastAPI()
 from bot_openai_realtime import router as openai_realtime_router
 app.include_router(openai_realtime_router)
 
+from bot_elevenlabs_agent import router as elevenlabs_agent_router
+app.include_router(elevenlabs_agent_router)
+
 
 # ==========================================================================
 # WSPÓLNE WEBHOOKI VONAGE — używane przez OBIE ścieżki (OpenAI Realtime w
