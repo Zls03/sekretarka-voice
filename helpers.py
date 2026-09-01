@@ -320,6 +320,16 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     elif raw_provider == "cartesia":
         actual_provider = "cartesia"
         actual_voice_id = firm.get("azure_voice_id") or "575a5d29-1fdc-4d4e-9afa-5a9a71759864"
+    elif raw_provider == "elevenlabs":
+        # ElevenLabs ma WŁASNĄ kolumnę na voice_id (elevenlabs_voice_id) — NIE wolno
+        # brać jej ze współdzielonego `voice_id` (to pole należy do zakładek
+        # Google/Gemini Live i zostaje nadpisane ich kafelkami głosu). Błąd złapany
+        # na żywo 2026-09-01: stary Google Chirp3 voice_id z zakładki "Gemini Live"
+        # leciał jako ElevenLabs voice_id → ElevenLabs odrzucał WebSocket z HTTP 403
+        # (nieistniejący/nienależący do konta voice_id), co wyglądało jak problem
+        # z kluczem API, a kluczem nigdy nie było.
+        actual_provider = "elevenlabs"
+        actual_voice_id = firm.get("elevenlabs_voice_id") or ""
     elif not db_provider and raw_voice_id in google_voices:
         # Tylko gdy tts_provider w bazie jest PUSTE (naprawdę stare dane, sprzed
         # istnienia tego pola) — voice_id jako jedyny dostępny sygnał. Gdy
@@ -366,6 +376,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "speaking_rate":       float(firm.get("speaking_rate") or 1.06),
         "realtime_voice":      firm.get("realtime_voice") or "",
         "gemini_voice":        firm.get("gemini_voice") or "",
+        "gemini_native_voice_enabled": int(firm.get("gemini_native_voice_enabled") or 0),
 
         "is_active":        int(firm.get("is_active") or 1),
         "is_blocked":       int(firm.get("is_blocked") or 0),

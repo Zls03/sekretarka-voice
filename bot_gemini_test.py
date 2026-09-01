@@ -1060,7 +1060,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     # Przełącznik per-tenant (panel: zakładka "Głos agenta" → "🎙️ Gemini Live" vs
     # "ElevenLabs"/"Głos zapasowy") — DWIE różne architektury pipeline'u, nie jeden
     # uniwersalny wariant, bo mają różne wymagania:
-    gemini_native_voice = tenant.get("gemini_native_voice_enabled") == 1
+    gemini_native_voice = bool(int(tenant.get("gemini_native_voice_enabled") or 0))
     if gemini_native_voice:
         # Gemini mówi WŁASNYM głosem (modalities=AUDIO, bez filtra) — najniższa latencja,
         # ale polski głos wyraźnie słabszy niż ElevenLabs (stąd w ogóle ta cała hybryda
@@ -1313,7 +1313,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     # Przełącznik per-tenant (panel: zakładka "Głos agenta" → "🎙️ Gemini Live" vs
     # "ElevenLabs"/"Głos zapasowy") — DWIE różne architektury pipeline'u, nie jeden
     # uniwersalny wariant, bo mają różne wymagania:
-    gemini_native_voice = tenant.get("gemini_native_voice_enabled") == 1
+    gemini_native_voice = bool(int(tenant.get("gemini_native_voice_enabled") or 0))
     if gemini_native_voice:
         # Gemini mówi WŁASNYM głosem (modalities=AUDIO, bez filtra) — najniższa latencja,
         # ale polski głos wyraźnie słabszy niż ElevenLabs (stąd w ogóle ta cała hybryda
