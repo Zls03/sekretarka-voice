@@ -123,14 +123,17 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         "language": "pl",
     }
     conversation_config_override = {"agent": agent_override}
-    # Głos per-tenant — jedna, wspólna "szablonowa" konfiguracja agenta w ElevenLabs
-    # (patrz docstring modułu) obsługuje wszystkie firmy, więc głos NIE jest ustawiony
-    # tam na sztywno — nadpisujemy go tu, tak samo jak prompt, na podstawie panelu
-    # (pole elevenlabs_agent_voice_id, patrz helpers.py). Puste = zostaje domyślny głos
-    # z agenta szablonowego.
-    voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
-    if voice_id:
-        conversation_config_override["tts"] = {"voice_id": voice_id}
+    # ⚠️ Nadpisywanie głosu TYMCZASOWO WYŁĄCZONE (2026-09-02) — pierwszy live test z
+    # conversation_config_override["tts"]["voice_id"] zakończył się natychmiastowym
+    # "status": "failed", "termination_reason": "Override for field 'voice_id'..." (log
+    # ucięty, dokładny dalszy tekst nieznany). Nie potwierdzone czy to zły voice_id tego
+    # konkretnego tenanta (zaszłość sprzed dzisiejszych zmian) czy nadpisywanie tts przez
+    # register_call w ogóle nie jest wspierane dla połączeń telefonicznych — do wyjaśnienia
+    # PRZED ponownym włączeniem. Na razie zostaje domyślny głos agenta-szablonu
+    # (Pawel Pro - Polish), żeby połączenia w ogóle działały.
+    # voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
+    # if voice_id:
+    #     conversation_config_override["tts"] = {"voice_id": voice_id}
 
     client = _get_elevenlabs_client()
     twiml = await asyncio.to_thread(
@@ -251,7 +254,7 @@ async def elevenlabs_post_call(request: Request):
         logger.error(f"❌ [ELEVENLABS AGENT] Post-call: nie mogę sparsować JSON: {raw_body[:500]!r}")
         return {"status": "ignored"}
 
-    logger.info(f"📊 [ELEVENLABS AGENT] Post-call payload (do ustalenia dokładnych nazw pól): {json.dumps(body)[:2000]}")
+    logger.info(f"📊 [ELEVENLABS AGENT] Post-call payload (do ustalenia dokładnych nazw pól): {json.dumps(body)[:6000]}")
 
     data = body.get("data") or body
     called_number = data.get("called_number") or data.get("agent_number") or data.get("to_number") or ""
