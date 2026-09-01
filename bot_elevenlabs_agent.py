@@ -62,16 +62,17 @@ potwierdzimy dopiero na pierwszym prawdziwym połączeniu telefonicznym.
 
 import os
 import json
+import time
+import uuid
 import asyncio
 
 from loguru import logger
 from fastapi import APIRouter, Request
 
-from helpers import get_tenant_by_phone
+from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
 from realtime_tools import (
     send_message_email,
-    apply_call_charge,
     is_call_allowed,
     _looks_like_vague_meta_message,
     _looks_too_short,
@@ -242,11 +243,63 @@ async def elevenlabs_tool_contact_owner(request: Request):
     return {"status": "ok" if ok else "error"}
 
 
+async def save_elevenlabs_transcript(tenant: dict, call_sid: str, transcript: list, analysis: dict) -> int:
+    """1:1 wzorzec z realtime_tools.py::save_call_transcript (Gemini Live/OpenAI
+    Realtime), ale czyta ElevenLabs data.transcript[] zamiast LLMContext.get_messages() —
+    role tam to "agent"/"user", u nas w call_transcripts zawsze "assistant"/"user" (patrz
+    save_call_transcript), więc mapujemy "agent"->"assistant". NIE tworzy wiersza
+    call_logs — ten już istnieje, utworzony przez /twilio/status (patrz docstring
+    elevenlabs_post_call), tu tylko dopisujemy transkrypt do call_transcripts."""
+    tenant_id = tenant.get("id", "")
+    if not tenant_id or not call_sid:
+        return 0
+
+    is_saas = tenant_id.startswith("firm_")
+    target_db = saas_db if is_saas else db
+
+    saved = 0
+    for turn in transcript:
+        role = "assistant" if turn.get("role") == "agent" else "user"
+        content = (turn.get("message") or "").strip()
+        if not content:
+            continue
+        await target_db.execute(
+            """INSERT INTO call_transcripts
+               (id, tenant_id, call_sid, role, content, created_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+            [f"tr_{uuid.uuid4().hex[:12]}", tenant_id, call_sid, role, content[:500]],
+        )
+        saved += 1
+
+    summary = analysis.get("transcript_summary") or ""
+    if summary:
+        await target_db.execute(
+            """INSERT INTO call_transcripts
+               (id, tenant_id, call_sid, role, content, created_at)
+               VALUES (?, ?, ?, 'summary', ?, datetime('now'))""",
+            [f"tr_{uuid.uuid4().hex[:12]}", tenant_id, call_sid, summary[:1000]],
+        )
+
+    return saved
+
+
 @router.post("/elevenlabs/post-call")
 async def elevenlabs_post_call(request: Request):
+    """⚠️ NIE nalicza minut/kredytów — to już robi /twilio/status (bot_gemini_test.py),
+    dokładnie tym samym mechanizmem co dla Gemini Live/OpenAI Realtime, bo Twilio wysyła
+    swój własny "completed" callback niezależnie od tego, który silnik obsłużył audio
+    (potwierdzone na żywo 2026-09-02: call_sid się zgadza, oba webhooki widzą tę samą
+    rozmowę). Druga próba naliczania tu = podwójne obciążenie klienta.
+
+    Ten handler robi WYŁĄCZNIE to, czego /twilio/status nie ma: transkrypt rozmowy
+    (call_transcripts) — bez tego panel nie ma czego pokazać po "rozwinięciu" logu
+    rozmowy dla połączeń przez ElevenLabs. Poprawne nazwy pól (data.phone_call.*,
+    data.metadata.call_duration_secs, data.transcript[].{role,message}) potwierdzone na
+    żywym payloadzie 2026-09-02 — patrz elevenlabs.io/docs/agents-platform/workflows/
+    post-call-webhooks. Wcześniejsza wersja zgadywała nazwy z dokumentacji bez przykładu
+    i zawsze trafiała w "brak called_number" (pola faktycznie są zagnieżdżone głębiej)."""
     raw_body = await request.body()
     signature_header = request.headers.get("elevenlabs-signature", "")
-    logger.info(f"📊 [ELEVENLABS AGENT] Post-call webhook | elevenlabs-signature={signature_header!r}")
 
     try:
         body = json.loads(raw_body)
@@ -254,15 +307,24 @@ async def elevenlabs_post_call(request: Request):
         logger.error(f"❌ [ELEVENLABS AGENT] Post-call: nie mogę sparsować JSON: {raw_body[:500]!r}")
         return {"status": "ignored"}
 
-    logger.info(f"📊 [ELEVENLABS AGENT] Post-call payload (do ustalenia dokładnych nazw pól): {json.dumps(body)[:6000]}")
+    data = body.get("data") or {}
+    phone_call = data.get("phone_call") or {}
+    metadata = data.get("metadata") or {}
+    analysis = data.get("analysis") or {}
 
-    data = body.get("data") or body
-    called_number = data.get("called_number") or data.get("agent_number") or data.get("to_number") or ""
-    duration = int(data.get("call_duration_secs") or data.get("duration_secs") or 0)
-    conversation_id = data.get("conversation_id") or body.get("conversation_id") or "unknown"
+    called_number = phone_call.get("agent_number") or ""
+    caller_phone = phone_call.get("external_number") or ""
+    call_sid = phone_call.get("call_sid") or ""
+    duration = int(metadata.get("call_duration_secs") or 0)
+    transcript = data.get("transcript") or []
 
-    if not called_number or duration <= 0:
-        logger.warning("⚠️ [ELEVENLABS AGENT] Post-call: brak called_number lub duration<=0 — pomijam naliczanie, patrz zalogowany payload wyżej")
+    logger.info(
+        f"📊 [ELEVENLABS AGENT] Post-call: {called_number} ({call_sid}, {duration}s, "
+        f"status={data.get('status')}, {len(transcript)} tur) | signature={signature_header!r}"
+    )
+
+    if not call_sid or not called_number:
+        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: brak call_sid/called_number w payloadzie, pomijam. Surowe data.keys(): {list(data.keys())}")
         return {"status": "ignored"}
 
     tenant = await get_tenant_by_phone(called_number)
@@ -270,11 +332,6 @@ async def elevenlabs_post_call(request: Request):
         logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: nie znaleziono tenanta dla {called_number}")
         return {"status": "ignored"}
 
-    await apply_call_charge(
-        tenant_id=tenant["id"],
-        is_saas_tenant=(tenant.get("source") == "saas"),
-        call_sid=str(conversation_id),
-        call_status="completed",
-        duration=duration,
-    )
+    saved = await save_elevenlabs_transcript(tenant, call_sid, transcript, analysis)
+    logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({call_sid})")
     return {"status": "ok"}
