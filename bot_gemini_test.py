@@ -902,7 +902,7 @@ async def twilio_incoming_gemini_live_test(request: Request):
         # bezpośrednio pod ElevenLabs. Fallback na błąd: krótki komunikat + rozłączenie,
         # NIE cisza — błąd konfiguracji ElevenLabs nie może zostawić klienta bez info.
         try:
-            twiml = await build_register_call_twiml(tenant, caller, called)
+            twiml = await build_register_call_twiml(tenant, caller, called, call_sid)
             return Response(content=twiml, media_type="application/xml")
         except Exception as e:
             logger.error(f"❌ [GEMINI LIVE TEST] register_call ElevenLabs nieudany: {e}")

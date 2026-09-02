@@ -73,6 +73,7 @@ from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
 from realtime_tools import (
     send_message_email,
+    send_call_summary_email,
     is_call_allowed,
     _looks_like_vague_meta_message,
     _looks_too_short,
@@ -101,7 +102,7 @@ def _get_elevenlabs_client():
     return _elevenlabs_client
 
 
-async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str) -> str:
+async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str, call_sid: str = "") -> str:
     """"Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
     gotowe do zwrócenia bezpośrednio Twilio (media_type="application/xml").
 
@@ -145,9 +146,18 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         direction="inbound",
         conversation_initiation_client_data={
             "conversation_config_override": conversation_config_override,
+            # business_name/caller_phone/called_number/twilio_call_sid celowo w
+            # dynamic_variables: ElevenLabs echouje ten obiekt z powrotem w post-call
+            # webhooku (data.conversation_initiation_client_data.dynamic_variables) —
+            # to jedyny sposób by /elevenlabs/post-call poznał NASZE Twilio CallSid i
+            # numer firmy, bo register_call() nie przyjmuje ich jako osobnych pól, a
+            # payload post-call NIE zawiera "phone_call" (potwierdzone na żywo
+            # 2026-09-02 — inaczej niż wcześniej zakładano, patrz elevenlabs_post_call).
             "dynamic_variables": {
                 "business_name": tenant.get("name") or "",
                 "caller_phone": caller_phone,
+                "called_number": called_number,
+                "twilio_call_sid": call_sid,
             },
         },
     )
@@ -292,12 +302,21 @@ async def elevenlabs_post_call(request: Request):
     rozmowę). Druga próba naliczania tu = podwójne obciążenie klienta.
 
     Ten handler robi WYŁĄCZNIE to, czego /twilio/status nie ma: transkrypt rozmowy
-    (call_transcripts) — bez tego panel nie ma czego pokazać po "rozwinięciu" logu
-    rozmowy dla połączeń przez ElevenLabs. Poprawne nazwy pól (data.phone_call.*,
-    data.metadata.call_duration_secs, data.transcript[].{role,message}) potwierdzone na
-    żywym payloadzie 2026-09-02 — patrz elevenlabs.io/docs/agents-platform/workflows/
-    post-call-webhooks. Wcześniejsza wersja zgadywała nazwy z dokumentacji bez przykładu
-    i zawsze trafiała w "brak called_number" (pola faktycznie są zagnieżdżone głębiej)."""
+    (call_transcripts) + mail z podsumowaniem (jeśli tenant ma włączone raporty) — bez
+    tego panel nie ma czego pokazać po "rozwinięciu" logu rozmowy dla połączeń przez
+    ElevenLabs.
+
+    ⚠️ 2026-09-02: na żywym payloadzie z register_call() (bring-your-own-Twilio) okazało
+    się, że body["data"] NIE zawiera klucza "phone_call" w ogóle (zaobserwowane klucze:
+    agent_id, metadata, analysis, conversation_initiation_client_data, conversation_id,
+    transcript, ...) — inaczej niż wcześniej zakładano na podstawie dokumentacji. Powód:
+    register_call() nie przekazuje Twilio CallSid do ElevenLabs (nie ma takiego pola w
+    ich API), więc ich webhook nie ma skąd go znać. Naprawione przez ECHO: CallSid i
+    called_number są teraz wysyłane w dynamic_variables przy register_call()
+    (build_register_call_twiml) i odczytywane z powrotem tutaj z
+    data.conversation_initiation_client_data.dynamic_variables — ElevenLabs oddaje ten
+    obiekt bez zmian w każdym post-call webhooku. data.metadata.call_duration_secs i
+    data.transcript[].{role,message} pozostają bez zmian (potwierdzone działające)."""
     raw_body = await request.body()
     signature_header = request.headers.get("elevenlabs-signature", "")
 
@@ -308,13 +327,17 @@ async def elevenlabs_post_call(request: Request):
         return {"status": "ignored"}
 
     data = body.get("data") or {}
-    phone_call = data.get("phone_call") or {}
     metadata = data.get("metadata") or {}
     analysis = data.get("analysis") or {}
+    init_data = data.get("conversation_initiation_client_data") or {}
+    dyn_vars = init_data.get("dynamic_variables") or {}
+    # Fallback na starą ścieżkę (phone_call.*) na wypadek gdyby inny typ połączenia
+    # (np. przyszły import numeru zamiast register_call) jednak ją wypełniał.
+    phone_call = data.get("phone_call") or {}
 
-    called_number = phone_call.get("agent_number") or ""
-    caller_phone = phone_call.get("external_number") or ""
-    call_sid = phone_call.get("call_sid") or ""
+    called_number = dyn_vars.get("called_number") or phone_call.get("agent_number") or ""
+    caller_phone = dyn_vars.get("caller_phone") or phone_call.get("external_number") or ""
+    call_sid = dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
     duration = int(metadata.get("call_duration_secs") or 0)
     transcript = data.get("transcript") or []
 
@@ -324,7 +347,10 @@ async def elevenlabs_post_call(request: Request):
     )
 
     if not call_sid or not called_number:
-        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: brak call_sid/called_number w payloadzie, pomijam. Surowe data.keys(): {list(data.keys())}")
+        logger.warning(
+            f"⚠️ [ELEVENLABS AGENT] Post-call: brak call_sid/called_number w payloadzie, pomijam. "
+            f"data.keys()={list(data.keys())} dynamic_variables={dyn_vars}"
+        )
         return {"status": "ignored"}
 
     tenant = await get_tenant_by_phone(called_number)
@@ -334,4 +360,15 @@ async def elevenlabs_post_call(request: Request):
 
     saved = await save_elevenlabs_transcript(tenant, call_sid, transcript, analysis)
     logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({call_sid})")
+
+    # Mail z podsumowaniem po KAŻDEJ rozmowie — 1:1 z realtime_tools.py::maybe_send_call_summary
+    # (Gemini Live/OpenAI Realtime), tylko streszczenie bierzemy gotowe z ElevenLabs
+    # (data.analysis.transcript_summary) zamiast generować je osobnym wywołaniem LLM.
+    lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
+    to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
+    summary = analysis.get("transcript_summary") or ""
+    if lead_email_enabled and to_email and summary:
+        ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email)
+        logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
+
     return {"status": "ok"}
