@@ -245,6 +245,15 @@ async def elevenlabs_tool_contact_owner(request: Request):
     if not tenant:
         return {"status": "error", "reason": "tenant_not_found"}
 
+    if tenant.get("contact_owner_enabled", 1) != 1:
+        # Twardy blok — narzędzie w ElevenLabs jest statycznie przypięte do agenta
+        # (nie da się go usunąć per-rozmowa jak w Gemini Live/OpenAI Realtime, patrz
+        # has_contact_owner w realtime_prompt.py), więc nawet gdy model je i tak wywoła
+        # wbrew instrukcji w prompcie, tu odmawiamy wysyłki — to jedyne miejsce gdzie
+        # ustawienie tenanta jest faktycznie wymuszone, nie tylko sugerowane tekstem.
+        logger.warning(f"🚫 [ELEVENLABS AGENT] contact_owner wywołany mimo contact_owner_enabled=0 dla {tenant.get('name')} — odmawiam wysyłki")
+        return {"status": "error", "reason": "disabled"}
+
     to_email = tenant.get("notification_email") or tenant.get("email")
     if not to_email:
         return {"status": "error", "reason": "no_notification_email"}

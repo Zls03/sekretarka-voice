@@ -293,6 +293,12 @@ prosi o rozmowę z człowiekiem, jest sfrustrowany lub pyta jak się z kimś sko
 → NIE dopytuj o imię ani treść sprawy — to nie Twoja rola na tej linii.
 → NIE mów że "przekażesz wiadomość" ani że "ktoś oddzwoni" — to się nie wydarzy, bo nic nie
   wysyłasz.
+⛔ ZAKAZ ZMYŚLONYCH POTWIERDZEŃ — KRYTYCZNE, błąd zaobserwowany na żywym telefonie: model powiedział
+klientowi "Zapisałam Pani prośbę i przekazałam ją bezpośrednio właścicielowi" mimo że NIE ISTNIEJE
+żaden mechanizm który by to zrobił — czysty wymysł. NIGDY nie formułuj odpowiedzi w stylu "zapisałam",
+"przekazałam", "zgłosiłam", "właściciel się odezwie/zweryfikuje" — nawet jako parafraza, nawet w
+połowie zdania. Jedyna dozwolona odpowiedź to DOSŁOWNE zacytowanie sposobu kontaktu z FAQ/DODATKOWYCH
+INFO (np. "Proszę napisać na [adres]") — bez żadnego dopisku sugerującego że Ty coś zrobiłaś/zrobiłeś.
 Jeśli w FAQ/DODATKOWYCH INFO NIE MA żadnej informacji o sposobie kontaktu — powiedz krótko że
 bezpośredni kontakt nie jest teraz dostępny."""
     elif has_transfer:
@@ -379,14 +385,18 @@ testowa — po prostu nie jest tu włączone. NIE obiecuj że coś zarezerwujesz
     if tenant.get("lead_mode", 0) != 1:
         if has_contact_owner:
             zgloszenia_block = """Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
-włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, potraktuj to jak
-zwykłą prośbę o kontakt z właścicielem (patrz KONTAKT Z WŁAŚCICIELEM wyżej) — dopytaj o imię i
-treść sprawy, i wywołaj contact_owner, NIE traktuj tego jako osobne, niedostępne zgłoszenie."""
+włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, LUB prosi o demo/test/
+kontakt handlowy/oddzwonienie w sprawie samej usługi (np. "chcę uruchomić demo", "niech ktoś do mnie
+oddzwoni") — potraktuj to jak zwykłą prośbę o kontakt z właścicielem (patrz KONTAKT Z WŁAŚCICIELEM
+wyżej) — dopytaj o imię i treść sprawy, i wywołaj contact_owner, NIE traktuj tego jako osobne,
+niedostępne zgłoszenie. ⛔ NIE mów że coś "przekazujesz"/"zgłaszasz" dopóki NIE wywołałeś contact_owner
+i nie dostałeś jego wyniku — sama chęć klienta (np. "chcę demo") to jeszcze nie wywołanie funkcji."""
         else:
             zgloszenia_block = """Zbieranie zgłoszeń/problemów do dalszej realizacji (np. dla mechanika/hydraulika) nie jest tu
-włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, potraktuj to jak
-zwykłą prośbę o kontakt z właścicielem/lekarzem (patrz KONTAKT Z WŁAŚCICIELEM/LEKARZEM wyżej) —
-podaj sposób kontaktu z FAQ/DODATKOWYCH INFO, NIE zbieraj imienia ani treści sprawy."""
+włączone. Jeśli klient opisuje problem wymagający kontaktu ze specjalistą, LUB prosi o demo/test/
+kontakt handlowy/oddzwonienie w sprawie samej usługi — potraktuj to jak zwykłą prośbę o kontakt z
+właścicielem/lekarzem (patrz KONTAKT Z WŁAŚCICIELEM/LEKARZEM wyżej) — podaj sposób kontaktu z
+FAQ/DODATKOWYCH INFO, NIE zbieraj imienia ani treści sprawy, NIE mów że coś "przekazujesz"."""
         booking_block += f"""
 
 ⚠️ ZGŁOSZENIA — NIEDOSTĘPNE NA TEJ LINII:
