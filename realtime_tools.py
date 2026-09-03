@@ -632,11 +632,8 @@ klienta WPROST o konkret sprawy i wywołaj ponownie.""",
                 "type": "string",
                 "enum": ["hot", "normal"],
                 "description": (
-                    "OPCJONALNE, oś NIEZALEŻNA od urgency. hot = klient brzmi na zdecydowanego i "
-                    "gotowego do realizacji (podaje konkretne wymagania, budżet, chce zacząć jak "
-                    "najszybciej, pyta o konkretną ofertę/wycenę dla siebie). normal = klient dopiero "
-                    "się rozgląda / zbiera informacje / nie sprecyzował jeszcze potrzeb. Jeśli nie "
-                    "jesteś pewien — pomiń to pole albo wybierz normal, NIE zgaduj na siłę."
+                    "Opcjonalne. hot = klient zdecydowany, ma konkretne wymagania/budżet, chce szybko. "
+                    "normal = dopiero się rozgląda. Niepewne → pomiń."
                 ),
             },
         },
