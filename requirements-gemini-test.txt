@@ -48,3 +48,11 @@ PyJWT
 # NIE mylić z pipecat-ai[elevenlabs] w requirements.txt (tamto to klient
 # websocket do samego streamingu TTS, zupełnie inna zależność/inny cel).
 elevenlabs
+
+# Surowy klient WebSocket — most Vonage<->ElevenLabs Conversational AI
+# (ElevenLabsRealtimeService w bot_elevenlabs_agent.py, dopisany 2026-09-03).
+# Jawnie dopisany mimo że pipecat-ai i tak go ciągnie tranzytywnie (używany
+# wewnętrznie przez OpenAIRealtimeLLMService/GeminiLiveLLMService) — bez
+# jawnej deklaracji tu, przyszła zmiana pipecat-ai mogłaby po cichu przestać
+# go ciągnąć i wywalić WYŁĄCZNIE tę jedną ścieżkę bez oczywistego powodu.
+websockets

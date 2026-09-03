@@ -64,10 +64,23 @@ import os
 import json
 import time
 import uuid
+import base64
 import asyncio
 
+import websockets
 from loguru import logger
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket
+
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineTask, PipelineParams
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.processors.audio.vad_processor import VADProcessor
+from pipecat.serializers.vonage import VonageFrameSerializer
+from pipecat.frames.frames import StartFrame, EndFrame, InputAudioRawFrame, TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
+from pipecat.processors.frame_processor import FrameProcessor
 
 from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
@@ -82,10 +95,13 @@ from realtime_tools import (
 router = APIRouter()
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-# Domyślny agent na czas testu jednego tenanta — patrz TEST_TENANT_ID w
-# bot_openai_realtime.py dla analogicznego wzorca. Docelowo (wielu tenantów)
-# to powinno być polem per-tenant w panelu (elevenlabs_agent_id), nie stałą
-# środowiskową — świadomie uproszczone teraz, żeby dało się w ogóle przetestować.
+# Agent domyślny/fallback ze zmiennej środowiskowej — używany TYLKO gdy tenant nie ma
+# własnego elevenlabs_agent_id (panel: zakładka "Głos agenta" -> ElevenLabs). Per-tenant
+# pole dopisane 2026-09-03 razem z mostem Vonage (patrz run_elevenlabs_vonage_bot niżej) —
+# wcześniej to było na sztywno jeden wspólny agent dla WSZYSTKICH tenantów, co dawało
+# każdej firmie ten sam prompt-bazę/głos-bazę ElevenLabs (nasze override'y treści promptu
+# i tak nadpisują treść per-rozmowa, ale ustawienia samego agenta typu domyślny model LLM,
+# tembr itp. były wspólne).
 ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
 
 _elevenlabs_client = None
@@ -102,45 +118,74 @@ def _get_elevenlabs_client():
     return _elevenlabs_client
 
 
-async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str, call_sid: str = "") -> str:
-    """"Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
-    gotowe do zwrócenia bezpośrednio Twilio (media_type="application/xml").
+def _resolve_agent_id(tenant: dict) -> str:
+    """Per-tenant elevenlabs_agent_id (panel: zakładka ElevenLabs), z fallbackiem na
+    stałą środowiskową ELEVENLABS_AGENT_ID dla tenantów które go jeszcze nie ustawiły."""
+    return (tenant.get("elevenlabs_agent_id") or "").strip() or ELEVENLABS_AGENT_ID
 
-    Rzuca wyjątek przy braku ELEVENLABS_API_KEY/ELEVENLABS_AGENT_ID lub błędzie
-    API — wołający (bot_gemini_test.py) łapie to i zwraca bezpieczny TwiML
-    fallback, żeby błąd konfiguracji ElevenLabs nie zostawiał klienta w ciszy
-    bez żadnego komunikatu."""
-    if not ELEVENLABS_API_KEY or not ELEVENLABS_AGENT_ID:
-        raise RuntimeError("ELEVENLABS_API_KEY lub ELEVENLABS_AGENT_ID nieskonfigurowane")
 
+def _build_conversation_config_override(
+    tenant: dict, caller_phone: str, called_number: str, call_sid: str = "",
+) -> tuple[dict, dict]:
+    """Wspólne dla obu transportów (Twilio register_call i Vonage WebSocket, patrz
+    run_elevenlabs_vonage_bot) — buduje (conversation_config_override, dynamic_variables)
+    z tych samych danych panelu co Gemini Live/OpenAI Realtime (build_realtime_instructions/
+    build_greeting_message), plus opcjonalny nadpisany głos per-tenant."""
     contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
     prompt_text = build_realtime_instructions(
         tenant, None, include_greeting=False, has_contact_owner=contact_owner_available,
     )
     first_message = build_greeting_message(tenant)
 
-    agent_override = {
-        "prompt": {"prompt": prompt_text},
-        "first_message": first_message,
-        "language": "pl",
+    conversation_config_override = {
+        "agent": {
+            "prompt": {"prompt": prompt_text},
+            "first_message": first_message,
+            "language": "pl",
+        }
     }
-    conversation_config_override = {"agent": agent_override}
-    # Głos per-tenant — patrz elevenlabs_agent_voice_id w helpers.py (kolumna
-    # elevenlabs_voice_id w bazie, ustawiana per firma w panelu, niezależnie od
-    # tts_provider kaskady). PRZYWRÓCONE 2026-09-02 po tym jak pierwszy test padał z
-    # "Override for field 'voice_id'..." — przyczyną był stary/nieprawidłowy voice_id
-    # zaszły w bazie z wcześniejszych testów (sprzed dzisiejszych zmian), NIE brak
-    # wsparcia dla nadpisywania tts w register_call. Potwierdzone poprawnym, świeżo
-    # dodanym do "My Voices" głosem (Aleksandra) — jeśli mimo to znów padnie z tym samym
-    # błędem, podejrzewaj format/uprawnienia konkretnego voice_id, nie sam mechanizm.
-    voice_id = tenant.get("elevenlabs_agent_voice_id") or ""
+    # Głos per-tenant — kolumna elevenlabs_voice_id w bazie, ta sama którą panel
+    # zapisuje w zakładce "🔷 ElevenLabs" (Głos agenta). Do 2026-09-03 kod czytał inną
+    # nazwę pola (elevenlabs_agent_voice_id), której panel NIGDY nie zapisywał — więc
+    # nadpisanie głosu z panelu było martwe od początku, mimo że sam mechanizm
+    # (conversation_config_override.tts.voice_id) działał poprawnie na żywym telefonie
+    # (potwierdzone 2026-09-02 z ręcznie wstawionym do bazy voice_id "Aleksandra").
+    voice_id = tenant.get("elevenlabs_voice_id") or ""
     if voice_id:
         conversation_config_override["tts"] = {"voice_id": voice_id}
+
+    dynamic_variables = {
+        "business_name": tenant.get("name") or "",
+        "caller_phone": caller_phone,
+        "called_number": called_number,
+        # call_sid ogólne (Vonage UUID lub Twilio SID) + twilio_call_sid zostaje dla
+        # wstecznej zgodności z payloadem który /elevenlabs/post-call już umie czytać —
+        # patrz jego aktualizacja niżej, czyta oba klucze.
+        "call_sid": call_sid,
+        "twilio_call_sid": call_sid,
+    }
+    return conversation_config_override, dynamic_variables
+
+
+async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str, call_sid: str = "") -> str:
+    """"Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
+    gotowe do zwrócenia bezpośrednio Twilio (media_type="application/xml").
+
+    Rzuca wyjątek przy braku ELEVENLABS_API_KEY/agent_id lub błędzie API — wołający
+    (bot_gemini_test.py) łapie to i zwraca bezpieczny TwiML fallback, żeby błąd
+    konfiguracji ElevenLabs nie zostawiał klienta w ciszy bez żadnego komunikatu."""
+    agent_id = _resolve_agent_id(tenant)
+    if not ELEVENLABS_API_KEY or not agent_id:
+        raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
+
+    conversation_config_override, dynamic_variables = _build_conversation_config_override(
+        tenant, caller_phone, called_number, call_sid,
+    )
 
     client = _get_elevenlabs_client()
     twiml = await asyncio.to_thread(
         client.conversational_ai.twilio.register_call,
-        agent_id=ELEVENLABS_AGENT_ID,
+        agent_id=agent_id,
         from_number=caller_phone,
         to_number=called_number,
         direction="inbound",
@@ -153,12 +198,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
             # numer firmy, bo register_call() nie przyjmuje ich jako osobnych pól, a
             # payload post-call NIE zawiera "phone_call" (potwierdzone na żywo
             # 2026-09-02 — inaczej niż wcześniej zakładano, patrz elevenlabs_post_call).
-            "dynamic_variables": {
-                "business_name": tenant.get("name") or "",
-                "caller_phone": caller_phone,
-                "called_number": called_number,
-                "twilio_call_sid": call_sid,
-            },
+            "dynamic_variables": dynamic_variables,
         },
     )
     logger.info(f"📞 [ELEVENLABS AGENT] register_call OK dla {tenant.get('name')} ({caller_phone} → {called_number})")
@@ -346,7 +386,10 @@ async def elevenlabs_post_call(request: Request):
 
     called_number = dyn_vars.get("called_number") or phone_call.get("agent_number") or ""
     caller_phone = dyn_vars.get("caller_phone") or phone_call.get("external_number") or ""
-    call_sid = dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
+    # call_sid ogólne (dopisane 2026-09-03 razem z mostem Vonage — patrz
+    # _build_conversation_config_override) sprawdzane PRZED starym twilio_call_sid,
+    # oba klucze i tak niosą tę samą wartość dla nowych połączeń.
+    call_sid = dyn_vars.get("call_sid") or dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
     duration = int(metadata.get("call_duration_secs") or 0)
     transcript = data.get("transcript") or []
 
@@ -381,3 +424,243 @@ async def elevenlabs_post_call(request: Request):
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
 
     return {"status": "ok"}
+
+
+# ==========================================================================
+# MOST VONAGE — dopisany 2026-09-03. "Bring your own Twilio" (register_call, wyżej)
+# NIE ma odpowiednika dla Vonage — to Twilio-specyficzne API ElevenLabs, w którym ICH
+# infrastruktura łączy się z Twilio bezpośrednio, z pominięciem naszego pipeline'u.
+# Dla Vonage nie ma takiego skrótu: ElevenLabs ma oficjalną integrację (patrz
+# elevenlabs.io/docs/conversational-ai/phone-numbers/telephony/vonage), ale w formie
+# SAMODZIELNIE HOSTOWANEGO mostu WebSocket — dokładnie tej samej roli co już pełni
+# bot_gemini_test.py dla Gemini Live/OpenAI Realtime na Vonage. Więc budujemy go tu,
+# reużywając ten sam transport (FastAPIWebsocketTransport+VonageFrameSerializer,
+# audio L16/16kHz) i ten sam wzorzec lokalnego VAD dla przerwań (VADProcessor —
+# transport.output() sam czyści bufor audio na wykryte lokalnie mówienie klienta,
+# patrz PipelineParams(allow_interruptions=True) niżej), zamiast pisać ręcznie parsowanie
+# protokołu Vonage od zera.
+#
+# Protokół WebSocket ElevenLabs Conversational AI (potwierdzony w ich dokumentacji API,
+# NIEPOTWIERDZONY jeszcze na żywym telefonie w chwili pisania — patrz TTFB/format audio
+# w ElevenLabsRealtimeService, pierwsze realne połączenie może wymagać korekt, tak jak
+# przy Gemini Live/OpenAI Realtime): wss://api.elevenlabs.io/v1/convai/conversation
+# ?agent_id=..., autoryzacja nagłówkiem "xi-api-key" (serwer-serwer, więc bezpiecznie —
+# w odróżnieniu od widgetów w przeglądarce nie potrzebujemy tu signed URL). Klient wysyła
+# {"user_audio_chunk": "<base64 PCM>"}, serwer odsyła zdarzenia {"type": "audio", ...},
+# "agent_response", "user_transcript", "interruption", "ping" (trzeba odpowiedzieć "pong"),
+# "conversation_initiation_metadata" (tu neguje się faktyczny format audio — jeśli
+# agent_output_audio_format != pcm_16000, TTFB/jakość ucierpi, bo Vonage jest sztywno na
+# L16/16kHz i nie robimy tu resamplingu w wersji 1).
+class ElevenLabsRealtimeService(FrameProcessor):
+    """Most między pipecat a surowym WebSocketem ElevenLabs Conversational AI — siedzi
+    w pipeline TAM gdzie normalnie siedziałby LLMService (np. GeminiLiveLLMService), ale
+    to nie jest "prawdziwy" pipecat LLM service (żadnej z ich wbudowanych klas nie ma dla
+    ElevenLabs Conversational AI w tej wersji pipecat, patrz github.com/pipecat-ai/pipecat
+    issue #2812) — tylko FrameProcessor który połyka InputAudioRawFrame (wysyła do
+    ElevenLabs, nic nie przepuszcza dalej — to jest ostateczny konsument audio wejściowego)
+    i emituje TTSAudioRawFrame/TTSStartedFrame/TTSStoppedFrame na podstawie zdarzeń
+    przychodzących z ich WebSocketu w osobnym tasku czytającym."""
+
+    def __init__(self, tenant: dict, caller_phone: str, called_number: str, call_sid: str, agent_id: str, api_key: str):
+        super().__init__()
+        self._tenant = tenant
+        self._caller_phone = caller_phone
+        self._called_number = called_number
+        self._call_sid = call_sid
+        self._agent_id = agent_id
+        self._api_key = api_key
+        self._ws = None
+        self._reader_task = None
+        self._sample_rate = 16000
+        self._speaking = False
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, StartFrame):
+            await self.push_frame(frame, direction)
+            await self._connect()
+        elif isinstance(frame, InputAudioRawFrame):
+            await self._send_audio(frame.audio)
+            # NIE przepuszczamy dalej — ElevenLabs sam robi STT/turn-taking po swojej
+            # stronie, nic downstream nie potrzebuje surowego audio wejściowego.
+        elif isinstance(frame, EndFrame):
+            await self._disconnect()
+            await self.push_frame(frame, direction)
+        else:
+            await self.push_frame(frame, direction)
+
+    async def _connect(self):
+        conversation_config_override, dynamic_variables = _build_conversation_config_override(
+            self._tenant, self._caller_phone, self._called_number, self._call_sid,
+        )
+        url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self._agent_id}"
+        try:
+            self._ws = await websockets.connect(url, additional_headers={"xi-api-key": self._api_key})
+        except Exception as e:
+            logger.error(f"❌ [ELEVENLABS/VONAGE] Połączenie WebSocket nie powiodło się: {e}")
+            return
+        await self._ws.send(json.dumps({
+            "type": "conversation_initiation_client_data",
+            "conversation_config_override": conversation_config_override,
+            "dynamic_variables": dynamic_variables,
+        }))
+        logger.info(f"🔌 [ELEVENLABS/VONAGE] Połączono z agentem {self._agent_id} dla {self._tenant.get('name')}")
+        self._reader_task = asyncio.create_task(self._read_loop())
+
+    async def _send_audio(self, audio: bytes):
+        if self._ws is None:
+            return
+        try:
+            b64 = base64.b64encode(audio).decode("ascii")
+            await self._ws.send(json.dumps({"user_audio_chunk": b64}))
+        except Exception as e:
+            logger.error(f"❌ [ELEVENLABS/VONAGE] Wysyłka audio nie powiodła się: {e}")
+
+    async def _read_loop(self):
+        try:
+            async for raw in self._ws:
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                mtype = msg.get("type")
+
+                if mtype == "conversation_initiation_metadata":
+                    meta = msg.get("conversation_initiation_metadata_event", {})
+                    fmt = meta.get("agent_output_audio_format", "pcm_16000")
+                    if fmt != "pcm_16000":
+                        # Świadomie tylko log, nie resampling — patrz komentarz nad klasą.
+                        logger.warning(f"⚠️ [ELEVENLABS/VONAGE] Nieoczekiwany format audio agenta: {fmt} (oczekiwano pcm_16000, jakość/latencja może ucierpieć)")
+
+                elif mtype == "audio":
+                    if not self._speaking:
+                        self._speaking = True
+                        await self.push_frame(TTSStartedFrame())
+                    b64 = msg.get("audio_event", {}).get("audio_base_64", "")
+                    if b64:
+                        audio_bytes = base64.b64decode(b64)
+                        await self.push_frame(TTSAudioRawFrame(audio=audio_bytes, sample_rate=self._sample_rate, num_channels=1))
+
+                elif mtype == "agent_response_complete":
+                    if self._speaking:
+                        self._speaking = False
+                        await self.push_frame(TTSStoppedFrame())
+
+                elif mtype == "agent_response":
+                    text = msg.get("agent_response_event", {}).get("agent_response", "")
+                    if text:
+                        logger.info(f"⏱️ [ELEVENLABS/VONAGE/BOT] mówi: {text!r}")
+
+                elif mtype == "user_transcript":
+                    text = msg.get("user_transcription_event", {}).get("user_transcript", "")
+                    if text:
+                        logger.info(f"⏱️ [ELEVENLABS/VONAGE/USER] transkrypcja: {text!r}")
+
+                elif mtype == "interruption":
+                    # Bufor wyjściowy Vonage jest już czyszczony lokalnie przez
+                    # VADProcessor+allow_interruptions (patrz run_elevenlabs_vonage_bot) —
+                    # to zdarzenie tylko do logu/diagnostyki.
+                    logger.debug("⏱️ [ELEVENLABS/VONAGE] przerwanie (interruption)")
+                    if self._speaking:
+                        self._speaking = False
+                        await self.push_frame(TTSStoppedFrame())
+
+                elif mtype == "ping":
+                    event_id = msg.get("ping_event", {}).get("event_id")
+                    try:
+                        await self._ws.send(json.dumps({"type": "pong", "event_id": event_id}))
+                    except Exception:
+                        pass
+
+                elif mtype == "client_error":
+                    logger.error(f"❌ [ELEVENLABS/VONAGE] client_error: {msg}")
+
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.info(f"🔌 [ELEVENLABS/VONAGE] WebSocket zamknięty: {e}")
+        except Exception as e:
+            logger.error(f"❌ [ELEVENLABS/VONAGE] Błąd w pętli odczytu: {e}")
+
+    async def _disconnect(self):
+        if self._reader_task:
+            self._reader_task.cancel()
+            self._reader_task = None
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+
+async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_phone: str, called_number: str, call_sid: str):
+    """Odpowiednik build_register_call_twiml dla Vonage — patrz komentarz nad sekcją
+    "MOST VONAGE" wyżej po pełne wyjaśnienie dlaczego to osobna ścieżka, nie register_call.
+
+    Billing/minuty: NIE tutaj — Vonage nalicza przez /vonage/events (bot_gemini_test.py),
+    dokładnie tak samo jak dla Gemini Live/OpenAI Realtime, niezależnie od tego który
+    silnik obsłużył audio (ten webhook czyta tylko numer+czas trwania z Vonage, nie wie
+    nic o silniku). Transkrypt + mail z podsumowaniem: załatwia już istniejący
+    /elevenlabs/post-call (patrz wyżej), wołany przez ElevenLabs niezależnie od transportu."""
+    agent_id = _resolve_agent_id(tenant)
+    if not ELEVENLABS_API_KEY or not agent_id:
+        logger.error(f"❌ [ELEVENLABS/VONAGE] ELEVENLABS_API_KEY lub agent_id nieskonfigurowane dla {tenant.get('name')} — zamykam")
+        await websocket.close()
+        return
+
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            serializer=VonageFrameSerializer(
+                params=VonageFrameSerializer.InputParams(vonage_sample_rate=16000),
+            ),
+        ),
+    )
+
+    # Ten sam lokalny VAD co Gemini Live/OpenAI Realtime na Vonage — daje
+    # allow_interruptions realne, natychmiastowe czyszczenie bufora audio Vonage na
+    # wykryte lokalnie mówienie klienta, zamiast czekać na "interruption" z ElevenLabs
+    # (które i tak przychodzi z opóźnieniem sieciowym).
+    vad_processor = VADProcessor(
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4)
+        )
+    )
+
+    elevenlabs_service = ElevenLabsRealtimeService(
+        tenant=tenant, caller_phone=caller_phone, called_number=called_number,
+        call_sid=call_sid or "", agent_id=agent_id, api_key=ELEVENLABS_API_KEY,
+    )
+
+    pipeline = Pipeline([
+        transport.input(),
+        vad_processor,
+        elevenlabs_service,
+        transport.output(),
+    ])
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            audio_in_sample_rate=16000,
+            audio_out_sample_rate=16000,
+        ),
+    )
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_disconnect(transport, client):
+        logger.info("📴 [ELEVENLABS/VONAGE] Klient rozłączony")
+        await task.queue_frame(EndFrame())
+
+    runner = PipelineRunner()
+    logger.info(f"🚀 [ELEVENLABS/VONAGE] Start pipeline dla {tenant.get('name')}")
+    try:
+        await runner.run(task)
+    except Exception as e:
+        logger.error(f"❌ [ELEVENLABS/VONAGE] Pipeline error: {e}")
+    finally:
+        logger.info("🏁 [ELEVENLABS/VONAGE] Koniec połączenia")

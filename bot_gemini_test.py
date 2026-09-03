@@ -164,7 +164,7 @@ app = FastAPI()
 from bot_openai_realtime import router as openai_realtime_router
 app.include_router(openai_realtime_router)
 
-from bot_elevenlabs_agent import router as elevenlabs_agent_router, build_register_call_twiml
+from bot_elevenlabs_agent import router as elevenlabs_agent_router, build_register_call_twiml, run_elevenlabs_vonage_bot
 app.include_router(elevenlabs_agent_router)
 
 
@@ -1167,14 +1167,20 @@ async def vonage_answer_gemini_live(request: Request):
         return JSONResponse(ncco)
 
     host = request.headers.get("host", "localhost")
-    # realtime_engine ('gemini'/'openai', panel: zakładka "Głos agenta") decyduje który
-    # pipeline odbiera ten numer — SAM numer telefonu obsługuje oba silniki, tu jest
-    # jedyne miejsce rozgałęzienia. /ws-gemini-test-vonage to websocket z
-    # bot_openai_realtime.py (montowany w tym samym Railway deployu) — bez regionUrl,
-    # bo ta ścieżka go nie czyta (nie robi transferu Vonage, patrz jej handler).
+    # realtime_engine ('gemini'/'openai'/'elevenlabs', panel: zakładka "Głos agenta")
+    # decyduje który pipeline odbiera ten numer — SAM numer telefonu obsługuje wszystkie
+    # trzy silniki, tu jest jedyne miejsce rozgałęzienia. /ws-gemini-test-vonage to
+    # websocket z bot_openai_realtime.py, /ws-elevenlabs-vonage z bot_elevenlabs_agent.py
+    # (oba montowane w tym samym Railway deployu) — żaden z nich nie czyta regionUrl
+    # (nie robią transferu Vonage, patrz ich handlery).
     if tenant.get("realtime_engine") == "openai":
         ws_uri = (
             f"wss://{host}/ws-gemini-test-vonage?phone={tenant['phone_number']}"
+            f"&callerPhone={from_number}&callSid={call_uuid}"
+        )
+    elif tenant.get("realtime_engine") == "elevenlabs":
+        ws_uri = (
+            f"wss://{host}/ws-elevenlabs-vonage?phone={tenant['phone_number']}"
             f"&callerPhone={from_number}&callSid={call_uuid}"
         )
     else:
@@ -1369,6 +1375,34 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[GEMINI LIVE TEST/VONAGE] Call transcript error: {e}")
+
+
+@app.websocket("/ws-elevenlabs-vonage")
+async def websocket_elevenlabs_vonage(websocket: WebSocket):
+    """Wejście dla realtime_engine == 'elevenlabs' na Vonage — patrz sekcja "MOST VONAGE"
+    w bot_elevenlabs_agent.py po pełne wyjaśnienie. Sama funkcja tylko: parsuje query
+    params (ten sam wzorzec co /ws-gemini-live-test-vonage wyżej), znajduje tenanta,
+    i oddaje sterowanie run_elevenlabs_vonage_bot() — cała logika pipeline'u/WebSocketu
+    ElevenLabs mieszka w bot_elevenlabs_agent.py, żeby nie duplikować jej w dwóch plikach."""
+    tenant_phone = websocket.query_params.get("phone")
+    caller_phone = websocket.query_params.get("callerPhone", "nieznany")
+    call_sid = websocket.query_params.get("callSid")
+    if not tenant_phone:
+        logger.error("❌ [ELEVENLABS/VONAGE] Brak phone w query params — zamykam")
+        await websocket.close()
+        return
+
+    await websocket.accept()
+    logger.info(f"🔌 [ELEVENLABS/VONAGE] WebSocket connected, phone={tenant_phone}")
+
+    tenant = await get_tenant_by_phone(tenant_phone)
+    if not tenant:
+        logger.error("❌ [ELEVENLABS/VONAGE] Nie znaleziono tenanta — zamykam")
+        await websocket.close()
+        return
+
+    logger.info(f"✅ [ELEVENLABS/VONAGE] Tenant: {tenant.get('name')}")
+    await run_elevenlabs_vonage_bot(websocket, tenant, caller_phone, tenant_phone, call_sid or "")
 
 
 if __name__ == "__main__":
