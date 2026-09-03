@@ -79,8 +79,11 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.serializers.vonage import VonageFrameSerializer
-from pipecat.frames.frames import StartFrame, EndFrame, InputAudioRawFrame, TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
-from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.frames.frames import (
+    StartFrame, EndFrame, InputAudioRawFrame, TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
+    InterruptionFrame, VADUserStartedSpeakingFrame,
+)
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
@@ -481,6 +484,16 @@ class ElevenLabsRealtimeService(FrameProcessor):
         # zamknięcia 1000/OK po obu stronach, więc to NIE błąd — po prostu koniec
         # rozmowy, nic nie tracimy, bo wysyłka i tak nigdy nie dociera do ElevenLabs).
         self._closed = False
+        # True TYLKO gdy MY zainicjowaliśmy rozłączenie (EndFrame przyszedł z pipeline'u,
+        # np. bo Vonage rozłączył klienta) — odróżnia to od sytuacji gdy ElevenLabs
+        # zamyka swoją stronę PIERWSZY (naturalny koniec rozmowy, agent się pożegnał).
+        # W tym drugim przypadku to MY musimy zainicjować rozłączenie Vonage (patrz
+        # _read_loop) — w odróżnieniu od Twilio (register_call), gdzie ElevenLabs ma
+        # bezpośrednią kontrolę nad połączeniem Twilio i sam je rozłącza; na Vonage to
+        # MY jesteśmy właścicielem połączenia, ElevenLabs jest tylko "zdalnym mózgiem".
+        # Błąd złapany na żywym telefonie 2026-09-03: bez tego klient zostawał podłączony
+        # w ciszy przez 7+ sekund po pożegnaniu bota, aż sam się rozłączył ręcznie.
+        self._we_disconnected = False
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
@@ -491,7 +504,23 @@ class ElevenLabsRealtimeService(FrameProcessor):
             await self._send_audio(frame.audio)
             # NIE przepuszczamy dalej — ElevenLabs sam robi STT/turn-taking po swojej
             # stronie, nic downstream nie potrzebuje surowego audio wejściowego.
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            if self._speaking:
+                # Przerwanie wykryte LOKALNIE (nasz Silero VAD), bez czekania na
+                # zdarzenie "interruption" z ElevenLabs (przychodzi z opóźnieniem
+                # sieciowym — na żywym telefonie 2026-09-03 zaobserwowane 7+ sekund
+                # martwego/nieprzerwanego audio bota, klient mówił "Halo?" wielokrotnie
+                # zanim cokolwiek się zmieniło). InterruptionFrame to WŁAŚCIWY sygnał
+                # który czyści bufor już wykolejkowanego audio w transporcie wyjściowym
+                # (Gemini Live/OpenAI Realtime dostają to za darmo wewnątrz swoich
+                # własnych serwisów pipecat — u nas trzeba to zrobić jawnie, bo
+                # ElevenLabs nie ma wbudowanej klasy serwisu w tej wersji pipecat).
+                self._speaking = False
+                await self.push_frame(InterruptionFrame(), direction)
+                await self.push_frame(TTSStoppedFrame(), direction)
+            await self.push_frame(frame, direction)
         elif isinstance(frame, EndFrame):
+            self._we_disconnected = True
             await self._disconnect()
             await self.push_frame(frame, direction)
         else:
@@ -570,12 +599,17 @@ class ElevenLabsRealtimeService(FrameProcessor):
                         logger.info(f"⏱️ [ELEVENLABS/VONAGE/USER] transkrypcja: {text!r}")
 
                 elif mtype == "interruption":
-                    # Bufor wyjściowy Vonage jest już czyszczony lokalnie przez
-                    # VADProcessor+allow_interruptions (patrz run_elevenlabs_vonage_bot) —
-                    # to zdarzenie tylko do logu/diagnostyki.
-                    logger.debug("⏱️ [ELEVENLABS/VONAGE] przerwanie (interruption)")
+                    # Zapasowy sygnał — GŁÓWNE przerwanie leci teraz lokalnie z VAD
+                    # (patrz VADUserStartedSpeakingFrame w process_frame, ten sam wzorzec
+                    # co Gemini Live/OpenAI Realtime), bo to zdarzenie sieciowe przychodzi
+                    # z zauważalnym opóźnieniem (złapane na żywym telefonie 2026-09-03:
+                    # 7+ sekund nieprzerwanego audio bota zanim cokolwiek się zmieniło,
+                    # zanim ten fix powstał). Zostaje jako druga linia obrony na wypadek
+                    # gdyby lokalny VAD nie złapał jakiegoś przypadku.
+                    logger.debug("⏱️ [ELEVENLABS/VONAGE] przerwanie (interruption, zdalne)")
                     if self._speaking:
                         self._speaking = False
+                        await self.push_frame(InterruptionFrame())
                         await self.push_frame(TTSStoppedFrame())
 
                 elif mtype == "ping":
@@ -591,8 +625,32 @@ class ElevenLabsRealtimeService(FrameProcessor):
         except websockets.exceptions.ConnectionClosed as e:
             self._closed = True
             logger.info(f"🔌 [ELEVENLABS/VONAGE] WebSocket zamknięty: {e}")
+        except asyncio.CancelledError:
+            # MY anulowaliśmy ten task z _disconnect() (EndFrame już leci z innego
+            # powodu, np. Vonage rozłączył klienta) — nic dodatkowego do zrobienia,
+            # self._we_disconnected już ustawione w process_frame.
+            raise
         except Exception as e:
             logger.error(f"❌ [ELEVENLABS/VONAGE] Błąd w pętli odczytu: {e}")
+        finally:
+            if not self._we_disconnected:
+                # ElevenLabs zamknął stronę PIERWSZY — patrz komentarz przy
+                # self._we_disconnected w __init__ po pełne wyjaśnienie różnicy względem
+                # Twilio. My musimy teraz sami zainicjować koniec połączenia Vonage.
+                asyncio.create_task(self._hangup_after_elevenlabs_closed())
+
+    async def _hangup_after_elevenlabs_closed(self):
+        logger.info("👋 [ELEVENLABS/VONAGE] ElevenLabs zakończył rozmowę — rozłączam Vonage")
+        # Krótki odstęp na dogranie ewentualnego ogona audio już w buforze transportu
+        # (ten sam rząd wielkości co auto_hangup dla end_conversation w realtime_tools.py,
+        # tam 3.0s — tu krócej, bo pożegnanie ElevenLabs już w całości poleciało zanim
+        # zamknęli WebSocket, w odróżnieniu od tamtej ścieżki gdzie EndFrame leci od razu
+        # po samym WYWOŁANIU narzędzia, przed wypowiedzeniem pożegnania).
+        await asyncio.sleep(1.5)
+        try:
+            await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+        except Exception as e:
+            logger.error(f"❌ [ELEVENLABS/VONAGE] Nie udało się wypchnąć EndFrame po zamknięciu przez ElevenLabs: {e}")
 
     async def _disconnect(self):
         if self._reader_task:
