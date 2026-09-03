@@ -88,7 +88,7 @@ from pipecat.services.openai.realtime.events import (
 )
 
 from helpers import get_tenant_by_phone, get_client_profile, db
-from realtime_prompt import build_realtime_instructions
+from realtime_prompt import build_realtime_instructions, build_greeting_message
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
     maybe_send_call_summary, save_call_transcript, is_call_allowed,
@@ -655,9 +655,13 @@ async def websocket_gemini_test(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect(transport, client):
         logger.info("🎤 [REALTIME TEST] Klient połączony — wybudzam Realtime do przywitania")
-        # Usługa realtime nie odzywa się pierwsza sama z siebie — trzeba popchnąć
-        # pusty context frame, żeby wygenerowała pierwszą odpowiedź z system promptu.
-        await user_aggregator.push_context_frame()
+        # Popchnięcie pustego context frame i poleganie na tym, że model SAM przeczyta
+        # blok "ROZPOCZĘCIE ROZMOWY" z system promptu, okazało się niewiarygodne na żywym
+        # telefonie (2026-09-03: model zignorował dokładny tekst powitania i od razu zaczął
+        # recytować cennik) — więc powitanie wymuszamy tym samym mechanizmem co say_now()
+        # dla idle-promptu/pożegnania (response.create z jawnym instructions), zamiast
+        # ufać systemowej instrukcji przy pustym kontekście.
+        await say_now(llm, call_state, build_greeting_message(tenant, None))
         asyncio.create_task(monitor_call_health(task, llm, call_state))
         asyncio.create_task(apply_crm_when_ready(
             llm, tenant, client_profile_task, has_booking=booking_available,
@@ -870,7 +874,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     @transport.event_handler("on_client_connected")
     async def on_connect_vonage(transport, client):
         logger.info("🎤 [REALTIME TEST/VONAGE] Klient połączony — wybudzam Realtime do przywitania")
-        await user_aggregator.push_context_frame()
+        # Patrz komentarz przy on_connect (ścieżka Twilio) — say_now() zamiast pustego
+        # context frame, bo poleganie na systemowej instrukcji dawało niewiarygodne
+        # pierwsze wypowiedzi (np. cennik zamiast dokładnego tekstu powitania).
+        await say_now(llm, call_state, build_greeting_message(tenant, None))
         asyncio.create_task(monitor_call_health(task, llm, call_state))
         asyncio.create_task(apply_crm_when_ready(
             llm, tenant, client_profile_task, has_booking=booking_available,
