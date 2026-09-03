@@ -475,25 +475,39 @@ _URGENCY_LABELS = {"high": "🔴 PILNE", "normal": "Standardowe"}
 
 async def send_lead_email(
     tenant: dict, caller_phone: str, customer_name: str, problem: str, details: str, urgency: str,
-    to_email: str, conversation_summary: str = "",
+    to_email: str, conversation_summary: str = "", lead_temperature: str = "normal",
 ) -> bool:
     """Strukturalny email ze zgłoszeniem. Uniwersalny szablon (nie branżowy — pasuje pod
     kancelarię tak samo jak pod hydraulika), 1:1 z flows_contact.py::_send_lead_report_email
-    pod względem treści/pól."""
+    pod względem treści/pól.
+
+    lead_temperature: DODANE 2026-09-03, oś NIEZALEŻNA od `urgency` (urgency = "czy to
+    awaria/pilne", lead_temperature = "czy klient brzmi na zdecydowanego/gotowego kupić" vs
+    "dopiero się rozgląda") — generyczne dla każdej branży, nie tylko klimatyzacji. CELOWO
+    zachowuje 1:1 stare etykiety ("🔴 PILNE" / "Standardowe") dla obu dotychczasowych
+    przypadków (urgency="high" i lead_temperature nie-"hot") — jedyna NOWA gałąź to
+    lead_temperature="hot", więc dla wszystkich tenantów które nigdy nie dostaną tego
+    sygnału od modelu (stare zachowanie, zanim ta oś istniała) mail wygląda BYTE-IDENTYCZNIE
+    jak przed tą zmianą."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam zgłoszenia")
         return False
 
     business_name = tenant.get("name", "Firma")
-    urgency_label = _URGENCY_LABELS.get(urgency, urgency)
+    if urgency == "high":
+        urgency_label = _URGENCY_LABELS["high"]  # "🔴 PILNE" — bez zmian względem poprzedniego zachowania
+    elif lead_temperature == "hot":
+        urgency_label = "🔥 GORĄCY LEAD"
+    else:
+        urgency_label = _URGENCY_LABELS.get(urgency, urgency)  # "Standardowe" — bez zmian
     name_row = f"""
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Od:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;">{customer_name}</td></tr>
     """ if customer_name else ""
     details_html = f"""
         <p><strong>Szczegóły:</strong></p>
-        <p style="background: #f5f5f5; padding: 15px; border-radius: 5px;">{details}</p>
+        <p style="background: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-line;">{details}</p>
     """ if details else ""
     summary_html = f"""
         <p><strong>Kontekst rozmowy:</strong></p>
@@ -568,7 +582,10 @@ def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -
         problem = (params.arguments.get("problem") or "").strip()
         details = (params.arguments.get("details") or "").strip()
         urgency = params.arguments.get("urgency") or "normal"
-        logger.info(f"🛠️ [REALTIME TEST] submit_lead: urgency={urgency} — {problem[:60]!r}")
+        lead_temperature = params.arguments.get("lead_temperature") or "normal"
+        if lead_temperature not in ("hot", "normal"):
+            lead_temperature = "normal"  # model spoza enum (nie powinno się zdarzyć) — bezpieczny fallback
+        logger.info(f"🛠️ [REALTIME TEST] submit_lead: urgency={urgency} temp={lead_temperature} — {problem[:60]!r}")
 
         if _looks_too_short(problem) or _is_scripted_bot_phrase(problem):
             logger.warning(f"🛠️ [REALTIME TEST] submit_lead: za mało konkretu, odrzucam: {problem[:60]!r}")
@@ -587,7 +604,7 @@ def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -
             summary = await generate_conversation_summary(ctx) if ctx else ""
             if summary == "Brak treści rozmowy.":
                 summary = ""
-            await send_lead_email(tenant, caller_phone, customer_name, problem, details, urgency, owner_email, summary)
+            await send_lead_email(tenant, caller_phone, customer_name, problem, details, urgency, owner_email, summary, lead_temperature)
 
         asyncio.create_task(send_with_summary())
 
@@ -611,6 +628,17 @@ klienta WPROST o konkret sprawy i wywołaj ponownie.""",
             "problem": {"type": "string", "description": "Konkretny opis sprawy/problemu klienta (1-2 zdania) — naturalne sformułowanie w trzeciej osobie, np. 'Klient chce X' jest OK"},
             "details": {"type": "string", "description": "Dodatkowe szczegóły zebrane od klienta (opcjonalne)"},
             "urgency": {"type": "string", "enum": ["high", "normal"], "description": "high = pilne/awaria, normal = standardowe"},
+            "lead_temperature": {
+                "type": "string",
+                "enum": ["hot", "normal"],
+                "description": (
+                    "OPCJONALNE, oś NIEZALEŻNA od urgency. hot = klient brzmi na zdecydowanego i "
+                    "gotowego do realizacji (podaje konkretne wymagania, budżet, chce zacząć jak "
+                    "najszybciej, pyta o konkretną ofertę/wycenę dla siebie). normal = klient dopiero "
+                    "się rozgląda / zbiera informacje / nie sprecyzował jeszcze potrzeb. Jeśli nie "
+                    "jesteś pewien — pomiń to pole albo wybierz normal, NIE zgaduj na siłę."
+                ),
+            },
         },
         required=["problem"],
         handler=handle_submit_lead,
