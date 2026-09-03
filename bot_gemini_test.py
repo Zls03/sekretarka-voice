@@ -377,12 +377,14 @@ GeminiUserMonitor już i tak używa do odświeżania idle_since na starcie mowy
 (VADUserStartedSpeakingFrame), więc żadnej nowej zależności nie dokłada.
 """
 
-GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"  # tymczasowy test (2026-09-03):
-# 3.1 preview miał powtarzalne epizody TTFB 3-11s (potwierdzone czystym A/B testem tego samego
-# tenanta/numeru — patrz historia debugowania), podczas gdy OpenAI Realtime na tym samym
-# połączeniu odpowiadał <1s. Wracamy do starszego, dłużej sprawdzonego modelu 2.5 native-audio
-# żeby sprawdzić czy to specyficzne dla wersji 3.1 (preview), nie dla Live API w ogóle.
-# Rollback: GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
+# Próba użycia gemini-2.5-flash-native-audio-preview-12-2025 (2026-09-03) odrzucona natychmiast
+# przez samo Gemini: "1007 None. Unsupported language code 'pl' for model
+# models/gemini-2.5-flash-native-audio-preview-12-2025" — ten wariant w ogóle nie obsługuje
+# polskiego, więc nie nadaje się jako zamiennik niezależnie od TTFB. Zostajemy przy 3.1 preview
+# (jedyny Live API model ze wsparciem 'pl' jaki mamy) i traktujemy jego epizody podwyższonego
+# TTFB (3-11s, potwierdzone A/B testem) jako coś po stronie Google — patrz OpenAI Realtime
+# jako sprawdzony fallback (realtime_engine='openai' w panelu, zakładka "Realtime GPT").
 
 # Progi idle/max-duration — WARTOŚCI MUSZĄ być takie same jak w bot_openai_realtime.py
 # (obie ścieżki tuningowane razem na żywych telefonach, patrz historia tego pliku).
