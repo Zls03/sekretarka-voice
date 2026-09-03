@@ -158,7 +158,7 @@ from google.genai.types import ThinkingConfig
 from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
-    build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
+    build_contact_owner_tool, build_end_conversation_tool,
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
 )
@@ -1019,8 +1019,6 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     if contact_owner_available:
         tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, gemini_state))
     tools.append(build_end_conversation_tool(task_box, gemini_state))
-    if tenant.get("lead_mode", 0) == 1:
-        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
     # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
     # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
@@ -1262,8 +1260,6 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
             tenant, caller_phone, task_box, gemini_state, has_transfer_tool=transfer_available
         ))
     tools.append(build_end_conversation_tool(task_box, gemini_state))
-    if tenant.get("lead_mode", 0) == 1:
-        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
     # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
     # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0

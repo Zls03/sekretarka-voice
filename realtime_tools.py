@@ -331,11 +331,20 @@ do usłyszenia!", "Miłego dnia!") — RÓŻNE za każdym razem. Jedno pożegnan
 # RAPORT Z ROZMOWY — Faza 5, pierwszy kawałek (patrz docstring pliku)
 # ==========================================
 
-async def generate_conversation_summary(context: LLMContext) -> str:
+async def generate_conversation_summary(context: LLMContext, tenant: dict | None = None) -> str:
     """Streszcza rozmowę przez szybkie wywołanie GPT. Ten sam pomysł co
     flows.py::generate_conversation_summary, tylko czyta uniwersalny LLMContext
     (context.get_messages(), format OpenAI: {"role": ..., "content": ...}) zamiast
-    flow_manager.get_current_context() z pipecat_flows."""
+    flow_manager.get_current_context() z pipecat_flows.
+
+    tenant: OPCJONALNE (2026-09-03, zastępuje usunięte submit_lead) — gdy podane, wstrzykuje
+    tenant["additional_info"] (to samo pole "Dodatkowe info dla agenta" z panelu, już użyte
+    w głównym system_instruction rozmowy) jako kontekst branży do JEDNEJ, uniwersalnej
+    instrukcji ekstrakcji poniżej. Świadomie NIE per-firmowy prompt "jak mnie podsumowywać"
+    (dokładanie meta-promptowania nietechnicznemu userowi) — ta sama instrukcja działa dla
+    każdej branży, a kontekst firmy (co robi, czego może dotyczyć rozmowa) wystarcza żeby
+    model wiedział co jest istotne (np. że "montaż" u firmy klimatyzacyjnej = montaż klimy).
+    Bez tenant (stare wywołania) zachowanie identyczne jak wcześniej — proste 2-3 zdania."""
     try:
         messages = context.get_messages()
         conversation = []
@@ -360,22 +369,43 @@ async def generate_conversation_summary(context: LLMContext) -> str:
 
         conversation_text = "\n".join(conversation[-20:])
 
+        if tenant:
+            business_name = tenant.get("name") or "firma"
+            additional_info = (tenant.get("additional_info") or "").strip()
+            context_block = f'\nKontekst firmy ("{business_name}"): {additional_info}' if additional_info else ""
+            system_content = (
+                "Podsumuj poniższą rozmowę telefoniczną dla właściciela firmy, po polsku, "
+                "krótkimi punktami — NIE jednym akapitem. Wypisz TYLKO to, co realnie padło "
+                "w rozmowie (pomiń punkt jeśli danej informacji nie było):\n"
+                "- Kto dzwonił: imię/nazwisko jeśli klient je podał (inaczej pomiń punkt)\n"
+                "- Powód kontaktu: konkretnie czego klient chciał/szukał/o co pytał\n"
+                "- Szczegóły: wszystko dodatkowe co klient podał i co ma znaczenie dla TEJ "
+                "konkretnej firmy (np. lokalizacja, rodzaj usługi/produktu, termin, pilność, "
+                "budżet) — użyj kontekstu firmy poniżej żeby wiedzieć co jest istotne\n"
+                "- Wynik rozmowy: czy sprawa została załatwiona, czy klient czeka na kontakt, "
+                "czy przekierowano/odmówiono itp.\n"
+                "Pisz zwięźle, bez lania wody, bez nagłówka. Jeśli rozmowa była pusta/bez treści "
+                "(np. sama cisza, natychmiastowe rozłączenie) — napisz jedno zdanie o tym."
+                f"{context_block}"
+            )
+            max_tokens = 300
+        else:
+            system_content = (
+                "Streść poniższą rozmowę telefoniczną w 2-3 zdaniach po polsku. "
+                "Napisz: czego klient szukał/pytał, czy zostawił dane kontaktowe "
+                "lub opisał konkretną sprawę, i jaki był wynik rozmowy. Pisz zwięźle."
+            )
+            max_tokens = 150
+
         import openai
         client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",  # ten sam model co flows.py::send_message_email w cascade
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Streść poniższą rozmowę telefoniczną w 2-3 zdaniach po polsku. "
-                        "Napisz: czego klient szukał/pytał, czy zostawił dane kontaktowe "
-                        "lub opisał konkretną sprawę, i jaki był wynik rozmowy. Pisz zwięźle."
-                    ),
-                },
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": conversation_text},
             ],
-            max_tokens=150,
+            max_tokens=max_tokens,
             temperature=0.3,
         )
         return response.choices[0].message.content.strip()
@@ -385,8 +415,10 @@ async def generate_conversation_summary(context: LLMContext) -> str:
 
 
 async def send_call_summary_email(tenant: dict, caller_phone: str, summary: str, to_email: str) -> bool:
-    """Email z raportem PO KAŻDEJ rozmowie. Uproszczona kopia flows.py::send_lead_email
-    (bez rozróżniania urgency itp. — to dopiero przyszły submit_lead, osobny krok)."""
+    """Email z raportem PO KAŻDEJ rozmowie. Jedyny mechanizm "zgłoszeniowy" od 2026-09-03
+    (submit_lead usunięty — patrz docstring generate_conversation_summary) — summary jest
+    teraz strukturalnym, punktowym podsumowaniem per-firma (nie prostym 2-3-zdaniowym),
+    stąd white-space:pre-line żeby punkty "-" z GPT renderowały się jako osobne linie."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam raportu")
@@ -398,7 +430,7 @@ async def send_call_summary_email(tenant: dict, caller_phone: str, summary: str,
         <h2 style="color: #333;">📞 Raport z rozmowy</h2>
         <p style="color: #666; margin-top: -10px;">{business_name}</p>
         <p><strong>📋 Podsumowanie:</strong></p>
-        <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; font-style: italic;">{summary}</p>
+        <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; white-space: pre-line;">{summary}</p>
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
@@ -438,208 +470,17 @@ async def maybe_send_call_summary(tenant: dict, caller_phone: str, context: LLMC
     włączonego raportu w panelu, nic się nie wysyła.
 
     CELOWO wysyła się ZAWSZE gdy lead_email_enabled=1, nawet jeśli w tej samej rozmowie już
-    poszedł konkretny mail (contact_owner/submit_lead) — użytkownik wprost chce dostawać
-    streszczenie KAŻDEJ rozmowy niezależnie od innych maili, nie tylko tych bez zgłoszenia."""
+    poszedł konkretny mail (contact_owner) — użytkownik wprost chce dostawać streszczenie
+    KAŻDEJ rozmowy niezależnie od innych maili, nie tylko tych bez wiadomości dla właściciela."""
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     if not lead_email_enabled or not to_email:
         return
-    summary = await generate_conversation_summary(context)
+    summary = await generate_conversation_summary(context, tenant)
     if summary == "Brak treści rozmowy.":
         # Rozmowa się nie odbyła / rozłączono natychmiast — nie ma czego raportować
         return
     await send_call_summary_email(tenant, caller_phone, summary, to_email)
-
-
-# ==========================================
-# SUBMIT_LEAD — "zbieranie zgłoszeń" (reszta Fazy 4)
-# ==========================================
-#
-# 1:1 z cascade pod względem WYZWALACZA i DANYCH (patrz flows_contact.py::submit_lead_function/
-# start_lead_collection_function) — klient OPISUJE sprawę/problem, model sam to rozpoznaje,
-# BEZ proszenia wprost o kontakt (to jest domena contact_owner). Różni się mechaniką: cascade
-# robił to dwuetapowo (start_lead_collection przełączał FlowManager na dedykowany node z TYLKO
-# submit_lead+end_conversation dostępnymi — twarda bariera przed pomyleniem narzędzi). Realtime
-# nie ma przełącznika node'ów — wszystkie tools są zawsze dostępne naraz — więc zamiast tego:
-# JEDNO narzędzie (jak contact_owner, już sprawdzony wzorzec), z ostrym opisem różnicującym
-# je od contact_owner/start_booking/FAQ, plus ta sama ochrona przed mętnym/pustym opisem.
-#
-# NIE rozłącza po zgłoszeniu (w przeciwieństwie do contact_owner) — klient może pytać dalej,
-# tak jak w cascade (submit_lead wraca do zwykłej rozmowy, nie do pożegnania).
-#
-# Włączane WARUNKOWO — tylko gdy tenant.get("lead_mode")==1 (ten sam checkbox "Zbieranie
-# zgłoszeń" w panelu), dokładnie jak w cascade.
-
-_URGENCY_LABELS = {"high": "🔴 PILNE", "normal": "Standardowe"}
-
-
-async def send_lead_email(
-    tenant: dict, caller_phone: str, customer_name: str, problem: str, details: str, urgency: str,
-    to_email: str, conversation_summary: str = "", lead_temperature: str = "normal",
-) -> bool:
-    """Strukturalny email ze zgłoszeniem. Uniwersalny szablon (nie branżowy — pasuje pod
-    kancelarię tak samo jak pod hydraulika), 1:1 z flows_contact.py::_send_lead_report_email
-    pod względem treści/pól.
-
-    lead_temperature: DODANE 2026-09-03, oś NIEZALEŻNA od `urgency` (urgency = "czy to
-    awaria/pilne", lead_temperature = "czy klient brzmi na zdecydowanego/gotowego kupić" vs
-    "dopiero się rozgląda") — generyczne dla każdej branży, nie tylko klimatyzacji. CELOWO
-    zachowuje 1:1 stare etykiety ("🔴 PILNE" / "Standardowe") dla obu dotychczasowych
-    przypadków (urgency="high" i lead_temperature nie-"hot") — jedyna NOWA gałąź to
-    lead_temperature="hot", więc dla wszystkich tenantów które nigdy nie dostaną tego
-    sygnału od modelu (stare zachowanie, zanim ta oś istniała) mail wygląda BYTE-IDENTYCZNIE
-    jak przed tą zmianą."""
-    resend_api_key = os.getenv("RESEND_API_KEY")
-    if not resend_api_key:
-        logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam zgłoszenia")
-        return False
-
-    business_name = tenant.get("name", "Firma")
-    if urgency == "high":
-        urgency_label = _URGENCY_LABELS["high"]  # "🔴 PILNE" — bez zmian względem poprzedniego zachowania
-    elif lead_temperature == "hot":
-        urgency_label = "🔥 GORĄCY LEAD"
-    else:
-        urgency_label = _URGENCY_LABELS.get(urgency, urgency)  # "Standardowe" — bez zmian
-    name_row = f"""
-            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Od:</strong></td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{customer_name}</td></tr>
-    """ if customer_name else ""
-    details_html = f"""
-        <p><strong>Szczegóły:</strong></p>
-        <p style="background: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-line;">{details}</p>
-    """ if details else ""
-    summary_html = f"""
-        <p><strong>Kontekst rozmowy:</strong></p>
-        <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; font-style: italic;">{conversation_summary}</p>
-    """ if conversation_summary else ""
-
-    html_content = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px;">
-        <h2 style="color: #333;">📨 Nowe zgłoszenie — {urgency_label}</h2>
-        <p style="color: #666; margin-top: -10px;">{business_name}</p>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-            {name_row}
-            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
-        </table>
-        <p><strong>Opis sprawy:</strong></p>
-        <p style="background: #fff3e0; padding: 15px; border-radius: 5px;">{problem}</p>
-        {details_html}
-        {summary_html}
-        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-        <p style="color: #999; font-size: 12px;">Zgłoszenie przekazane przez asystenta głosowego (test Realtime) • {business_name}</p>
-    </div>
-    """
-    try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
-                json={
-                    "from": "Voice AI <noreply@bizvoice.pl>",
-                    "to": [to_email],
-                    "subject": f"Nowe zgłoszenie ({urgency_label}) — {business_name}",
-                    "html": html_content,
-                },
-                timeout=10.0,
-            )
-            if response.status_code == 200:
-                logger.info("📋 [REALTIME TEST] Email ze zgłoszeniem wysłany")
-                return True
-            logger.error(f"📋 [REALTIME TEST] Resend error: {response.status_code} - {response.text}")
-            return False
-    except Exception as e:
-        logger.error(f"📋 [REALTIME TEST] Send lead email error: {e}")
-        return False
-
-
-def build_submit_lead_tool(tenant: dict, caller_phone: str, context_box: dict) -> FunctionSchema:
-    """FunctionSchema dla zbierania zgłoszeń. Wywoływane WARUNKOWO z bot_gemini_test.py —
-    tylko gdy tenant.get("lead_mode")==1 — więc description niżej może bez obaw zakładać
-    że lead_mode jest włączony (funkcja w ogóle nie istnieje w tools gdy jest wyłączony).
-
-    context_box: {"context": None}, ten sam trik co task_box w build_contact_owner_tool —
-    LLMContext powstaje DOPIERO wewnątrz build_realtime_llm(), już PO zbudowaniu listy tools
-    (bo LLMContext(tools=...) potrzebuje ich na wejściu), więc w momencie budowy tego tool'a
-    kontekst jeszcze nie istnieje. Handler czyta context_box["context"] dopiero przy
-    faktycznym wywołaniu, gdy jest już ustawiony."""
-    lead_triggers = (tenant.get("lead_triggers") or "").strip()
-    triggers_text = lead_triggers or "klient opisuje problem, dolegliwość, usterkę, awarię, reklamację lub pyta o wycenę niestandardowej sprawy"
-
-    lead_collection = (tenant.get("lead_collection") or "").strip()
-    collection_text = lead_collection or "opis sprawy i ewentualne szczegóły (od kiedy, okoliczności)"
-
-    lead_urgency_mode = tenant.get("lead_urgency_mode", 0) == 1
-    urgency_rule = ""
-    if lead_urgency_mode:
-        urgency_kw = (tenant.get("lead_urgency_text") or "").strip() or "awaria, nie działa, pilne, jak najszybciej"
-        urgency_rule = f'\nPilność HIGH gdy klient mówi: {urgency_kw}. W innym wypadku NORMAL.'
-
-    async def handle_submit_lead(params: FunctionCallParams):
-        customer_name = (params.arguments.get("customer_name") or "").strip()
-        problem = (params.arguments.get("problem") or "").strip()
-        details = (params.arguments.get("details") or "").strip()
-        urgency = params.arguments.get("urgency") or "normal"
-        lead_temperature = params.arguments.get("lead_temperature") or "normal"
-        if lead_temperature not in ("hot", "normal"):
-            lead_temperature = "normal"  # model spoza enum (nie powinno się zdarzyć) — bezpieczny fallback
-        logger.info(f"🛠️ [REALTIME TEST] submit_lead: urgency={urgency} temp={lead_temperature} — {problem[:60]!r}")
-
-        if _looks_too_short(problem) or _is_scripted_bot_phrase(problem):
-            logger.warning(f"🛠️ [REALTIME TEST] submit_lead: za mało konkretu, odrzucam: {problem[:60]!r}")
-            await params.result_callback({"status": "error", "reason": "problem_too_vague"})
-            return
-
-        owner_email = tenant.get("notification_email") or tenant.get("email")
-        if not owner_email:
-            logger.warning("🛠️ [REALTIME TEST] submit_lead: brak notification_email na tenancie")
-            await params.result_callback({"status": "error", "reason": "no_owner_email"})
-            return
-
-        # Streszczenie rozmowy W TLE — nie blokuj potwierdzenia dla klienta na tym
-        async def send_with_summary():
-            ctx = context_box.get("context")
-            summary = await generate_conversation_summary(ctx) if ctx else ""
-            if summary == "Brak treści rozmowy.":
-                summary = ""
-            await send_lead_email(tenant, caller_phone, customer_name, problem, details, urgency, owner_email, summary, lead_temperature)
-
-        asyncio.create_task(send_with_summary())
-
-        # NIE rozłącza (w przeciwieństwie do contact_owner) — klient może pytać dalej, 1:1 z cascade.
-        await params.result_callback({"status": "ok", "urgency": urgency})
-
-    return FunctionSchema(
-        name="submit_lead",
-        description=f"""Klient OPISUJE sprawę/problem wymagający kontaktu ze specjalistą — BEZ
-proszenia wprost o rozmowę z kimś (to byłoby contact_owner). Użyj gdy: {triggers_text}.{urgency_rule}
-1. Dopytaj naturalnie o brakujące szczegóły (JEDNO pytanie na turę): {collection_text}
-2. Gdy masz przynajmniej konkretny opis sprawy (nie musisz mieć wszystkiego) → wywołaj submit_lead
-3. Po wywołaniu krótko potwierdź że zgłoszenie trafiło do specjalisty i zapytaj czy możesz
-   jeszcze w czymś pomóc — rozmowa NIE kończy się automatycznie po tym wywołaniu
-⛔ NIE używaj gdy klient chce standardowej rezerwacji z cennika
-⛔ NIE używaj gdy klient WPROST prosi o rozmowę z człowiekiem/właścicielem → wtedy contact_owner
-Jeśli wynik to status="error", reason="problem_too_vague" — opis był za krótki/pusty, dopytaj
-klienta WPROST o konkret sprawy i wywołaj ponownie.""",
-        properties={
-            "customer_name": {"type": "string", "description": "Imię klienta, jeśli je podał (opcjonalne)"},
-            "problem": {"type": "string", "description": "Konkretny opis sprawy/problemu klienta (1-2 zdania) — naturalne sformułowanie w trzeciej osobie, np. 'Klient chce X' jest OK"},
-            "details": {"type": "string", "description": "Dodatkowe szczegóły zebrane od klienta (opcjonalne)"},
-            "urgency": {"type": "string", "enum": ["high", "normal"], "description": "high = pilne/awaria, normal = standardowe"},
-            "lead_temperature": {
-                "type": "string",
-                "enum": ["hot", "normal"],
-                "description": (
-                    "Opcjonalne. hot = klient zdecydowany, ma konkretne wymagania/budżet, chce szybko. "
-                    "normal = dopiero się rozgląda. Niepewne → pomiń."
-                ),
-            },
-        },
-        required=["problem"],
-        handler=handle_submit_lead,
-    )
 
 
 # ==========================================

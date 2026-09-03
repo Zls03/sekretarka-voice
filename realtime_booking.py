@@ -54,8 +54,8 @@ CO ŚWIADOMIE NIE ZOSTAŁO PRZENIESIONE (i dlaczego):
   ta funkcja nie istnieje w architekturze Realtime/Gemini Live (poza zakresem tego
   zadania), więc nie ma skąd tego przekazać.
 - play_snippet("checking"/"saving") — dźwiękowe wypełniacze cascade podczas wolniejszych
-  wywołań API. Brak odpowiednika w tym serwisie (contact_owner/submit_lead też tego nie
-  mają) — pominięte, nie jest to poprawnościowe, tylko kosmetyczne.
+  wywołań API. Brak odpowiednika w tym serwisie (contact_owner też tego nie ma) —
+  pominięte, nie jest to poprawnościowe, tylko kosmetyczne.
 - fuzzy_match_service/fuzzy_match_staff — używane w cascade WYŁĄCZNIE w pominiętej wyżej
   funkcji startowej. W handle_book_appointment (tej faktycznie portowanej logice) dopasowanie
   usługi/pracownika jest ZAWSZE dokładne (exact match), bo pole "service"/"staff" ma
@@ -1003,7 +1003,7 @@ def build_book_appointment_tool(tenant: Dict, caller_phone: str, call_state: Dic
     call_state: ten sam call_state/gemini_state dict co reszta realtime_tools.py — trzyma
     stan bookingu w call_state["booking"] (dict, pusty gdy nic w toku).
 
-    context_box: {"context": None}, ten sam wzorzec co w build_submit_lead_tool — LLMContext
+    context_box: {"context": None}, ten sam wzorzec co w build_contact_owner_tool — LLMContext
     powstaje PO zbudowaniu listy tools, więc handler czyta context_box["context"] dopiero
     przy faktycznym wywołaniu (potrzebne do _answer_general_question dla pytań pobocznych)."""
     services = tenant.get("services", [])

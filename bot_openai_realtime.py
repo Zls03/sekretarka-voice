@@ -90,7 +90,7 @@ from pipecat.services.openai.realtime.events import (
 from helpers import get_tenant_by_phone, get_client_profile, db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
 from realtime_tools import (
-    build_contact_owner_tool, build_end_conversation_tool, build_submit_lead_tool,
+    build_contact_owner_tool, build_end_conversation_tool,
     maybe_send_call_summary, save_call_transcript, is_call_allowed,
 )
 from realtime_booking import build_book_appointment_tool, build_manage_booking_tool
@@ -598,11 +598,6 @@ async def websocket_gemini_test(websocket: WebSocket):
     if contact_owner_available:
         tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, call_state))
     tools.append(build_end_conversation_tool(task_box, call_state))
-    if tenant.get("lead_mode", 0) == 1:
-        # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
-        # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
-        # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
-        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
     # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
     # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
@@ -817,11 +812,6 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     if contact_owner_available:
         tools.append(build_contact_owner_tool(tenant, caller_phone, task_box, call_state))
     tools.append(build_end_conversation_tool(task_box, call_state))
-    if tenant.get("lead_mode", 0) == 1:
-        # "Zbieranie zgłoszeń" — ten sam checkbox w panelu co w cascade. Warunkowe, jak tam:
-        # tenanty bez tego trybu (np. salon fryzjerski) nie dostają narzędzia, którego i tak
-        # by nie użyły — mniej szumu w tools = mniej okazji do pomyłki którego użyć.
-        tools.append(build_submit_lead_tool(tenant, caller_phone, context_box))
     # 1:1 z bot.py (cascade): booking_enabled BEZ domyślnej wartości (brak pola =
     # wyłączone, nie włączone) + wymóg że co najmniej jeden pracownik ma połączony
     # Google Calendar i przypisaną usługę — bez tego cascade sam wymusza 0
