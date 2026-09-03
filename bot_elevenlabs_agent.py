@@ -473,6 +473,14 @@ class ElevenLabsRealtimeService(FrameProcessor):
         self._reader_task = None
         self._sample_rate = 16000
         self._speaking = False
+        # True gdy ElevenLabs zamknął swoją stronę WebSocketu (np. po naturalnym końcu
+        # rozmowy) ale Vonage jeszcze przez chwilę dosyła nam audio klienta (telefon
+        # fizycznie rozłącza się z opóźnieniem) — bez tej flagi każda kolejna paczka
+        # audio (co ~20ms) próbowałaby wysyłkę na martwy socket i logowała identyczny
+        # błąd dziesiątki razy na sekundę (złapane na żywym telefonie 2026-09-03: kod
+        # zamknięcia 1000/OK po obu stronach, więc to NIE błąd — po prostu koniec
+        # rozmowy, nic nie tracimy, bo wysyłka i tak nigdy nie dociera do ElevenLabs).
+        self._closed = False
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
@@ -508,11 +516,16 @@ class ElevenLabsRealtimeService(FrameProcessor):
         self._reader_task = asyncio.create_task(self._read_loop())
 
     async def _send_audio(self, audio: bytes):
-        if self._ws is None:
+        if self._ws is None or self._closed:
             return
         try:
             b64 = base64.b64encode(audio).decode("ascii")
             await self._ws.send(json.dumps({"user_audio_chunk": b64}))
+        except websockets.exceptions.ConnectionClosed:
+            # ElevenLabs zamknął stronę pierwszy (koniec rozmowy) — patrz komentarz przy
+            # self._closed w __init__. Log RAZ, nie za każdą kolejną paczkę audio.
+            self._closed = True
+            logger.info("🔌 [ELEVENLABS/VONAGE] WebSocket ElevenLabs już zamknięty — przestaję wysyłać audio")
         except Exception as e:
             logger.error(f"❌ [ELEVENLABS/VONAGE] Wysyłka audio nie powiodła się: {e}")
 
@@ -576,6 +589,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
                     logger.error(f"❌ [ELEVENLABS/VONAGE] client_error: {msg}")
 
         except websockets.exceptions.ConnectionClosed as e:
+            self._closed = True
             logger.info(f"🔌 [ELEVENLABS/VONAGE] WebSocket zamknięty: {e}")
         except Exception as e:
             logger.error(f"❌ [ELEVENLABS/VONAGE] Błąd w pętli odczytu: {e}")
