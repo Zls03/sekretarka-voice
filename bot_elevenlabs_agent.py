@@ -83,7 +83,7 @@ from pipecat.frames.frames import (
     StartFrame, EndFrame, InputAudioRawFrame, TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
     InterruptionFrame, VADUserStartedSpeakingFrame,
 )
-from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.processors.frame_processor import FrameProcessor
 
 from helpers import get_tenant_by_phone, db, saas_db
 from realtime_prompt import build_realtime_instructions, build_greeting_message
@@ -464,7 +464,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
     i emituje TTSAudioRawFrame/TTSStartedFrame/TTSStoppedFrame na podstawie zdarzeń
     przychodzących z ich WebSocketu w osobnym tasku czytającym."""
 
-    def __init__(self, tenant: dict, caller_phone: str, called_number: str, call_sid: str, agent_id: str, api_key: str):
+    def __init__(self, tenant: dict, caller_phone: str, called_number: str, call_sid: str, agent_id: str, api_key: str, task_box: dict):
         super().__init__()
         self._tenant = tenant
         self._caller_phone = caller_phone
@@ -472,6 +472,15 @@ class ElevenLabsRealtimeService(FrameProcessor):
         self._call_sid = call_sid
         self._agent_id = agent_id
         self._api_key = api_key
+        # {"task": None} wypełniany PO utworzeniu PipelineTask w run_elevenlabs_vonage_bot
+        # (task jeszcze nie istnieje w momencie tworzenia tego serwisu — patrz tam).
+        # Potrzebny do _hangup_after_elevenlabs_closed: push_frame() STĄD leci tylko
+        # "w dół" do transportu, nigdy nie dociera do samego PipelineTask, więc nie
+        # zamyka realnie WebSocketu z Vonage — trzeba go wykolejkować przez sam task,
+        # dokładnie jak robi to on_client_disconnected w run_elevenlabs_vonage_bot.
+        # Błąd złapany na żywym telefonie 2026-09-03: bez tego EndFrame "wypychał się"
+        # bezbłędnie, ale połączenie i tak wisiało w ciszy, aż klient ręcznie się rozłączył.
+        self._task_box = task_box
         self._ws = None
         self._reader_task = None
         self._sample_rate = 16000
@@ -647,10 +656,14 @@ class ElevenLabsRealtimeService(FrameProcessor):
         # zamknęli WebSocket, w odróżnieniu od tamtej ścieżki gdzie EndFrame leci od razu
         # po samym WYWOŁANIU narzędzia, przed wypowiedzeniem pożegnania).
         await asyncio.sleep(1.5)
+        task = self._task_box.get("task")
+        if task is None:
+            logger.error("❌ [ELEVENLABS/VONAGE] Brak referencji do PipelineTask — nie mogę rozłączyć Vonage")
+            return
         try:
-            await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+            await task.queue_frame(EndFrame())
         except Exception as e:
-            logger.error(f"❌ [ELEVENLABS/VONAGE] Nie udało się wypchnąć EndFrame po zamknięciu przez ElevenLabs: {e}")
+            logger.error(f"❌ [ELEVENLABS/VONAGE] Nie udało się wykolejkować EndFrame po zamknięciu przez ElevenLabs: {e}")
 
     async def _disconnect(self):
         if self._reader_task:
@@ -701,9 +714,11 @@ async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_p
         )
     )
 
+    task_box = {"task": None}  # wypełniany niżej, po utworzeniu PipelineTask — patrz komentarz w __init__
     elevenlabs_service = ElevenLabsRealtimeService(
         tenant=tenant, caller_phone=caller_phone, called_number=called_number,
         call_sid=call_sid or "", agent_id=agent_id, api_key=ELEVENLABS_API_KEY,
+        task_box=task_box,
     )
 
     pipeline = Pipeline([
@@ -722,6 +737,7 @@ async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_p
             audio_out_sample_rate=16000,
         ),
     )
+    task_box["task"] = task
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnect(transport, client):
