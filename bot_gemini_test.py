@@ -138,38 +138,19 @@ from services.tts_factory import create_tts_service
 # Gemini Live — TYLKO do szybkiego testu porównawczego latencji (patrz sekcja na końcu
 # pliku, route'y "-gemini-live"). Nie dotyka niczego z bot_openai_realtime.py.
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
-import pipecat.services.google.gemini_live.llm as _gemini_live_llm_module
 from pipecat.transcriptions.language import Language
-from google.genai.types import ThinkingConfig, AudioTranscriptionConfig as _BaseAudioTranscriptionConfig
+from google.genai.types import ThinkingConfig
 
-
-class _PolishAudioTranscriptionConfig(_BaseAudioTranscriptionConfig):
-    """Patch 2026-09-03: pipecat 1.4.0's GeminiLiveLLMService._connect() tworzy
-    input_audio_transcription=AudioTranscriptionConfig() BEZ żadnej podpowiedzi językowej
-    (puste language_codes → Gemini robi automatyczną detekcję języka KLIENTA). Efekt
-    złapany na żywym telefonie: transkrypcja klienta czasem "zgaduje" losowy obcy język
-    zamiast polskiego (np. "Alô. Vitam, alô." zamiast "Halo?"). settings.language=PL
-    (patrz build_gemini_live_llm) ustawia język TYLKO odpowiedzi bota (speech_config),
-    nie dotyka input_audio_transcription w ogóle — sprawdzone w źródle pipecat.
-
-    Zamiast nadpisywać całą _connect() (~150 linii, duże ryzyko rozjazdu przy aktualizacji
-    pipecat-ai), podmieniamy TYLKO nazwę klasy w namespace modułu pipecat — _connect() i tak
-    woła "AudioTranscriptionConfig()" z własnego module-level importu, więc podmiana tej
-    referencji wystarczy bez dotykania logiki połączenia. Bezpieczne w razie aktualizacji
-    pipecat: jeśli kiedyś przestanie używać tej dokładnej nazwy/wzorca, patch po prostu
-    przestanie mieć efekt (cichy no-op), nie wybuchnie.
-
-    google-genai SDK: AudioTranscriptionConfig.language_codes: list[str] | None — "BCP-47
-    language codes providing hints... If omitted or empty, defaults to automatic language
-    detection." Ustawiamy ["pl"] na sztywno — cała aplikacja jest jednojęzyczna (polska),
-    build_gemini_live_llm zawsze wymusza language=Language.PL bez per-tenant wyjątków."""
-
-    def __init__(self, **kwargs):
-        kwargs.setdefault("language_codes", ["pl"])
-        super().__init__(**kwargs)
-
-
-_gemini_live_llm_module.AudioTranscriptionConfig = _PolishAudioTranscriptionConfig
+# WYCOFANE 2026-09-03 (kilka minut po wdrożeniu): próba wymuszenia language_codes=["pl"] na
+# input_audio_transcription (patch podmieniający AudioTranscriptionConfig w namespace modułu
+# pipecat) — google-genai SDK deklaruje to pole, ale prawdziwe Live API go NIE obsługuje:
+# "ERROR GeminiLiveLLMService#0::_connection_task_handler unexpected exception
+# (google/genai/_live_converters.py:32): language_codes parameter is not supported in
+# Gemini API." Efekt na żywym telefonie: KAŻDE połączenie (oba, i pierwszy kick-start connect
+# i drugi właściwy) wywalało się na starcie — bot w ogóle się nie odzywał, nawet powitania.
+# Transkrypcja klienta w obcym języku (np. "Alô. Vitam, alô.") zostaje nierozwiązanym,
+# rzadkim problemem — patrz build_gemini_live_llm docstring — dopóki pipecat/google-genai
+# nie zaczną realnie wspierać tego pola po stronie samego Live API.
 
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
