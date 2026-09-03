@@ -81,7 +81,7 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.frames.frames import (
     StartFrame, EndFrame, InputAudioRawFrame, TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame,
-    InterruptionFrame, VADUserStartedSpeakingFrame,
+    InterruptionFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor
 
@@ -503,6 +503,11 @@ class ElevenLabsRealtimeService(FrameProcessor):
         # Błąd złapany na żywym telefonie 2026-09-03: bez tego klient zostawał podłączony
         # w ciszy przez 7+ sekund po pożegnaniu bota, aż sam się rozłączył ręcznie.
         self._we_disconnected = False
+        # Pomiar TTFB "user->bot audio", kotwiczony o lokalny VAD-stop — dokładnie ten sam
+        # wzorzec co GeminiUserMonitor/GeminiBotMonitor w bot_gemini_test.py (patrz tam pełny
+        # docstring), żeby liczby były porównywalne 1:1 między silnikami/transportami.
+        self._last_user_stop = None
+        self._waiting_for_bot_audio = False
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
@@ -527,6 +532,10 @@ class ElevenLabsRealtimeService(FrameProcessor):
                 self._speaking = False
                 await self.push_frame(InterruptionFrame(), direction)
                 await self.push_frame(TTSStoppedFrame(), direction)
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._last_user_stop = asyncio.get_event_loop().time()
+            self._waiting_for_bot_audio = True
             await self.push_frame(frame, direction)
         elif isinstance(frame, EndFrame):
             self._we_disconnected = True
@@ -587,6 +596,12 @@ class ElevenLabsRealtimeService(FrameProcessor):
                     if not self._speaking:
                         self._speaking = True
                         await self.push_frame(TTSStartedFrame())
+                        if self._waiting_for_bot_audio:
+                            self._waiting_for_bot_audio = False
+                            if self._last_user_stop is not None:
+                                ms = (asyncio.get_event_loop().time() - self._last_user_stop) * 1000
+                                icon = "🟢" if ms < 1500 else "🟡" if ms < 2500 else "🔴"
+                                logger.info(f"⏱️ [ELEVENLABS/VONAGE/TOTAL] user->bot audio {ms:.0f}ms {icon}")
                     b64 = msg.get("audio_event", {}).get("audio_base_64", "")
                     if b64:
                         audio_bytes = base64.b64decode(b64)
