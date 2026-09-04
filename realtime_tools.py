@@ -392,18 +392,26 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "Podsumuj poniższą rozmowę telefoniczną dla właściciela firmy, po polsku, "
                 "krótkimi punktami — NIE jednym akapitem. Wypisz TYLKO to, co realnie padło "
                 "w rozmowie (pomiń punkt jeśli danej informacji nie było):\n"
+                "- Priorytet: JEDNO z: \"🚨 PILNE\" (klient opisuje awarię/usterkę/coś nie działa "
+                "i chce naprawy szybko), \"🔥 GORĄCY LEAD\" (klient ma konkretną, sprecyzowaną "
+                "potrzebę — wie czego chce, podał konkrety typu lokalizacja/ilość/budżet/termin, "
+                "brzmi na zdecydowanego), \"🟡 STANDARDOWE\" (dopiero się rozgląda, pyta ogólnie, "
+                "brak konkretów) lub \"—\" (rozmowa nie dotyczyła żadnej sprawy — samo pytanie o "
+                "godziny/adres/FAQ bez intencji zakupowej). Wybierz jedno, nie tłumacz wyboru.\n"
                 "- Kto dzwonił: imię/nazwisko jeśli klient je podał (inaczej pomiń punkt)\n"
                 "- Powód kontaktu: konkretnie czego klient chciał/szukał/o co pytał\n"
                 "- Szczegóły: wszystko dodatkowe co klient podał i co ma znaczenie dla TEJ "
                 "konkretnej firmy (np. lokalizacja, rodzaj usługi/produktu, termin, pilność, "
-                "budżet) — użyj kontekstu firmy poniżej żeby wiedzieć co jest istotne\n"
+                "budżet, marka/model urządzenia, kod błędu) — użyj kontekstu firmy poniżej żeby "
+                "wiedzieć co jest istotne\n"
                 "- Wynik rozmowy: czy sprawa została załatwiona, czy klient czeka na kontakt, "
                 "czy przekierowano/odmówiono itp.\n"
                 "Pisz zwięźle, bez lania wody, bez nagłówka. Jeśli rozmowa była pusta/bez treści "
-                "(np. sama cisza, natychmiastowe rozłączenie) — napisz jedno zdanie o tym."
+                "(np. sama cisza, natychmiastowe rozłączenie) — pomiń Priorytet i napisz jedno "
+                "zdanie o tym zamiast reszty punktów."
                 f"{context_block}"
             )
-            max_tokens = 300
+            max_tokens = 350
         else:
             system_content = (
                 "Streść poniższą rozmowę telefoniczną w 2-3 zdaniach po polsku. "
