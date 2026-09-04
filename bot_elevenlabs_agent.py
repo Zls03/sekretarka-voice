@@ -108,6 +108,22 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 # tembr itp. były wspólne).
 ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
 
+# tool_id narzędzia "contact_owner" skonfigurowanego w dashboardzie ElevenLabs (agent
+# "Bizvoice Test" -> Narzędzia -> contact_owner). Do 2026-09-04 to narzędzie było
+# statycznie przypięte do agenta i ZAWSZE technicznie dostępne dla modelu, niezależnie
+# od tenant.get("contact_owner_enabled") — jedyną obroną była instrukcja w promptcie
+# ("nie masz tej funkcji, nie oferuj jej") + twardy blok wysyłki po stronie serwera
+# (patrz elevenlabs_tool_contact_owner niżej), ale model czasem i tak WERBALNIE oferował
+# zebranie wiadomości (złapane na żywym telefonie, tenant z contact_owner_enabled=0).
+# Od teraz tool_ids jest jawnie nadpisywany per rozmowa (conversation_config_override.
+# agent.prompt.tool_ids) — dokładnie ten sam poziom gwarancji co w Gemini Live/OpenAI
+# Realtime, gdzie narzędzie po prostu nie istnieje w tools[] danej rozmowy. Wymaga
+# włączonego przełącznika "Tools" w platform_settings.overrides.conversation_config_override.
+# agent.prompt.tool_ids na agencie (włączone 2026-09-04 przez PATCH /v1/convai/agents —
+# bez tego ElevenLabs po cichu ignoruje tool_ids z override i zawsze używa domyślnego
+# zestawu narzędzi agenta, czyli błąd wracałby bez żadnego widocznego sygnału).
+CONTACT_OWNER_TOOL_ID = "tool_7301m1f7exgvf81a5ysqrbn235ts"
+
 _elevenlabs_client = None
 
 
@@ -143,7 +159,10 @@ def _build_conversation_config_override(
 
     conversation_config_override = {
         "agent": {
-            "prompt": {"prompt": prompt_text},
+            "prompt": {
+                "prompt": prompt_text,
+                "tool_ids": [CONTACT_OWNER_TOOL_ID] if contact_owner_available else [],
+            },
             "first_message": first_message,
             "language": "pl",
         }
@@ -238,7 +257,10 @@ async def elevenlabs_personalization(request: Request):
             "type": "conversation_initiation_client_data",
             "conversation_config_override": {
                 "agent": {
-                    "prompt": {"prompt": "Powiedz uprzejmie po polsku jednym zdaniem, że ten numer jest chwilowo niedostępny, i zakończ rozmowę."},
+                    "prompt": {
+                        "prompt": "Powiedz uprzejmie po polsku jednym zdaniem, że ten numer jest chwilowo niedostępny, i zakończ rozmowę.",
+                        "tool_ids": [],
+                    },
                     "first_message": "Przepraszam, ten numer jest chwilowo niedostępny.",
                     "language": "pl",
                 }
@@ -255,7 +277,10 @@ async def elevenlabs_personalization(request: Request):
         "type": "conversation_initiation_client_data",
         "conversation_config_override": {
             "agent": {
-                "prompt": {"prompt": prompt_text},
+                "prompt": {
+                    "prompt": prompt_text,
+                    "tool_ids": [CONTACT_OWNER_TOOL_ID] if contact_owner_available else [],
+                },
                 "first_message": first_message,
                 "language": "pl",
             }
