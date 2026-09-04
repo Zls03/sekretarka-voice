@@ -337,6 +337,39 @@ async def generate_conversation_summary(context: LLMContext, tenant: dict | None
     (context.get_messages(), format OpenAI: {"role": ..., "content": ...}) zamiast
     flow_manager.get_current_context() z pipecat_flows.
 
+    Ekstrakcja z LLMContext -> lista "Klient: .../Asystent: ..." -> delegacja do
+    summarize_conversation_lines() (wspólnej z bot_elevenlabs_agent.py, patrz tam)."""
+    messages = context.get_messages()
+    conversation = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role not in ("user", "assistant") or not content:
+            continue
+        if isinstance(content, list):
+            # Content czasem przychodzi jako lista bloków (np. [{"type": "text", "text": "..."}])
+            content = " ".join(
+                block.get("text", "") for block in content
+                if isinstance(block, dict) and block.get("text")
+            )
+        content = (content or "").strip()
+        if len(content) > 2:
+            label = "Klient" if role == "user" else "Asystent"
+            conversation.append(f"{label}: {content[:200]}")
+
+    return await summarize_conversation_lines(conversation, tenant)
+
+
+async def summarize_conversation_lines(conversation: list[str], tenant: dict | None = None) -> str:
+    """Właściwe wywołanie GPT-4.1-mini generujące podsumowanie — wydzielone
+    2026-09-04 z generate_conversation_summary() żeby ElevenLabs (który ma
+    transkrypt w zupełnie innym formacie, data.transcript[] z rolami "agent"/"user",
+    nie LLMContext) mógł korzystać z DOKŁADNIE tej samej logiki podsumowania/ekstrakcji
+    zamiast polegać na wbudowanym streszczeniu ElevenLabs (analysis.transcript_summary)
+    — patrz bot_elevenlabs_agent.py::elevenlabs_post_call, gdzie transkrypt jest
+    konwertowany do tego samego formatu list stringów "Klient: .../Asystent: ..."
+    przed wywołaniem tej funkcji.
+
     tenant: OPCJONALNE (2026-09-03, zastępuje usunięte submit_lead) — gdy podane, wstrzykuje
     tenant["additional_info"] (to samo pole "Dodatkowe info dla agenta" z panelu, już użyte
     w głównym system_instruction rozmowy) jako kontekst branży do JEDNEJ, uniwersalnej
@@ -346,24 +379,6 @@ async def generate_conversation_summary(context: LLMContext, tenant: dict | None
     model wiedział co jest istotne (np. że "montaż" u firmy klimatyzacyjnej = montaż klimy).
     Bez tenant (stare wywołania) zachowanie identyczne jak wcześniej — proste 2-3 zdania."""
     try:
-        messages = context.get_messages()
-        conversation = []
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role not in ("user", "assistant") or not content:
-                continue
-            if isinstance(content, list):
-                # Content czasem przychodzi jako lista bloków (np. [{"type": "text", "text": "..."}])
-                content = " ".join(
-                    block.get("text", "") for block in content
-                    if isinstance(block, dict) and block.get("text")
-                )
-            content = (content or "").strip()
-            if len(content) > 2:
-                label = "Klient" if role == "user" else "Asystent"
-                conversation.append(f"{label}: {content[:200]}")
-
         if not conversation:
             return "Brak treści rozmowy."
 

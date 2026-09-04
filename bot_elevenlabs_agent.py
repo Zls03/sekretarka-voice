@@ -90,6 +90,7 @@ from realtime_prompt import build_realtime_instructions, build_greeting_message
 from realtime_tools import (
     send_message_email,
     send_call_summary_email,
+    summarize_conversation_lines,
     is_call_allowed,
     _looks_like_vague_meta_message,
     _looks_too_short,
@@ -417,11 +418,26 @@ async def elevenlabs_post_call(request: Request):
     logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({call_sid})")
 
     # Mail z podsumowaniem po KAŻDEJ rozmowie — 1:1 z realtime_tools.py::maybe_send_call_summary
-    # (Gemini Live/OpenAI Realtime), tylko streszczenie bierzemy gotowe z ElevenLabs
-    # (data.analysis.transcript_summary) zamiast generować je osobnym wywołaniem LLM.
+    # (Gemini Live/OpenAI Realtime). ZMIANA 2026-09-04: wcześniej brało gotowe streszczenie
+    # z ElevenLabs (data.analysis.transcript_summary) — generyczne, bez kontekstu firmy i bez
+    # strukturalnej ekstrakcji (kto/powód/szczegóły/wynik). Teraz konwertujemy transcript[]
+    # (role "agent"/"user", pole "message") do TEGO SAMEGO formatu list stringów co
+    # generate_conversation_summary() używa dla Gemini Live/OpenAI Realtime, i wołamy
+    # DOKŁADNIE tę samą funkcję (summarize_conversation_lines) z kontekstem firmy
+    # (tenant["additional_info"]) — spójne, per-firmowe podsumowania na wszystkich 3 silnikach.
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
-    summary = analysis.get("transcript_summary") or ""
+    conversation_lines = []
+    for turn in transcript:
+        role = "assistant" if turn.get("role") == "agent" else "user"
+        content = (turn.get("message") or "").strip()
+        if len(content) > 2:
+            label = "Klient" if role == "user" else "Asystent"
+            conversation_lines.append(f"{label}: {content[:200]}")
+    summary = await summarize_conversation_lines(conversation_lines, tenant)
+    if summary == "Brak treści rozmowy." or summary == "Nie udało się wygenerować streszczenia.":
+        # Zapasowo — wbudowane streszczenie ElevenLabs lepsze niż nic, gdyby nasze zawiodło.
+        summary = analysis.get("transcript_summary") or ""
     if lead_email_enabled and to_email and summary:
         ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email)
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
