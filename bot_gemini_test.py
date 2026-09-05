@@ -1203,13 +1203,14 @@ async def vonage_answer_gemini_live(request: Request):
         # 2026-09-05: Vonage API Support (AI assistant) potwierdził że connect->SIP na
         # zewnętrzną domenę JEST wspierane "by design" — sip_code=404/cannot_route NIE
         # znaczy "funkcja niedostępna", tylko że dany request nie mógł dotrzeć do celu.
-        # Najbardziej prawdopodobna przyczyna wg Vonage: brakujące pole "from" w NCCO
-        # (bez poprawnego CLI z numeru Vonage połączenie wychodzące bywa odrzucane) —
-        # nasz poprzedni NCCO go nie miał. Druga sugerowana przyczyna: prefiks "+" w
-        # części user w SIP URI bywa problematyczny dla routingu Vonage — usunięty
-        # poniżej. Trunk "aisekretarka" z dashboard.vonage.com/sip-trunking (BYOC/SIP
-        # Trunking) faktycznie NIE ma tu znaczenia (osobny produkt), zgodnie z
-        # wcześniejszymi ustaleniami — zostawiony założony, ale nieużywany.
+        # Kolejne ustalenia z tego samego czatu (po tym jak "from" + brak "+" NIE
+        # naprawiły błędu na żywym teście): domyślny transport dla NCCO connect->SIP to
+        # UDP na porcie 5060, a ElevenLabs SIP endpoint (jak inni SIP-trunk providerzy,
+        # patrz ich dokumentacja Telnyx) wymaga TCP. Dodajemy ";transport=tcp" do URI
+        # (standardowy mechanizm parametrów SIP URI, RFC 3261, wspierany przez Vonage —
+        # potwierdzone w ich dokumentacji SIP Technical Details). Trunk "aisekretarka" z
+        # dashboard.vonage.com/sip-trunking (BYOC/SIP Trunking) NIE ma tu znaczenia
+        # (osobny produkt) — zostawiony założony, ale nieużywany.
         SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
@@ -1218,7 +1219,7 @@ async def vonage_answer_gemini_live(request: Request):
             ncco = [{
                 "action": "connect",
                 "from": sip_number,
-                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN}"}],
+                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie: {sip_number}")
             return JSONResponse(ncco)
