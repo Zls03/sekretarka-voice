@@ -1211,7 +1211,12 @@ async def vonage_answer_gemini_live(request: Request):
         # potwierdzone w ich dokumentacji SIP Technical Details). Trunk "aisekretarka" z
         # dashboard.vonage.com/sip-trunking (BYOC/SIP Trunking) NIE ma tu znaczenia
         # (osobny produkt) — zostawiony założony, ale nieużywany.
-        SIP_DIRECT_ENABLED = True
+        # 2026-09-05: WYŁĄCZONE PONOWNIE — nawet z "from" + bez "+" + transport=tcp
+        # (wszystkie 3 sugestie AI supportu Vonage z rzędu) dalej identyczny
+        # sip_code=404/cannot_route na żywym teście. Eskalowane do prawdziwego
+        # człowieka w Vonage Support (ticket, patrz historia sesji) — nie włączaj
+        # ponownie bez odpowiedzi z ticketu.
+        SIP_DIRECT_ENABLED = False
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
