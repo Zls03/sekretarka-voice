@@ -1200,25 +1200,24 @@ async def vonage_answer_gemini_live(request: Request):
         # Przy JAKIMKOLWIEK niepowodzeniu (brak klucza, błąd sieci, ElevenLabs down)
         # spadamy na stary, sprawdzony most WebSocket — klient nigdy nie zostaje bez
         # ścieżki połączenia.
-        # 2026-09-05: WYŁĄCZONE PONOWNIE, tym razem trwale (dopóki nie znajdziemy innej
-        # drogi) — założenie trunku "aisekretarka" w dashboard.vonage.com/sip-trunking
-        # (Outbound Calling aktywne) NIE naprawiło problemu: żywy test call dalej dostał
-        # sip_code=404/cannot_route na dokładnie ten sam sposób. Wniosek: Vonage "SIP
-        # Trunking"/"Programmable SIP" to osobny produkt (podłączanie WŁASNEJ centralki
-        # PBX jako dostawcy SIP do Vonage), NIE mechanizm pozwalający Voice API `connect`
-        # kierować żywą rozmowę na dowolną zewnętrzną domenę SIP. Żeby to naprawić,
-        # trzeba by albo (a) zapytać wsparcie Vonage czy `connect`->SIP na zewnętrzne
-        # domeny w ogóle jest wspierane dla zwykłej aplikacji Voice API i pod jakim
-        # warunkiem, albo (b) zaakceptować most WebSocket jako jedyną ścieżkę dla
-        # Vonage+ElevenLabs. Nie próbuj włączać ponownie bez nowych ustaleń — patrz
-        # historia sesji.
-        SIP_DIRECT_ENABLED = False
+        # 2026-09-05: Vonage API Support (AI assistant) potwierdził że connect->SIP na
+        # zewnętrzną domenę JEST wspierane "by design" — sip_code=404/cannot_route NIE
+        # znaczy "funkcja niedostępna", tylko że dany request nie mógł dotrzeć do celu.
+        # Najbardziej prawdopodobna przyczyna wg Vonage: brakujące pole "from" w NCCO
+        # (bez poprawnego CLI z numeru Vonage połączenie wychodzące bywa odrzucane) —
+        # nasz poprzedni NCCO go nie miał. Druga sugerowana przyczyna: prefiks "+" w
+        # części user w SIP URI bywa problematyczny dla routingu Vonage — usunięty
+        # poniżej. Trunk "aisekretarka" z dashboard.vonage.com/sip-trunking (BYOC/SIP
+        # Trunking) faktycznie NIE ma tu znaczenia (osobny produkt), zgodnie z
+        # wcześniejszymi ustaleniami — zostawiony założony, ale nieużywany.
+        SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
-            sip_number = to_number if to_number.startswith("+") else f"+{to_number}"
+            sip_number = to_number.lstrip("+")
             ncco = [{
                 "action": "connect",
+                "from": sip_number,
                 "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN}"}],
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie: {sip_number}")
