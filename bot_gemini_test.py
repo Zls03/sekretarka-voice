@@ -1200,13 +1200,19 @@ async def vonage_answer_gemini_live(request: Request):
         # Przy JAKIMKOLWIEK niepowodzeniu (brak klucza, błąd sieci, ElevenLabs down)
         # spadamy na stary, sprawdzony most WebSocket — klient nigdy nie zostaje bez
         # ścieżki połączenia.
-        # 2026-09-05: Ponownie WŁĄCZONE do testu — na koncie Vonage założony trunk
-        # "aisekretarka" (dashboard.vonage.com/sip-trunking, Outbound Calling aktywne),
-        # co mogło odblokować flagę Programmable SIP potrzebną do connect->SIP na
-        # zewnętrzną domenę (poprzednio sip_code=404/cannot_route mimo poprawnego
-        # importu numeru do ElevenLabs — patrz historia sesji). Jeśli znów oberwie
-        # cannot_route, spada na fallback WebSocket poniżej — bez przerwy w obsłudze.
-        SIP_DIRECT_ENABLED = True
+        # 2026-09-05: WYŁĄCZONE PONOWNIE, tym razem trwale (dopóki nie znajdziemy innej
+        # drogi) — założenie trunku "aisekretarka" w dashboard.vonage.com/sip-trunking
+        # (Outbound Calling aktywne) NIE naprawiło problemu: żywy test call dalej dostał
+        # sip_code=404/cannot_route na dokładnie ten sam sposób. Wniosek: Vonage "SIP
+        # Trunking"/"Programmable SIP" to osobny produkt (podłączanie WŁASNEJ centralki
+        # PBX jako dostawcy SIP do Vonage), NIE mechanizm pozwalający Voice API `connect`
+        # kierować żywą rozmowę na dowolną zewnętrzną domenę SIP. Żeby to naprawić,
+        # trzeba by albo (a) zapytać wsparcie Vonage czy `connect`->SIP na zewnętrzne
+        # domeny w ogóle jest wspierane dla zwykłej aplikacji Voice API i pod jakim
+        # warunkiem, albo (b) zaakceptować most WebSocket jako jedyną ścieżkę dla
+        # Vonage+ElevenLabs. Nie próbuj włączać ponownie bez nowych ustaleń — patrz
+        # historia sesji.
+        SIP_DIRECT_ENABLED = False
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
