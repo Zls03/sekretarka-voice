@@ -175,7 +175,10 @@ app = FastAPI()
 from bot_openai_realtime import router as openai_realtime_router
 app.include_router(openai_realtime_router)
 
-from bot_elevenlabs_agent import router as elevenlabs_agent_router, build_register_call_twiml, run_elevenlabs_vonage_bot
+from bot_elevenlabs_agent import (
+    router as elevenlabs_agent_router, build_register_call_twiml, run_elevenlabs_vonage_bot,
+    ensure_elevenlabs_sip_number, ELEVENLABS_SIP_DOMAIN, _resolve_agent_id as resolve_elevenlabs_agent_id,
+)
 app.include_router(elevenlabs_agent_router)
 
 
@@ -1188,6 +1191,26 @@ async def vonage_answer_gemini_live(request: Request):
             f"&callerPhone={from_number}&callSid={call_uuid}"
         )
     elif tenant.get("realtime_engine") == "elevenlabs":
+        # SIP direct (2026-09-05) — zamiast mostu WebSocket przez nasz serwer, próbujemy
+        # połączyć Vonage BEZPOŚREDNIO z ElevenLabs przez SIP trunk (patrz docstring
+        # ensure_elevenlabs_sip_number w bot_elevenlabs_agent.py po pełne wyjaśnienie).
+        # Usuwa ~500ms/turę narzutu naszego relaya, potwierdzone na żywych połączeniach.
+        # Import numeru jest idempotentny i leniwy — pierwsza rozmowa tej firmy robi
+        # faktyczny import, kolejne dostają 409 (już zaimportowany) = też sukces.
+        # Przy JAKIMKOLWIEK niepowodzeniu (brak klucza, błąd sieci, ElevenLabs down)
+        # spadamy na stary, sprawdzony most WebSocket — klient nigdy nie zostaje bez
+        # ścieżki połączenia.
+        agent_id = resolve_elevenlabs_agent_id(tenant)
+        sip_ready = await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
+        if sip_ready:
+            sip_number = to_number if to_number.startswith("+") else f"+{to_number}"
+            ncco = [{
+                "action": "connect",
+                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN}"}],
+            }]
+            logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie: {sip_number}")
+            return JSONResponse(ncco)
+        logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] Import numeru nie powiódł się — fallback na most WebSocket")
         ws_uri = (
             f"wss://{host}/ws-elevenlabs-vonage?phone={tenant['phone_number']}"
             f"&callerPhone={from_number}&callSid={call_uuid}"
