@@ -1200,13 +1200,13 @@ async def vonage_answer_gemini_live(request: Request):
         # Przy JAKIMKOLWIEK niepowodzeniu (brak klucza, błąd sieci, ElevenLabs down)
         # spadamy na stary, sprawdzony most WebSocket — klient nigdy nie zostaje bez
         # ścieżki połączenia.
-        # ⚠️ 2026-09-05: TYMCZASOWO WYŁĄCZONE — na żywym telefonie Vonage odrzucił NCCO
-        # connect->SIP z sip_code=404/cannot_route (numer BYŁ poprawnie zaimportowany do
-        # ElevenLabs, to Vonage nie umiał wykonać routingu). Trzeba ustalić czy Vonage
-        # wymaga osobnego uprawnienia/typu aplikacji do łączenia z zewnętrznymi domenami
-        # SIP, zanim to znów włączymy — patrz historia sesji. Do tego czasu WSZYSTKIE
-        # połączenia ElevenLabs+Vonage wracają na sprawdzony most WebSocket.
-        SIP_DIRECT_ENABLED = False
+        # 2026-09-05: Ponownie WŁĄCZONE do testu — na koncie Vonage założony trunk
+        # "aisekretarka" (dashboard.vonage.com/sip-trunking, Outbound Calling aktywne),
+        # co mogło odblokować flagę Programmable SIP potrzebną do connect->SIP na
+        # zewnętrzną domenę (poprzednio sip_code=404/cannot_route mimo poprawnego
+        # importu numeru do ElevenLabs — patrz historia sesji). Jeśli znów oberwie
+        # cannot_route, spada na fallback WebSocket poniżej — bez przerwy w obsłudze.
+        SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
