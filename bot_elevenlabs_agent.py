@@ -95,6 +95,7 @@ from realtime_tools import (
     _looks_like_vague_meta_message,
     _looks_too_short,
 )
+from realtime_booking import _handle_book_appointment, _handle_manage_booking
 
 router = APIRouter()
 
@@ -123,6 +124,14 @@ ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
 # bez tego ElevenLabs po cichu ignoruje tool_ids z override i zawsze używa domyślnego
 # zestawu narzędzi agenta, czyli błąd wracałby bez żadnego widocznego sygnału).
 CONTACT_OWNER_TOOL_ID = "tool_7301m1f7exgvf81a5ysqrbn235ts"
+
+# tool_id narzędzi rezerwacji (2026-09-08, port realtime_booking.py pod ElevenLabs) —
+# ten sam mechanizm/gwarancja co CONTACT_OWNER_TOOL_ID wyżej. Uzupełnić po utworzeniu
+# obu narzędzi w dashboardzie ElevenLabs (agent "Bizvoice Test" -> Narzędzia -> Dodaj
+# narzędzie), PRZED pierwszym telefonicznym testem — dopóki puste, booking_available
+# będzie liczone poprawnie, ale tool_ids wyjdzie pusty i model nie zobaczy narzędzia.
+BOOK_APPOINTMENT_TOOL_ID = ""
+MANAGE_BOOKING_TOOL_ID = ""
 
 ELEVENLABS_SIP_DOMAIN = "sip.rtc.elevenlabs.io:5060"
 
@@ -180,6 +189,17 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
         return False
 
 
+# Stan rezerwacji "w toku" per-rozmowa (2026-09-08) — odpowiednik call_state["booking"]/
+# call_state["manage_booking"] z Gemini Live/OpenAI Realtime, ale tam to zwykły Python
+# dict żyjący w pamięci jednego długo działającego procesu Pipecat (ten sam obiekt przez
+# całe połączenie). Tu ElevenLabs woła nasze webhooki jako osobne, bezstanowe requesty
+# HTTP przy każdym wywołaniu narzędzia — nic nie "pamięta" poprzedniej tury samo z siebie.
+# Klucz: conversation_id (system__conversation_id, unikalny per-rozmowa w ElevenLabs).
+# Bezpieczne założenie: serwis już działa jako jeden proces (most Vonage to żywy
+# WebSocket trzymany w jednym procesie z definicji), więc globalny dict w pamięci nie
+# wprowadza nowej kategorii kruchości. Sprzątane w elevenlabs_post_call niżej.
+_elevenlabs_call_states: dict[str, dict] = {}
+
 _elevenlabs_client = None
 
 
@@ -201,23 +221,42 @@ def _resolve_agent_id(tenant: dict) -> str:
 
 
 def _build_conversation_config_override(
-    tenant: dict, caller_phone: str, called_number: str, call_sid: str = "",
+    tenant: dict, caller_phone: str, called_number: str, call_sid: str = "", channel: str = "twilio",
 ) -> tuple[dict, dict]:
     """Wspólne dla obu transportów (Twilio register_call i Vonage WebSocket, patrz
     run_elevenlabs_vonage_bot) — buduje (conversation_config_override, dynamic_variables)
     z tych samych danych panelu co Gemini Live/OpenAI Realtime (build_realtime_instructions/
-    build_greeting_message), plus opcjonalny nadpisany głos per-tenant."""
+    build_greeting_message), plus opcjonalny nadpisany głos per-tenant.
+
+    channel: "vonage" lub "twilio" — echowane w dynamic_variables, bo narzędzia rezerwacji
+    (elevenlabs_tool_book_appointment niżej) muszą wiedzieć którym dostawcą SMS potwierdzić
+    wizytę (send_booking_sms_vonage vs send_booking_sms), a same webhooki ElevenLabs nie
+    mają pojęcia którym torem leciało połączenie."""
     contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    # Ta sama bramka co booking_available w bot_gemini_test.py (Gemini Live/OpenAI
+    # Realtime) — MUSI dawać identyczny wynik dla tego samego tenanta, inaczej
+    # zachowanie rezerwacji rozjeżdżałoby się między silnikami.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
     prompt_text = build_realtime_instructions(
-        tenant, None, include_greeting=False, has_contact_owner=contact_owner_available,
+        tenant, None, include_greeting=False,
+        has_contact_owner=contact_owner_available, has_booking=booking_available,
     )
     first_message = build_greeting_message(tenant)
+
+    tool_ids = []
+    if contact_owner_available:
+        tool_ids.append(CONTACT_OWNER_TOOL_ID)
+    if booking_available:
+        tool_ids += [BOOK_APPOINTMENT_TOOL_ID, MANAGE_BOOKING_TOOL_ID]
 
     conversation_config_override = {
         "agent": {
             "prompt": {
                 "prompt": prompt_text,
-                "tool_ids": [CONTACT_OWNER_TOOL_ID] if contact_owner_available else [],
+                "tool_ids": tool_ids,
             },
             "first_message": first_message,
             "language": "pl",
@@ -242,6 +281,7 @@ def _build_conversation_config_override(
         # patrz jego aktualizacja niżej, czyta oba klucze.
         "call_sid": call_sid,
         "twilio_call_sid": call_sid,
+        "channel": channel,
     }
     return conversation_config_override, dynamic_variables
 
@@ -258,7 +298,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
 
     conversation_config_override, dynamic_variables = _build_conversation_config_override(
-        tenant, caller_phone, called_number, call_sid,
+        tenant, caller_phone, called_number, call_sid, channel="twilio",
     )
 
     client = _get_elevenlabs_client()
@@ -324,10 +364,24 @@ async def elevenlabs_personalization(request: Request):
         }
 
     contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
+    # Ta sama bramka co w _build_conversation_config_override/bot_gemini_test.py — musi
+    # dawać identyczny wynik dla tego samego tenanta niezależnie od tego, którym z trzech
+    # torów (personalization / register_call / most Vonage) leciało połączenie.
+    booking_available = tenant.get("booking_enabled") == 1 and any(
+        s.get("google_connected") and len(s.get("services", [])) > 0
+        for s in tenant.get("staff", [])
+    )
     prompt_text = build_realtime_instructions(
-        tenant, None, include_greeting=False, has_contact_owner=contact_owner_available,
+        tenant, None, include_greeting=False,
+        has_contact_owner=contact_owner_available, has_booking=booking_available,
     )
     first_message = build_greeting_message(tenant)
+
+    tool_ids = []
+    if contact_owner_available:
+        tool_ids.append(CONTACT_OWNER_TOOL_ID)
+    if booking_available:
+        tool_ids += [BOOK_APPOINTMENT_TOOL_ID, MANAGE_BOOKING_TOOL_ID]
 
     return {
         "type": "conversation_initiation_client_data",
@@ -335,7 +389,7 @@ async def elevenlabs_personalization(request: Request):
             "agent": {
                 "prompt": {
                     "prompt": prompt_text,
-                    "tool_ids": [CONTACT_OWNER_TOOL_ID] if contact_owner_available else [],
+                    "tool_ids": tool_ids,
                 },
                 "first_message": first_message,
                 "language": "pl",
@@ -344,6 +398,10 @@ async def elevenlabs_personalization(request: Request):
         "dynamic_variables": {
             "business_name": tenant.get("name") or "",
             "caller_phone": caller_id,
+            # To natywna integracja numerów ElevenLabs (Twilio po ich stronie) — jedyny
+            # tor spośród trzech gdzie to na sztywno "twilio", patrz docstring
+            # _build_conversation_config_override po pełne wyjaśnienie po co to pole.
+            "channel": "twilio",
         },
     }
 
@@ -385,6 +443,79 @@ async def elevenlabs_tool_contact_owner(request: Request):
 
     ok = await send_message_email(tenant, customer_name, message, caller_phone, to_email)
     return {"status": "ok" if ok else "error"}
+
+
+@router.post("/elevenlabs/tools/book_appointment")
+async def elevenlabs_tool_book_appointment(request: Request):
+    """Webhook narzędzia rezerwacji — port pod ElevenLabs, patrz docstring
+    _elevenlabs_call_states wyżej po wyjaśnienie mechanizmu stanu między turami.
+    Reużywa 1:1 _handle_book_appointment z realtime_booking.py (ta sama funkcja co
+    Gemini Live/OpenAI Realtime), zero duplikacji logiki biznesowej/walidacji terminów."""
+    if not _check_shared_secret(request):
+        return {"status": "error", "reason": "unauthorized"}
+
+    body = await request.json()
+    logger.info(f"📅 [ELEVENLABS AGENT] book_appointment tool wywołany | raw={body}")
+
+    conversation_id = body.get("conversation_id") or ""
+    called_number = body.get("called_number") or body.get("to_number") or ""
+    caller_phone = body.get("caller_phone") or body.get("system__caller_id") or "nieznany"
+    channel = body.get("channel") or "twilio"
+
+    tenant = await get_tenant_by_phone(called_number) if called_number else None
+    if not tenant:
+        return {"status": "error", "reason": "tenant_not_found"}
+    if not conversation_id:
+        logger.warning("⚠️ [ELEVENLABS AGENT] book_appointment bez conversation_id — stan nie przetrwa kolejnej tury")
+
+    call_state = _elevenlabs_call_states.setdefault(conversation_id or f"_no_id_{called_number}", {})
+
+    args = {
+        "service": body.get("service"),
+        "staff": body.get("staff"),
+        "date_text": body.get("date_text"),
+        "time_text": body.get("time_text"),
+        "customer_name": body.get("customer_name"),
+        "confirmation": body.get("confirmation", "none"),
+        "change_field": body.get("change_field"),
+        "question": body.get("question"),
+        "notes": body.get("notes"),
+    }
+    result = await _handle_book_appointment(args, tenant, caller_phone, call_state, {"context": None}, channel=channel)
+    return result
+
+
+@router.post("/elevenlabs/tools/manage_booking")
+async def elevenlabs_tool_manage_booking(request: Request):
+    """Webhook odwoływania/przekładania wcześniej umówionej wizyty — analogicznie do
+    elevenlabs_tool_book_appointment wyżej, reużywa _handle_manage_booking 1:1."""
+    if not _check_shared_secret(request):
+        return {"status": "error", "reason": "unauthorized"}
+
+    body = await request.json()
+    logger.info(f"📅 [ELEVENLABS AGENT] manage_booking tool wywołany | raw={body}")
+
+    conversation_id = body.get("conversation_id") or ""
+    called_number = body.get("called_number") or body.get("to_number") or ""
+    caller_phone = body.get("caller_phone") or body.get("system__caller_id") or "nieznany"
+
+    tenant = await get_tenant_by_phone(called_number) if called_number else None
+    if not tenant:
+        return {"status": "error", "reason": "tenant_not_found"}
+    if not conversation_id:
+        logger.warning("⚠️ [ELEVENLABS AGENT] manage_booking bez conversation_id — stan nie przetrwa kolejnej tury")
+
+    call_state = _elevenlabs_call_states.setdefault(conversation_id or f"_no_id_{called_number}", {})
+
+    args = {
+        "action": body.get("action"),
+        "date_text": body.get("date_text"),
+        "time_text": body.get("time_text"),
+        "confirmation": body.get("confirmation", "none"),
+        "which_visit": body.get("which_visit"),
+    }
+    result = await _handle_manage_booking(args, tenant, caller_phone, call_state)
+    return result
 
 
 async def save_elevenlabs_transcript(tenant: dict, call_sid: str, transcript: list, analysis: dict) -> int:
@@ -482,6 +613,10 @@ async def elevenlabs_post_call(request: Request):
         f"📊 [ELEVENLABS AGENT] Post-call: {called_number} ({call_sid}, {duration}s, "
         f"status={data.get('status')}, {len(transcript)} tur) | signature={signature_header!r}"
     )
+
+    # Sprzątanie stanu rezerwacji "w toku" (patrz _elevenlabs_call_states wyżej) — rozmowa
+    # się skończyła, ewentualny niedokończony booking i tak trzeba by zaczynać od nowa.
+    _elevenlabs_call_states.pop(data.get("conversation_id") or "", None)
 
     if not call_sid or not called_number:
         logger.warning(
@@ -643,7 +778,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
 
     async def _connect(self):
         conversation_config_override, dynamic_variables = _build_conversation_config_override(
-            self._tenant, self._caller_phone, self._called_number, self._call_sid,
+            self._tenant, self._caller_phone, self._called_number, self._call_sid, channel="vonage",
         )
         url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self._agent_id}"
         try:
