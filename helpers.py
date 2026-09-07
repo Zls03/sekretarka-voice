@@ -394,6 +394,12 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "booking_enabled":    int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
         "transfer_enabled":   int(firm.get("transfer_enabled") or 0),
         "transfer_number":    firm.get("transfer_number") or "",
+        # 2026-09-07: pole zapomniane przy pierwotnym budowaniu tego słownika — bez niego
+        # tenant.get("contact_owner_enabled", 1) w bot_gemini_test.py/bot_elevenlabs_agent.py
+        # ZAWSZE dostawał domyślne 1, więc checkbox "Zbieranie wiadomości dla właściciela"
+        # w panelu nie miał żadnego efektu (złapane na żywym telefonie — bot i tak zbierał
+        # i wysyłał wiadomość mimo wyłączonego ustawienia w bazie).
+        "contact_owner_enabled": int(firm.get("contact_owner_enabled") if firm.get("contact_owner_enabled") is not None else 1),
 
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
