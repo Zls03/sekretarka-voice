@@ -130,8 +130,8 @@ CONTACT_OWNER_TOOL_ID = "tool_7301m1f7exgvf81a5ysqrbn235ts"
 # obu narzędzi w dashboardzie ElevenLabs (agent "Bizvoice Test" -> Narzędzia -> Dodaj
 # narzędzie), PRZED pierwszym telefonicznym testem — dopóki puste, booking_available
 # będzie liczone poprawnie, ale tool_ids wyjdzie pusty i model nie zobaczy narzędzia.
-BOOK_APPOINTMENT_TOOL_ID = ""
-MANAGE_BOOKING_TOOL_ID = ""
+BOOK_APPOINTMENT_TOOL_ID = "tool_1801m1z3w891e7n9pwwzc5h4qy1b"
+MANAGE_BOOKING_TOOL_ID = "tool_0801m1z527fmeycbww4xq22csck1"
 
 ELEVENLABS_SIP_DOMAIN = "sip.rtc.elevenlabs.io:5060"
 
