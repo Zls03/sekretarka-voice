@@ -1221,10 +1221,20 @@ async def vonage_answer_gemini_live(request: Request):
         # ensure_elevenlabs_sip_number szedł Z "+", a URI tutaj budowane było BEZ
         # "+" (lstrip) — dokumentacja ElevenLabs SIP trunking wprost wymaga
         # identycznego formatu przy imporcie i przy wywołaniu. Naprawione (patrz
-        # niżej, sip_number teraz zawsze z "+"). PONOWNIE WŁĄCZONE do testu na
-        # żywo — jeśli znów będzie 404/cannot_route, wyłącz i wróć do mostu
-        # WebSocket (fallback niżej działa automatycznie przy sip_ready=False).
-        SIP_DIRECT_ENABLED = True
+        # niżej, sip_number teraz zawsze z "+"), ALE na żywym teście (2026-09-08
+        # 11:28) dalej identyczny sip_code=404/cannot_route — format nie był
+        # (jedyną) przyczyną. WYŁĄCZONE PONOWNIE, i to KRYTYCZNE żeby zostało
+        # wyłączone: w przeciwieństwie do niepowodzenia ensure_elevenlabs_sip_number
+        # (obsłużone, spada na WebSocket), porażka SAMEGO connect->SIP PO WYSŁANIU
+        # NCCO nie ma już żadnego fallbacku — Vonage kończy połączenie (widziane na
+        # żywo: dzwoniący dostaje "wybrany numer nie istnieje", zero kontaktu z
+        # botem). Podejrzenie na kolejny test (patrz historia sesji): ElevenLabs
+        # POST /v1/convai/phone-numbers dla provider=sip_trunk wspiera opcjonalny
+        # inbound_trunk_config (allowed_addresses/credentials/media_encryption) -
+        # obecnie wysyłamy import BEZ tego pola, możliwe że trzeba jawnie dopisać
+        # zakresy IP sygnalizacyjnych Vonage. Nie włączaj ponownie bez potwierdzenia
+        # na żywej rozmowie (nie tylko brak błędu w logu importu).
+        SIP_DIRECT_ENABLED = False
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
