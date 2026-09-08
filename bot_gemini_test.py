@@ -1214,16 +1214,33 @@ async def vonage_answer_gemini_live(request: Request):
         # 2026-09-05: WYŁĄCZONE PONOWNIE — nawet z "from" + bez "+" + transport=tcp
         # (wszystkie 3 sugestie AI supportu Vonage z rzędu) dalej identyczny
         # sip_code=404/cannot_route na żywym teście. Eskalowane do prawdziwego
-        # człowieka w Vonage Support (ticket, patrz historia sesji) — nie włączaj
-        # ponownie bez odpowiedzi z ticketu.
-        SIP_DIRECT_ENABLED = False
+        # człowieka w Vonage Support (ticket #3122205).
+        # 2026-09-08: człowiek z Vonage Support odpisał — zasugerował że używamy
+        # numeru Vonage (LVN) jako identyfikatora w SIP URI i że to może być
+        # przyczyną 404. Znaleziony realny mismatch: import numeru w
+        # ensure_elevenlabs_sip_number szedł Z "+", a URI tutaj budowane było BEZ
+        # "+" (lstrip) — dokumentacja ElevenLabs SIP trunking wprost wymaga
+        # identycznego formatu przy imporcie i przy wywołaniu. Naprawione (patrz
+        # niżej, sip_number teraz zawsze z "+"). PONOWNIE WŁĄCZONE do testu na
+        # żywo — jeśli znów będzie 404/cannot_route, wyłącz i wróć do mostu
+        # WebSocket (fallback niżej działa automatycznie przy sip_ready=False).
+        SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
-            sip_number = to_number.lstrip("+")
+            # WAŻNE: musi być identyczny format (z "+") jak przy imporcie numeru w
+            # ensure_elevenlabs_sip_number (e164 = "+"+numer) — ElevenLabs SIP trunking
+            # wymaga dopasowania formatu identyfikatora między importem a wywołaniem,
+            # inaczej routing się wysypuje (potwierdzone w ich dokumentacji SIP trunking:
+            # "if you call... with a leading +, you must also import... with the leading +").
+            # Wcześniej było lstrip("+") tutaj podczas gdy import szedł Z "+" — mismatch,
+            # który realnie tłumaczy obserwowany sip_code=404/cannot_route (zgłoszenie
+            # Vonage Support #3122205, 2026-09-08: "you are using Vonage LVN as the
+            # identifier... may have caused the SIP URI to return 404").
+            sip_number = to_number if to_number.startswith("+") else f"+{to_number}"
             ncco = [{
                 "action": "connect",
-                "from": sip_number,
+                "from": sip_number.lstrip("+"),
                 "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie: {sip_number}")
