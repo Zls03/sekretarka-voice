@@ -177,6 +177,17 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
                     "label": f"Vonage SIP direct — {e164}",
                     "provider": "sip_trunk",
                     "agent_id": agent_id,
+                    # 2026-09-10 — PRAWDZIWA przyczyna sip_code=404/cannot_route (potwierdzona
+                    # przez Vonage support, ticket #3122205, Aldo: INVITE dociera do ElevenLabs
+                    # i dostaje 404 Not Found od ICH serwera SIP — nie problem formatu/NCCO).
+                    # Import numeru bez inbound_trunk_config tworzy tylko "pusty" wpis
+                    # (supports_inbound=false w ich API) — ElevenLabs nigdy nie dostawał
+                    # instrukcji JAK ma przyjmować INVITE na ten numer. allowed_addresses to
+                    # oficjalne "Primary Subnets" Vonage dla SIP (developer.vonage.com/
+                    # api.support.vonage.com, artykuł "Which IP addresses... SIP Trunking").
+                    "inbound_trunk_config": {
+                        "allowed_addresses": ["216.147.0.0/18", "168.100.64.0/18"],
+                    },
                 },
                 timeout=10.0,
             )

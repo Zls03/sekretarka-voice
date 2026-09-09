@@ -1245,7 +1245,14 @@ async def vonage_answer_gemini_live(request: Request):
         # ZOSTAJE w kodzie na przyszłość — nieszkodliwy gdy SIP_DIRECT_ENABLED=False,
         # i realnie działa jako siatka bezpieczeństwa dla porażek NA POZIOMIE
         # połączenia (cannot_route itp.), tylko nie dla odrzuceń walidacji jak ta.
-        SIP_DIRECT_ENABLED = False
+        # 2026-09-10 — Vonage support (Aldo, ticket #3122205) potwierdził że INVITE faktycznie
+        # dociera do ElevenLabs i dostaje 404 Not Found z ICH serwera (nie problem formatu/NCCO
+        # po naszej/Vonage stronie) — przyczyna znaleziona i naprawiona w
+        # ensure_elevenlabs_sip_number (brakujący inbound_trunk_config.allowed_addresses).
+        # Włączone TYLKO na testowym numerze Bizvoice na wyraźną prośbę użytkownika — QFX i
+        # inni zostają na sprawdzonym moście WebSocket dopóki nie potwierdzimy na żywo że
+        # to faktycznie działa.
+        SIP_DIRECT_ENABLED = tenant.get("phone_number", "").lstrip("+") == "48459050542"
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
