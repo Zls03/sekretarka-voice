@@ -1229,17 +1229,23 @@ async def vonage_answer_gemini_live(request: Request):
         # 2026-09-09: kolejna odpowiedź z ticketu #3122205 (człowiek, Aldo) wróciła
         # do tej samej teorii identyfikatora bez odpowiedzi na pytanie czy INVITE
         # w ogóle wyszedł. Podał link do dok. NCCO connect->sip — brak tam
-        # wymaganych nagłówków, ALE jest nieprzetestowany alternatywny sposób
-        # zapisu endpointu: pola "user"+"domain" zamiast "uri" (mutually exclusive
-        # wg dokumentacji) — może się inaczej routować wewnętrznie u Vonage niż
-        # surowy string uri. Próbujemy tego wariantu TERAZ, razem z prawdziwym
-        # fallbackiem (eventType=synchronous + eventUrl, patrz
-        # /vonage/sip-fallback-elevenlabs niżej) — w przeciwieństwie do obu
-        # poprzednich prób, tym razem porażka samego connect->SIP NIE zostawi
-        # dzwoniącego bez niczego, tylko każe Vonage odpytać eventUrl o nową NCCO
-        # (most WebSocket). Nie wyłączaj tego eventUrl przy kolejnych próbach —
-        # to jedyna rzecz, która wcześniej brakowała i realnie coś psuła na żywo.
-        SIP_DIRECT_ENABLED = True
+        # wymaganych nagłówków, ALE jest alternatywny sposób zapisu endpointu:
+        # pola "user"+"domain" zamiast "uri" (mutually exclusive wg dokumentacji).
+        # PRZETESTOWANE na żywo (2026-09-09 10:20): Vonage odrzucił to OD RAZU,
+        # na własnej walidacji — reason="invalid sip domain,invalid sip domain
+        # user" (dzwoniący usłyszał "numer zajęty" niemal natychmiast, event
+        # przyszedł przez /vonage/events, NIE przez eventUrl niżej — to była
+        # odmowa żądania jako niepoprawnego, nie porażka próby połączenia).
+        # To POTWIERDZA że "uri" (oryginalny format) jest strukturalnie
+        # poprawny — "user"+"domain" to najwyraźniej pole pod WŁASNE
+        # skonfigurowane trunki Vonage (jak "aisekretarka"), nie pod dowolną
+        # zewnętrzną domenę. Wracamy do "uri". WYŁĄCZONE PONOWNIE — ta sama
+        # zasada co poprzednio, nie włączaj bez nowych ustaleń z ticketu.
+        # Mechanizm eventType=synchronous+eventUrl (/vonage/sip-fallback-elevenlabs)
+        # ZOSTAJE w kodzie na przyszłość — nieszkodliwy gdy SIP_DIRECT_ENABLED=False,
+        # i realnie działa jako siatka bezpieczeństwa dla porażek NA POZIOMIE
+        # połączenia (cannot_route itp.), tylko nie dla odrzuceń walidacji jak ta.
+        SIP_DIRECT_ENABLED = False
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
@@ -1256,13 +1262,9 @@ async def vonage_answer_gemini_live(request: Request):
                 "from": sip_number.lstrip("+"),
                 "eventType": "synchronous",
                 "eventUrl": [event_url],
-                "endpoint": [{
-                    "type": "sip",
-                    "user": sip_number,
-                    "domain": f"{ELEVENLABS_SIP_DOMAIN};transport=tcp",
-                }],
+                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
             }]
-            logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (user+domain, z fallbackiem): {sip_number}")
+            logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (uri, z fallbackiem): {sip_number}")
             return JSONResponse(ncco)
         logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] Import numeru nie powiódł się — fallback na most WebSocket")
         ws_uri = (
