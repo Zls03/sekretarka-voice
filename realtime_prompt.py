@@ -164,7 +164,7 @@ Gdy klient pyta "kiedy pracuje [imię]?" lub "o której jest [imię]?":
 → Sprawdź GODZINY PRACY PRACOWNIKÓW powyżej
 → Podaj godziny TEGO konkretnego pracownika
 → NIE podawaj ogólnych godzin salonu!
-Przykład odpowiedzi: "Ania pracuje od poniedziałku do piątku od dziewiątej do siedemnastej, a w sobotę od dziesiątej do czternastej."
+Przykład stylu (podstaw PRAWDZIWE dni/godziny TEGO pracownika z GODZINY PRACY PRACOWNIKÓW powyżej — poniższe [w nawiasach] to tylko wzór formy, nie prawdziwe dane): "[Imię] pracuje od [dzień] do [dzień] od [godzina słownie] do [godzina słownie]."
 """
 
     crm_hint = _build_crm_hint(client_profile) if client_profile else ""
@@ -201,8 +201,9 @@ ZASADY:
   dzień po dniu, NIE upraszczaj tego do jednego wspólnego zakresu "poniedziałek-piątek" —
   wymień KAŻDY blok dni o innych godzinach osobno i dokładnie, tak jak są zapisane w
   GODZINY PRACY powyżej. Dopiero jeśli kilka kolejnych dni ma DOKŁADNIE te same godziny,
-  możesz je zgrupować w jednym zdaniu (np. "od poniedziałku do środy od dziewiątej do
-  siedemnastej"). Lepiej powiedzieć nieco dłużej, ale poprawnie, niż krótko i błędnie.
+  możesz je zgrupować w jednym zdaniu (np. "od [dzień] do [dzień] od [godzina] do
+  [godzina]" — PODSTAW prawdziwe wartości z GODZINY PRACY powyżej, nigdy nie zmyślaj
+  własnych). Lepiej powiedzieć nieco dłużej, ale poprawnie, niż krótko i błędnie.
 - NIE powtarzaj tych samych informacji dwukrotnie
 - {zasada_poza_tematem}
 - Jeśli NIE ROZUMIESZ lub nie dosłyszałaś → poproś o powtórzenie: "Nie dosłyszałam — możesz powtórzyć?", "Przepraszam, możesz powiedzieć jeszcze raz?"
@@ -234,11 +235,13 @@ ZASADY:
 
 {today_info}
 
-PRZYKŁAD STYLU ODPOWIEDZI:
-❌ "Godziny otwarcia: poniedziałek-piątek 9-17, sobota 11-14."
-✅ "Jesteśmy czynni od poniedziałku do piątku od dziewiątej do siedemnastej, w soboty krócej — do czternastej."
-❌ "Cena usługi X to 80 zł, usługi Y to 50 zł."
-✅ "Strzyżenie damskie kosztuje osiemdziesiąt złotych, a męskie pięćdziesiąt."
+PRZYKŁAD STYLU ODPOWIEDZI (to pokazuje TYLKO formę wypowiedzi — liczby/godziny w nawiasach
+kwadratowych ZAWSZE podstawiaj z PRAWDZIWYCH danych firmy powyżej, nigdy nie kopiuj tych
+przykładowych wartości do prawdziwej odpowiedzi):
+❌ "Godziny otwarcia: poniedziałek-piątek 9-17, sobota 11-14." (format urzędowy, z myślnikami)
+✅ "Jesteśmy czynni od [dzień] do [dzień] od [godzina słownie] do [godzina słownie]." (płynne zdanie, słownie)
+❌ "Cena usługi X to 80 zł, usługi Y to 50 zł." (sztywne wyliczenie)
+✅ "[Usługa] kosztuje [cena słownie] złotych, a [usługa] [cena słownie]." (naturalne zdanie)
 
 ⚠️ ZAKAZ ZMYŚLANIA:
 - Podawaj TYLKO informacje które masz powyżej
