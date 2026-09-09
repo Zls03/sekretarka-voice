@@ -1154,6 +1154,23 @@ async def health_gemini_live():
     return {"status": "ok", "provider": "gemini-live", "model": GEMINI_LIVE_MODEL}
 
 
+@app.get("/debug/firms-schema")
+async def debug_firms_schema():
+    """TYMCZASOWE (2026-09-09) — diagnostyka zgłoszenia: custom_report_format i
+    contact_owner_closing_line wracają jako None na żywej rozmowie (log 📋 [SUMMARY]),
+    mimo że panel potwierdza wartość=1/tekst w bazie przez WŁASNE połączenie. Ten
+    endpoint pyta o schemat tabeli "firms" DOKŁADNIE tym samym połączeniem (saas_db,
+    ten sam SAAS_TURSO_DATABASE_URL/TOKEN z env Railway) co reszta backendu głosowego
+    — jeśli tu też brakuje tych kolumn, problem jest w SAMEJ bazie/env vars widzianych
+    przez ten serwis, nie w kodzie odczytu. Usunąć po zdiagnozowaniu."""
+    schema = await saas_db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='firms'")
+    row = await saas_db.execute(
+        "SELECT id, name, custom_report_format, contact_owner_closing_line FROM firms WHERE id = ?",
+        ["firm_1788858357346_gakuw"],
+    )
+    return {"schema": schema, "row": row}
+
+
 @app.get("/vonage/answer-gemini-live")
 async def vonage_answer_gemini_live(request: Request):
     to_number = request.query_params.get("to", "")
