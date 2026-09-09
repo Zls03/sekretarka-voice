@@ -396,9 +396,6 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
 
         conversation_text = "\n".join(conversation[-20:])
 
-        if tenant:
-            _crf_raw = tenant.get("custom_report_format")
-            logger.info(f"📋 [SUMMARY] custom_report_format raw={_crf_raw!r} type={type(_crf_raw).__name__} dla {tenant.get('name')!r}")
         if tenant and int(tenant.get("custom_report_format") or 0) == 1:
             # 2026-09-09 — format raportu na życzenie konkretnego klienta (kancelaria
             # prawna QFX Group, patrz historia sesji), włączany per-firma przełącznikiem

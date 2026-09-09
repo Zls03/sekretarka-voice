@@ -400,6 +400,15 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         # w panelu nie miał żadnego efektu (złapane na żywym telefonie — bot i tak zbierał
         # i wysyłał wiadomość mimo wyłączonego ustawienia w bazie).
         "contact_owner_enabled": int(firm.get("contact_owner_enabled") if firm.get("contact_owner_enabled") is not None else 1),
+        # 2026-09-09: TEN SAM błąd co przy contact_owner_enabled wyżej (2026-09-07) —
+        # ta funkcja zwraca RĘCZNIE wybrane pola, nie surowy wiersz z bazy, więc nowa
+        # kolumna dodana do tabeli firms jest niewidoczna dla reszty backendu dopóki
+        # nie zostanie tu jawnie dopisana. Złapane na żywo: custom_report_format i
+        # contact_owner_closing_line wracały jako None mimo poprawnej wartości w bazie
+        # (potwierdzone bezpośrednim zapytaniem) — panel je zapisywał, ta funkcja po
+        # prostu ich nie przepisywała dalej.
+        "custom_report_format":      int(firm.get("custom_report_format") or 0),
+        "contact_owner_closing_line": firm.get("contact_owner_closing_line") or "",
 
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
