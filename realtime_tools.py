@@ -216,7 +216,20 @@ def build_contact_owner_tool(
             await params.result_callback({"status": "error", "reason": "message_too_vague"})
             return
 
-        sent = await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
+        # 2026-09-09 — jeśli ta sama firma MA TEŻ włączony raport z rozmowy (lead_email_enabled)
+        # na TEN SAM adres — nie wysyłaj osobnego maila teraz. Zamiast tego odłóż treść do
+        # call_state, a maybe_send_call_summary() (koniec rozmowy) doklei ją do JEDNEGO,
+        # połączonego maila zamiast wysyłać dwa niemal jednoczesne maile z tego samego numeru.
+        # Gdy adresy się różnią (rzadkie, ale panel na to pozwala) albo raport jest wyłączony —
+        # wysyłamy jak dotychczas natychmiast, żeby nie zgubić gwarancji dostarczenia.
+        report_to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
+        defer_to_report = bool(int(tenant.get("lead_email_enabled") or 0) and report_to_email and report_to_email == owner_email)
+        if defer_to_report:
+            call_state["pending_contact_owner"] = {"customer_name": customer_name, "message": message}
+            sent = True
+            logger.info(f"📞 [REALTIME TEST] contact_owner: odłożone do połączonego raportu ({owner_email})")
+        else:
+            sent = await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
         # 2026-09-09 — opcjonalny per-firmowy dokładny tekst pożegnania (panel: pole pod
         # checkboxem "Zbieranie wiadomości dla właściciela"). Bez tego model i tak formułował
         # jakieś pożegnanie, ale trzymał się przykładu WPISANEGO NA SZTYWNO w opis tego
@@ -485,21 +498,41 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
         return "Nie udało się wygenerować streszczenia."
 
 
-async def send_call_summary_email(tenant: dict, caller_phone: str, summary: str, to_email: str) -> bool:
+async def send_call_summary_email(
+    tenant: dict, caller_phone: str, summary: str, to_email: str, pending_message: dict | None = None
+) -> bool:
     """Email z raportem PO KAŻDEJ rozmowie. Jedyny mechanizm "zgłoszeniowy" od 2026-09-03
     (submit_lead usunięty — patrz docstring generate_conversation_summary) — summary jest
     teraz strukturalnym, punktowym podsumowaniem per-firma (nie prostym 2-3-zdaniowym),
-    stąd white-space:pre-line żeby punkty "-" z GPT renderowały się jako osobne linie."""
+    stąd white-space:pre-line żeby punkty "-" z GPT renderowały się jako osobne linie.
+
+    pending_message: 2026-09-09 — gdy contact_owner odłożył wiadomość dla właściciela (patrz
+    handle_contact_owner) bo firma ma raport włączony na TEN SAM adres, treść trafia tu jako
+    osobna, wyróżniona sekcja NAD podsumowaniem — dosłowna (nie przepuszczona przez GPT),
+    żeby nie zgubić/nie sparafrazować tego co klient faktycznie powiedział."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam raportu")
         return False
 
     business_name = tenant.get("name", "Firma")
+    lead_block = ""
+    subject = f"📞 Raport z rozmowy — {business_name}"
+    if pending_message:
+        cn = pending_message.get("customer_name") or "Nieznany"
+        msg = pending_message.get("message") or ""
+        lead_block = f"""
+        <p><strong>📨 Zgłoszenie dla właściciela:</strong></p>
+        <p style="background: #fff8e1; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107;">
+            <strong>{cn}</strong><br>{msg}
+        </p>
+        """
+        subject = f"📨 Zgłoszenie + raport z rozmowy — {business_name}"
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px;">
         <h2 style="color: #333;">📞 Raport z rozmowy</h2>
         <p style="color: #666; margin-top: -10px;">{business_name}</p>
+        {lead_block}
         <p><strong>📋 Podsumowanie:</strong></p>
         <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; white-space: pre-line;">{summary}</p>
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
@@ -519,7 +552,7 @@ async def send_call_summary_email(tenant: dict, caller_phone: str, summary: str,
                 json={
                     "from": "Voice AI <noreply@bizvoice.pl>",
                     "to": [to_email],
-                    "subject": f"📞 Raport z rozmowy — {business_name}",
+                    "subject": subject,
                     "html": html_content,
                 },
                 timeout=10.0,
@@ -534,17 +567,21 @@ async def send_call_summary_email(tenant: dict, caller_phone: str, summary: str,
         return False
 
 
-async def maybe_send_call_summary(tenant: dict, caller_phone: str, context: LLMContext) -> None:
+async def maybe_send_call_summary(
+    tenant: dict, caller_phone: str, context: LLMContext, call_state: dict | None = None
+) -> None:
     """Woła się w finally: bloku websocket handlera — PO KAŻDEJ rozmowie, niezależnie jak się
     skończyła (cisza, limit czasu, contact_owner, end_conversation, zwykłe rozłączenie).
     Bramkowane tym samym polem co cascade (patrz docstring pliku) — jeśli tenant nie ma
     włączonego raportu w panelu, nic się nie wysyła.
 
-    CELOWO wysyła się ZAWSZE gdy lead_email_enabled=1, nawet jeśli w tej samej rozmowie już
-    poszedł konkretny mail (contact_owner) — użytkownik wprost chce dostawać streszczenie
-    KAŻDEJ rozmowy niezależnie od innych maili, nie tylko tych bez wiadomości dla właściciela."""
+    call_state: gdy handle_contact_owner (tej samej rozmowy) odłożył wiadomość dla właściciela
+    (patrz komentarz 2026-09-09 tam) bo raport i "email do powiadomień" wskazują na TEN SAM
+    adres — doklejamy ją tu do JEDNEGO maila zamiast wysyłać osobno. Gdy call_state=None albo
+    bez odłożonej wiadomości — zachowanie identyczne jak wcześniej."""
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
+    pending = (call_state or {}).get("pending_contact_owner")
     if not lead_email_enabled or not to_email:
         return
     summary = await generate_conversation_summary(context, tenant)
@@ -555,11 +592,17 @@ async def maybe_send_call_summary(tenant: dict, caller_phone: str, context: LLMC
         # również wtedy, gdy rozmówca niczego nie pozostawi") — gdy włączony, wysyłamy
         # krótki raport zamiast całkiem pomijać. caller_phone bywa pusty/"nieznany" dla
         # połączeń z zastrzeżonym numerem — pokazujemy to jawnie, nie fałszywy numer.
-        if not int(tenant.get("report_empty_calls") or 0):
+        # Wyjątek: jest odłożona wiadomość z contact_owner — to NIE jest pusta rozmowa,
+        # transkrypt po prostu nie zawierał wystarczająco treści dla GPT, ale realny lead
+        # istnieje i musi trafić do właściciela.
+        if not pending and not int(tenant.get("report_empty_calls") or 0):
             return
-        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
-        summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
-    await send_call_summary_email(tenant, caller_phone, summary, to_email)
+        if not pending:
+            caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+            summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
+        else:
+            summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
+    await send_call_summary_email(tenant, caller_phone, summary, to_email, pending_message=pending)
 
 
 # ==========================================

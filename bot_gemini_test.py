@@ -1140,7 +1140,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     finally:
         logger.info("🏁 [GEMINI LIVE TEST] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state)
         except Exception as e:
             logger.error(f"[GEMINI LIVE TEST] Call summary error: {e}")
         try:
@@ -1474,7 +1474,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     finally:
         logger.info("🏁 [GEMINI LIVE TEST/VONAGE] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state)
         except Exception as e:
             logger.error(f"[GEMINI LIVE TEST/VONAGE] Call summary error: {e}")
         try:

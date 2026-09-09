@@ -678,7 +678,7 @@ async def websocket_gemini_test(websocket: WebSocket):
     finally:
         logger.info("🏁 [REALTIME TEST] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state)
         except Exception as e:
             logger.error(f"[REALTIME TEST] Call summary error: {e}")
         try:
@@ -889,7 +889,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     finally:
         logger.info("🏁 [REALTIME TEST/VONAGE] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context)
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state)
         except Exception as e:
             logger.error(f"[REALTIME TEST/VONAGE] Call summary error: {e}")
         try:

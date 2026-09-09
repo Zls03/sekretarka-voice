@@ -418,6 +418,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
     message = str(body.get("message") or "").strip()
     called_number = body.get("called_number") or body.get("to_number") or ""
     caller_phone = body.get("caller_phone") or body.get("system__caller_id") or "nieznany"
+    conversation_id = body.get("conversation_id") or ""
 
     if not customer_name or not message:
         return {"status": "error", "reason": "missing_fields"}
@@ -441,13 +442,29 @@ async def elevenlabs_tool_contact_owner(request: Request):
     if not to_email:
         return {"status": "error", "reason": "no_notification_email"}
 
-    ok = await send_message_email(tenant, customer_name, message, caller_phone, to_email)
+    # 2026-09-09 — 1:1 z handle_contact_owner w realtime_tools.py: gdy ta sama firma ma TEŻ
+    # raport z rozmowy (lead_email_enabled) na TEN SAM adres, odkładamy wiadomość do
+    # _elevenlabs_call_states (ten sam mechanizm co booking, patrz wyżej) zamiast wysyłać
+    # osobny mail teraz — elevenlabs_post_call skleja ją z podsumowaniem w JEDEN mail. Bez
+    # conversation_id nie da się skorelować z post-call, więc wtedy wysyłamy od razu (bezpieczny
+    # fallback — nigdy nie gubimy zgłoszenia tylko dlatego że nie możemy go połączyć).
+    report_to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
+    defer_to_report = bool(
+        conversation_id
+        and int(tenant.get("lead_email_enabled") or 0)
+        and report_to_email
+        and report_to_email == to_email
+    )
+    if defer_to_report:
+        _elevenlabs_call_states.setdefault(conversation_id, {})["pending_contact_owner"] = {
+            "customer_name": customer_name,
+            "message": message,
+        }
+        ok = True
+        logger.info(f"📞 [ELEVENLABS AGENT] contact_owner: odłożone do połączonego raportu ({to_email})")
+    else:
+        ok = await send_message_email(tenant, customer_name, message, caller_phone, to_email)
     result = {"status": "ok" if ok else "error"}
-    # 2026-09-09 — spójne z Gemini Live/OpenAI Realtime (patrz handle_contact_owner w
-    # realtime_tools.py). UWAGA: samo dodanie tego pola tu NIE wystarczy dla ElevenLabs —
-    # opis narzędzia "contact_owner" jest statycznie skonfigurowany w ich dashboardzie
-    # (nie w tym repo), więc żeby model faktycznie priorytetyzował say_exactly, trzeba
-    # tam ręcznie dopisać tę samą instrukcję co w realtime_tools.py::build_contact_owner_tool.
     closing_line = (tenant.get("contact_owner_closing_line") or "").strip()
     if ok and closing_line:
         result["say_exactly"] = closing_line
@@ -625,7 +642,11 @@ async def elevenlabs_post_call(request: Request):
 
     # Sprzątanie stanu rezerwacji "w toku" (patrz _elevenlabs_call_states wyżej) — rozmowa
     # się skończyła, ewentualny niedokończony booking i tak trzeba by zaczynać od nowa.
-    _elevenlabs_call_states.pop(data.get("conversation_id") or "", None)
+    # Zanim posprzątamy: wyciągamy ewentualną odłożoną wiadomość z contact_owner (patrz
+    # 2026-09-09 w elevenlabs_tool_contact_owner) — doklejamy ją do raportu niżej zamiast
+    # wysyłać osobny mail.
+    _pending_call_state = _elevenlabs_call_states.pop(data.get("conversation_id") or "", None)
+    pending_contact_owner = (_pending_call_state or {}).get("pending_contact_owner")
 
     if not call_sid or not called_number:
         logger.warning(
@@ -663,14 +684,32 @@ async def elevenlabs_post_call(request: Request):
     if summary == "Brak treści rozmowy." or summary == "Nie udało się wygenerować streszczenia.":
         # Zapasowo — wbudowane streszczenie ElevenLabs lepsze niż nic, gdyby nasze zawiodło.
         summary = analysis.get("transcript_summary") or ""
-    if not summary and int(tenant.get("report_empty_calls") or 0):
+    if not summary and pending_contact_owner:
+        # 2026-09-09 — odłożona wiadomość z contact_owner to NIE pusta rozmowa, transkrypt po
+        # prostu nie dał GPT wystarczająco treści — realny lead istnieje, musi trafić do maila.
+        summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
+    elif not summary and int(tenant.get("report_empty_calls") or 0):
         # 2026-09-09 — patrz identyczny komentarz w realtime_tools.py::maybe_send_call_summary
         # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
         caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
         summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
     if lead_email_enabled and to_email and summary:
-        ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email)
+        ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email, pending_message=pending_contact_owner)
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
+    elif pending_contact_owner:
+        # Awaryjny fallback — odłożyliśmy wiadomość zakładając że poleci tu razem z raportem,
+        # ale coś się zmieniło (np. lead_email_enabled wyłączone w trakcie rozmowy) — wyślij
+        # ją osobno, żeby zgłoszenie nie przepadło.
+        fallback_to = tenant.get("notification_email") or tenant.get("email")
+        if fallback_to:
+            await send_message_email(
+                tenant,
+                pending_contact_owner.get("customer_name") or "Nieznany",
+                pending_contact_owner.get("message") or "",
+                caller_phone or "nieznany",
+                fallback_to,
+            )
+            logger.warning("📧 [ELEVENLABS AGENT] pending_contact_owner: raport nie poleciał, wysłano awaryjnie osobno")
 
     return {"status": "ok"}
 
