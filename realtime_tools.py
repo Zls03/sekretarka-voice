@@ -384,7 +384,43 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
 
         conversation_text = "\n".join(conversation[-20:])
 
-        if tenant:
+        if tenant and tenant.get("custom_report_format") == 1:
+            # 2026-09-09 — format raportu na życzenie konkretnego klienta (kancelaria
+            # prawna QFX Group, patrz historia sesji), włączany per-firma przełącznikiem
+            # w panelu ("📋 Format prawniczy raportu", firms.custom_report_format).
+            # Struktura i kategorie pilności celowo INNE niż uniwersalny format niżej —
+            # to świadomy wyjątek od zasady "jeden format dla wszystkich" z myślą o
+            # firmach które potrzebują dokładnie takiego układu (np. do dalszego
+            # przetwarzania/segregacji ręcznej). Domyślnie wyłączone dla każdej firmy.
+            business_name = tenant.get("name") or "firma"
+            additional_info = (tenant.get("additional_info") or "").strip()
+            context_block = f'\nKontekst firmy ("{business_name}"): {additional_info}' if additional_info else ""
+            system_content = (
+                "Podsumuj poniższą rozmowę telefoniczną dla kancelarii, po polsku, w "
+                "DOKŁADNIE tej strukturze punktów (pomiń punkt jeśli danej informacji nie "
+                "było w rozmowie):\n"
+                "Kto: [imię i nazwisko dzwoniącego]\n"
+                "Firma / instytucja: [nazwa firmy lub instytucji, jeśli podano]\n"
+                "Numer telefonu: [jeśli dzwoniący podał go na głos w rozmowie]\n"
+                "Sprawa: [konkretnie czego dotyczy]\n"
+                "Czego oczekuje: [co konkretnie chce od kancelarii/adresata]\n"
+                "Termin: [jeśli sprawa jest związana z konkretnym terminem]\n"
+                "Pilność: JEDNO z: \"PILNE\" (rozmówca wprost mówi że sprawa jest "
+                "pilna/ma krótki termin), \"OFERTA HANDLOWA\" (to telemarketing/"
+                "sprzedaż/oferta współpracy), \"STANDARD\" (wszystko inne)\n\n"
+                "DODATKOWO: jeśli rozmówca przedstawił się jako przedstawiciel sądu, "
+                "prokuratury, Policji, komornika, urzędu, banku lub notariusza — "
+                "zacznij podsumowanie linią \"PRIORYTETOWE\" i dopisz pod spodem: "
+                "nazwę instytucji, wydział/jednostkę (jeśli podano), sygnaturę lub "
+                "numer sprawy (jeśli podano), bezpośredni numer telefonu do rozmówcy "
+                "(jeśli podano) — oprócz standardowych punktów powyżej.\n"
+                "Pisz zwięźle, bez lania wody, bez dodatkowego nagłówka. Jeśli rozmowa "
+                "była pusta/bez treści (np. sama cisza, natychmiastowe rozłączenie) — "
+                "napisz jedno zdanie o tym zamiast reszty punktów."
+                f"{context_block}"
+            )
+            max_tokens = 400
+        elif tenant:
             business_name = tenant.get("name") or "firma"
             additional_info = (tenant.get("additional_info") or "").strip()
             context_block = f'\nKontekst firmy ("{business_name}"): {additional_info}' if additional_info else ""
