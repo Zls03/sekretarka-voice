@@ -123,15 +123,18 @@ ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
 # agent.prompt.tool_ids na agencie (włączone 2026-09-04 przez PATCH /v1/convai/agents —
 # bez tego ElevenLabs po cichu ignoruje tool_ids z override i zawsze używa domyślnego
 # zestawu narzędzi agenta, czyli błąd wracałby bez żadnego widocznego sygnału).
-CONTACT_OWNER_TOOL_ID = "tool_7301m1f7exgvf81a5ysqrbn235ts"
+# 2026-09-10 — migracja na nowe konto ElevenLabs (drugi Google, promo Creator 22$/11$,
+# stare konto konczylo limity). Agent "Bizvoice Test" odtworzony 1:1 (ten sam głos
+# 8EWWaNTDrqObI22Gvo1q, model eleven_flash_v2_5, przełącznik tool_ids override włączony)
+# i te same 3 narzędzia webhook — wszystkie ID poniżej to ID z NOWEGO konta, stare już
+# nieaktualne. ELEVENLABS_API_KEY/ELEVENLABS_AGENT_ID (Railway env) podmienione razem z tym
+# pushem, żeby nie było okna gdzie kod i env wskazują na różne konta.
+CONTACT_OWNER_TOOL_ID = "tool_7401m1epk46deb1tfab5se2bmgy6"
 
 # tool_id narzędzi rezerwacji (2026-09-08, port realtime_booking.py pod ElevenLabs) —
-# ten sam mechanizm/gwarancja co CONTACT_OWNER_TOOL_ID wyżej. Uzupełnić po utworzeniu
-# obu narzędzi w dashboardzie ElevenLabs (agent "Bizvoice Test" -> Narzędzia -> Dodaj
-# narzędzie), PRZED pierwszym telefonicznym testem — dopóki puste, booking_available
-# będzie liczone poprawnie, ale tool_ids wyjdzie pusty i model nie zobaczy narzędzia.
-BOOK_APPOINTMENT_TOOL_ID = "tool_1801m1z3w891e7n9pwwzc5h4qy1b"
-MANAGE_BOOKING_TOOL_ID = "tool_0801m1z527fmeycbww4xq22csck1"
+# ten sam mechanizm/gwarancja co CONTACT_OWNER_TOOL_ID wyżej.
+BOOK_APPOINTMENT_TOOL_ID = "tool_4601m1z6ej9verx8qg719pfghxkx"
+MANAGE_BOOKING_TOOL_ID = "tool_0801m1z6x57se7396k77bqrhxfs7"
 
 ELEVENLABS_SIP_DOMAIN = "sip.rtc.elevenlabs.io:5060"
 
