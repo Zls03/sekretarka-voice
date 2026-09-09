@@ -442,7 +442,16 @@ async def elevenlabs_tool_contact_owner(request: Request):
         return {"status": "error", "reason": "no_notification_email"}
 
     ok = await send_message_email(tenant, customer_name, message, caller_phone, to_email)
-    return {"status": "ok" if ok else "error"}
+    result = {"status": "ok" if ok else "error"}
+    # 2026-09-09 — spójne z Gemini Live/OpenAI Realtime (patrz handle_contact_owner w
+    # realtime_tools.py). UWAGA: samo dodanie tego pola tu NIE wystarczy dla ElevenLabs —
+    # opis narzędzia "contact_owner" jest statycznie skonfigurowany w ich dashboardzie
+    # (nie w tym repo), więc żeby model faktycznie priorytetyzował say_exactly, trzeba
+    # tam ręcznie dopisać tę samą instrukcję co w realtime_tools.py::build_contact_owner_tool.
+    closing_line = (tenant.get("contact_owner_closing_line") or "").strip()
+    if ok and closing_line:
+        result["say_exactly"] = closing_line
+    return result
 
 
 @router.post("/elevenlabs/tools/book_appointment")

@@ -217,7 +217,16 @@ def build_contact_owner_tool(
             return
 
         sent = await send_message_email(tenant, customer_name, message, caller_phone, owner_email)
-        await params.result_callback({"status": "ok" if sent else "error"})
+        # 2026-09-09 — opcjonalny per-firmowy dokładny tekst pożegnania (panel: pole pod
+        # checkboxem "Zbieranie wiadomości dla właściciela"). Bez tego model i tak formułował
+        # jakieś pożegnanie, ale trzymał się przykładu WPISANEGO NA SZTYWNO w opis tego
+        # narzędzia niżej — sugestia z DODATKOWYCH INFO (znacznie dalej w kontekście) ją
+        # przegrywała, złapane na żywo (QFX Group). Puste pole = brak zmiany zachowania.
+        closing_line = (tenant.get("contact_owner_closing_line") or "").strip()
+        result = {"status": "ok" if sent else "error"}
+        if sent and closing_line:
+            result["say_exactly"] = closing_line
+        await params.result_callback(result)
 
         if sent:
             call_state["ended"] = True
@@ -266,6 +275,9 @@ bez tłumaczenia dlaczego pytasz drugi raz.
 ⚠️ Jeśli wynik to status="ok" — połączenie zaraz automatycznie się rozłączy (kilka sekund po
 Twojej odpowiedzi), więc Twoja odpowiedź MUSI być zamkniętym pożegnaniem, NIE pytaniem
 otwartym. NIE pytaj "Czy mogę jeszcze w czymś pomóc?" — nikt nie zdąży odpowiedzieć.
+⛔ Jeśli wynik zawiera pole "say_exactly" (niepuste) — Twoja odpowiedź MUSI być TĄ TREŚCIĄ
+SŁOWO W SŁOWO, bez zmiany, dodania czy skrócenia — ma pierwszeństwo przed przykładem niżej.
+Jeśli "say_exactly" NIE występuje w wyniku — sformułuj pożegnanie sam, np.:
 ✅ "Dobrze, przekazuję wiadomość właścicielowi. Dziękuję za telefon, do usłyszenia!"
 ❌ "Wiadomość została przekazana. Czy mogę jeszcze w czymś pomóc?\"""",
         properties={
