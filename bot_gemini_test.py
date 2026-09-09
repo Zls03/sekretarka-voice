@@ -1168,7 +1168,19 @@ async def debug_firms_schema():
         "SELECT id, name, custom_report_format, contact_owner_closing_line FROM firms WHERE id = ?",
         ["firm_1788858357346_gakuw"],
     )
-    return {"schema": schema, "row": row}
+    tenant = await get_tenant_by_phone("+48459050552")
+    tenant_view = None
+    if tenant:
+        tenant_view = {
+            "id": tenant.get("id"),
+            "name": tenant.get("name"),
+            "keys_count": len(tenant.keys()),
+            "has_custom_report_format_key": "custom_report_format" in tenant,
+            "custom_report_format": tenant.get("custom_report_format"),
+            "has_closing_line_key": "contact_owner_closing_line" in tenant,
+            "contact_owner_closing_line": tenant.get("contact_owner_closing_line"),
+        }
+    return {"schema": schema, "row": row, "get_tenant_by_phone": tenant_view}
 
 
 @app.get("/vonage/answer-gemini-live")
