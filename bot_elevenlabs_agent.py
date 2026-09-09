@@ -555,14 +555,14 @@ async def save_elevenlabs_transcript(tenant: dict, call_sid: str, transcript: li
         )
         saved += 1
 
-    summary = analysis.get("transcript_summary") or ""
-    if summary:
-        await target_db.execute(
-            """INSERT INTO call_transcripts
-               (id, tenant_id, call_sid, role, content, created_at)
-               VALUES (?, ?, ?, 'summary', ?, datetime('now'))""",
-            [f"tr_{uuid.uuid4().hex[:12]}", tenant_id, call_sid, summary[:1000]],
-        )
+    # 2026-09-09 — USUNIĘTE: wcześniej dopisywało tu analysis.transcript_summary (wbudowane
+    # streszczenie ElevenLabs) jako dodatkowy wiersz call_transcripts z rolą "summary". Panel
+    # (firm/[id]/page.tsx) nie ma osobnej obsługi tej roli — renderuje WSZYSTKO co nie jest
+    # "user" jako "🤖 Asystent", więc to streszczenie wyglądało jak dodatkowa wypowiedź bota
+    # na końcu rozmowy, choć nigdy nie padło na żywo (złapane na żywo, zgłoszone przez
+    # użytkownika). Prawdziwy raport z rozmowy leci mailem niżej (summarize_conversation_lines,
+    # NASZE podsumowanie z kontekstem firmy) — to tu było tylko duplikatem/śmieciem w
+    # transkrypcie, nigdy nie czytanym przez żaden inny kod.
 
     return saved
 
