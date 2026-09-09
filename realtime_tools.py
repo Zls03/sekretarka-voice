@@ -549,8 +549,16 @@ async def maybe_send_call_summary(tenant: dict, caller_phone: str, context: LLMC
         return
     summary = await generate_conversation_summary(context, tenant)
     if summary == "Brak treści rozmowy.":
-        # Rozmowa się nie odbyła / rozłączono natychmiast — nie ma czego raportować
-        return
+        # 2026-09-09 — domyślnie nadal pomijamy (większość firm nie chce maila za KAŻDE
+        # rozłączenie bez słowa). Nowy przełącznik per-firma (QFX Group, na żądanie
+        # klienta: "chciałbym otrzymywać informację o KAŻDYM połączeniu przychodzącym,
+        # również wtedy, gdy rozmówca niczego nie pozostawi") — gdy włączony, wysyłamy
+        # krótki raport zamiast całkiem pomijać. caller_phone bywa pusty/"nieznany" dla
+        # połączeń z zastrzeżonym numerem — pokazujemy to jawnie, nie fałszywy numer.
+        if not int(tenant.get("report_empty_calls") or 0):
+            return
+        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
     await send_call_summary_email(tenant, caller_phone, summary, to_email)
 
 

@@ -663,6 +663,11 @@ async def elevenlabs_post_call(request: Request):
     if summary == "Brak treści rozmowy." or summary == "Nie udało się wygenerować streszczenia.":
         # Zapasowo — wbudowane streszczenie ElevenLabs lepsze niż nic, gdyby nasze zawiodło.
         summary = analysis.get("transcript_summary") or ""
+    if not summary and int(tenant.get("report_empty_calls") or 0):
+        # 2026-09-09 — patrz identyczny komentarz w realtime_tools.py::maybe_send_call_summary
+        # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
+        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
     if lead_email_enabled and to_email and summary:
         ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email)
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")

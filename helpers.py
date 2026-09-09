@@ -409,6 +409,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         # prostu ich nie przepisywała dalej.
         "custom_report_format":      int(firm.get("custom_report_format") or 0),
         "contact_owner_closing_line": firm.get("contact_owner_closing_line") or "",
+        "report_empty_calls":        int(firm.get("report_empty_calls") or 0),
 
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
