@@ -1220,40 +1220,49 @@ async def vonage_answer_gemini_live(request: Request):
         # przyczyną 404. Znaleziony realny mismatch: import numeru w
         # ensure_elevenlabs_sip_number szedł Z "+", a URI tutaj budowane było BEZ
         # "+" (lstrip) — dokumentacja ElevenLabs SIP trunking wprost wymaga
-        # identycznego formatu przy imporcie i przy wywołaniu. Naprawione (patrz
-        # niżej, sip_number teraz zawsze z "+"), ALE na żywym teście (2026-09-08
-        # 11:28) dalej identyczny sip_code=404/cannot_route — format nie był
-        # (jedyną) przyczyną. WYŁĄCZONE PONOWNIE, i to KRYTYCZNE żeby zostało
-        # wyłączone: w przeciwieństwie do niepowodzenia ensure_elevenlabs_sip_number
-        # (obsłużone, spada na WebSocket), porażka SAMEGO connect->SIP PO WYSŁANIU
-        # NCCO nie ma już żadnego fallbacku — Vonage kończy połączenie (widziane na
-        # żywo: dzwoniący dostaje "wybrany numer nie istnieje", zero kontaktu z
-        # botem). Podejrzenie na kolejny test (patrz historia sesji): ElevenLabs
-        # POST /v1/convai/phone-numbers dla provider=sip_trunk wspiera opcjonalny
-        # inbound_trunk_config (allowed_addresses/credentials/media_encryption) -
-        # obecnie wysyłamy import BEZ tego pola, możliwe że trzeba jawnie dopisać
-        # zakresy IP sygnalizacyjnych Vonage. Nie włączaj ponownie bez potwierdzenia
-        # na żywej rozmowie (nie tylko brak błędu w logu importu).
-        SIP_DIRECT_ENABLED = False
+        # identycznego formatu przy imporcie i przy wywołaniu. Naprawione, ALE na
+        # żywym teście (2026-09-08 11:28) dalej identyczny sip_code=404/cannot_route
+        # — format nie był (jedyną) przyczyną. Potwierdzone niezależnie po stronie
+        # ElevenLabs: zero zapisanych prób w ich logach SIP dla obu testów (ani
+        # tego, ani próby przez natywny produkt "SIP Trunking" Vonage) — więc
+        # INVITE najpewniej nigdy nie opuszczał sieci Vonage.
+        # 2026-09-09: kolejna odpowiedź z ticketu #3122205 (człowiek, Aldo) wróciła
+        # do tej samej teorii identyfikatora bez odpowiedzi na pytanie czy INVITE
+        # w ogóle wyszedł. Podał link do dok. NCCO connect->sip — brak tam
+        # wymaganych nagłówków, ALE jest nieprzetestowany alternatywny sposób
+        # zapisu endpointu: pola "user"+"domain" zamiast "uri" (mutually exclusive
+        # wg dokumentacji) — może się inaczej routować wewnętrznie u Vonage niż
+        # surowy string uri. Próbujemy tego wariantu TERAZ, razem z prawdziwym
+        # fallbackiem (eventType=synchronous + eventUrl, patrz
+        # /vonage/sip-fallback-elevenlabs niżej) — w przeciwieństwie do obu
+        # poprzednich prób, tym razem porażka samego connect->SIP NIE zostawi
+        # dzwoniącego bez niczego, tylko każe Vonage odpytać eventUrl o nową NCCO
+        # (most WebSocket). Nie wyłączaj tego eventUrl przy kolejnych próbach —
+        # to jedyna rzecz, która wcześniej brakowała i realnie coś psuła na żywo.
+        SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
-            # WAŻNE: musi być identyczny format (z "+") jak przy imporcie numeru w
-            # ensure_elevenlabs_sip_number (e164 = "+"+numer) — ElevenLabs SIP trunking
-            # wymaga dopasowania formatu identyfikatora między importem a wywołaniem,
-            # inaczej routing się wysypuje (potwierdzone w ich dokumentacji SIP trunking:
-            # "if you call... with a leading +, you must also import... with the leading +").
-            # Wcześniej było lstrip("+") tutaj podczas gdy import szedł Z "+" — mismatch,
-            # który realnie tłumaczy obserwowany sip_code=404/cannot_route (zgłoszenie
-            # Vonage Support #3122205, 2026-09-08: "you are using Vonage LVN as the
-            # identifier... may have caused the SIP URI to return 404").
             sip_number = to_number if to_number.startswith("+") else f"+{to_number}"
+            fallback_ws_uri = (
+                f"wss://{host}/ws-elevenlabs-vonage?phone={tenant['phone_number']}"
+                f"&callerPhone={from_number}&callSid={call_uuid}"
+            )
+            event_url = (
+                f"https://{host}/vonage/sip-fallback-elevenlabs?wsUri={quote(fallback_ws_uri, safe='')}"
+            )
             ncco = [{
                 "action": "connect",
                 "from": sip_number.lstrip("+"),
-                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
+                "eventType": "synchronous",
+                "eventUrl": [event_url],
+                "endpoint": [{
+                    "type": "sip",
+                    "user": sip_number,
+                    "domain": f"{ELEVENLABS_SIP_DOMAIN};transport=tcp",
+                }],
             }]
-            logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie: {sip_number}")
+            logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (user+domain, z fallbackiem): {sip_number}")
             return JSONResponse(ncco)
         logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] Import numeru nie powiódł się — fallback na most WebSocket")
         ws_uri = (
@@ -1278,6 +1287,26 @@ async def vonage_answer_gemini_live(request: Request):
             ],
         }
     ]
+    return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/sip-fallback-elevenlabs", methods=["GET", "POST"])
+async def vonage_sip_fallback_elevenlabs(request: Request):
+    """eventUrl (eventType=synchronous) dla connect->SIP w vonage_answer_gemini_live —
+    Vonage odpytuje to gdy próba SIP direct do ElevenLabs zawiedzie (failed/rejected/
+    timeout/busy) i oczekuje w odpowiedzi ŚWIEŻEJ NCCO. Bez tego (stan sprzed
+    2026-09-09) porażka connect->SIP PO WYSŁANIU NCCO kończyła połączenie bez żadnej
+    ścieżki dla dzwoniącego — złapane na żywo dwa razy. wsUri (już zbudowany, gotowy
+    URI mostu WebSocket) jest przekazywany w query stringu z miejsca budowania
+    oryginalnej NCCO, więc tu nic nie trzeba odtwarzać z tenanta na nowo."""
+    ws_uri = request.query_params.get("wsUri", "")
+    logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] eventUrl fallback wywołany (SIP connect zawiódł) — most WebSocket: {ws_uri}")
+    if not ws_uri:
+        return JSONResponse([{"action": "talk", "text": "Przepraszamy, wystąpił błąd połączenia.", "language": "pl-PL"}])
+    ncco = [{
+        "action": "connect",
+        "endpoint": [{"type": "websocket", "uri": ws_uri, "content-type": "audio/l16;rate=16000"}],
+    }]
     return JSONResponse(ncco)
 
 
