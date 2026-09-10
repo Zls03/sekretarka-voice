@@ -1249,10 +1249,16 @@ async def vonage_answer_gemini_live(request: Request):
         # dociera do ElevenLabs i dostaje 404 Not Found z ICH serwera (nie problem formatu/NCCO
         # po naszej/Vonage stronie) — przyczyna znaleziona i naprawiona w
         # ensure_elevenlabs_sip_number (brakujący inbound_trunk_config.allowed_addresses).
-        # Włączone TYLKO na testowym numerze Bizvoice na wyraźną prośbę użytkownika — QFX i
-        # inni zostają na sprawdzonym moście WebSocket dopóki nie potwierdzimy na żywo że
-        # to faktycznie działa.
-        SIP_DIRECT_ENABLED = tenant.get("phone_number", "").lstrip("+") == "48459050542"
+        # WŁĄCZONE DLA WSZYSTKICH numerów Vonage na silniku ElevenLabs (na wyraźną prośbę
+        # użytkownika, po potwierdzeniu na żywo na numerze testowym Bizvoice: poprawny
+        # caller ID, called_number/channel/call_sid w dynamic_variables, X-CALL-ID zgadzający
+        # call_sid z UUID Vonage, transkrypt+raport widoczne w panelu). Fallback na most
+        # WebSocket (ws-elevenlabs-vonage) NIŻEJ zostaje jako siatka bezpieczeństwa przy
+        # jakimkolwiek niepowodzeniu importu/połączenia SIP — klient nigdy nie zostaje bez
+        # ścieżki. NIEPRZETESTOWANE JESZCZE na żywo przez czysty SIP direct: contact_owner
+        # i book_appointment/manage_booking (tylko przez most) — warto obserwować pierwsze
+        # rozmowy firm z tymi włączonymi funkcjami.
+        SIP_DIRECT_ENABLED = True
         agent_id = resolve_elevenlabs_agent_id(tenant)
         sip_ready = SIP_DIRECT_ENABLED and await ensure_elevenlabs_sip_number(tenant["phone_number"], agent_id)
         if sip_ready:
