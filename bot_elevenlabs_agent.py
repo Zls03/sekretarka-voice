@@ -412,10 +412,23 @@ async def elevenlabs_personalization(request: Request):
         "dynamic_variables": {
             "business_name": tenant.get("name") or "",
             "caller_phone": caller_id,
-            # To natywna integracja numerów ElevenLabs (Twilio po ich stronie) — jedyny
-            # tor spośród trzech gdzie to na sztywno "twilio", patrz docstring
-            # _build_conversation_config_override po pełne wyjaśnienie po co to pole.
-            "channel": "twilio",
+            # 2026-09-10 — called_number brakowało tutaj całkowicie, mimo że narzędzia
+            # (contact_owner/book_appointment/manage_booking) mają je zadeklarowane jako
+            # WYMAGANĄ dynamic_variable (patrz MIGRACJA_ELEVENLABS_NOTATKI.txt) — bez tego
+            # pola ElevenLabs odrzuca CAŁĄ rozmowę natychmiast po starcie z
+            # error_type=agent_configuration_error ("Missing required dynamic variables
+            # in tools"), złapane na żywym pierwszym udanym SIP direct połączeniu
+            # (conversation_initiation_source=sip_trunk, status=failed, 0s).
+            "called_number": called_number,
+            # Ten webhook jest w praktyce wołany WYŁĄCZNIE dla połączeń SIP trunk direct
+            # (Vonage -> ElevenLabs bezpośrednio, patrz ensure_elevenlabs_sip_number) — tor
+            # Twilio (register_call) przekazuje conversation_initiation_client_data INLINE,
+            # nie przez ten webhook (patrz docstring modułu, punkt 4), więc nigdy tu nie
+            # trafia. "twilio" było więc zwyczajnie błędną wartością — narzędzia rezerwacji
+            # używają tego pola do wyboru dostawcy SMS (patrz _build_conversation_config_override),
+            # a numer testowy jest numerem Vonage, więc musi być "vonage" jak w
+            # run_elevenlabs_vonage_bot (most WebSocket, ta sama rodzina połączeń).
+            "channel": "vonage",
         },
     }
 
