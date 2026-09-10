@@ -1266,7 +1266,14 @@ async def vonage_answer_gemini_live(request: Request):
             )
             ncco = [{
                 "action": "connect",
-                "from": sip_number.lstrip("+"),
+                # 2026-09-10 — BUG: tu było "from": sip_number (czyli numer SEKRETARKI,
+                # ten sam co "to") zamiast numeru DZWONIĄCEGO. Vonage wysyła tę wartość
+                # jako Caller-ID/From w SIP INVITE do ElevenLabs, więc ich webhook
+                # personalizacji dostawał caller_id == called_number — mail z raportem
+                # pokazywał numer sekretarki zamiast numeru klienta. Złapane na żywym
+                # pierwszym poprawnie wysłanym raporcie (2026-09-10, "Telefon: 48459050542"
+                # zamiast realnego numeru dzwoniącego).
+                "from": from_number.lstrip("+") if from_number else sip_number.lstrip("+"),
                 "eventType": "synchronous",
                 "eventUrl": [event_url],
                 "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
