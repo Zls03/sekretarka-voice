@@ -1276,7 +1276,21 @@ async def vonage_answer_gemini_live(request: Request):
                 "from": from_number.lstrip("+") if from_number else sip_number.lstrip("+"),
                 "eventType": "synchronous",
                 "eventUrl": [event_url],
-                "endpoint": [{"type": "sip", "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp"}],
+                "endpoint": [{
+                    "type": "sip",
+                    "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp",
+                    # 2026-09-10 — bez tego ElevenLabs generuje WŁASNE call_sid (SCL_xxx) dla
+                    # SIP-trunkowej nogi połączenia, całkowicie inne niż UUID Vonage pod którym
+                    # zapisujemy wpis w call_logs (panel: "Historia rozmów") — transkrypt
+                    # (save_elevenlabs_transcript, keyowany po call_sid z /elevenlabs/post-call)
+                    # lądował więc pod ID, do którego panel nigdy nie zajrzy, bo szuka po UUID
+                    # Vonage. X-CALL-ID to udokumentowany zarezerwowany nagłówek ElevenLabs SIP
+                    # trunking (elevenlabs.io/docs -> sip-trunking, sekcja "Standard Metadata
+                    # Headers") — NADPISUJE ich system__call_sid naszym UUID, więc oba systemy
+                    # zaczynają się zgadzać od pierwszego webhooka (personalizacja) po ostatni
+                    # (post-call). Vonage sam dokleja prefiks "X-" do klucza w "headers".
+                    "headers": {"CALL-ID": call_uuid},
+                }],
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (uri, z fallbackiem): {sip_number}")
             return JSONResponse(ncco)

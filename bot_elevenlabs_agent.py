@@ -666,7 +666,16 @@ async def elevenlabs_post_call(request: Request):
     # call_sid ogólne (dopisane 2026-09-03 razem z mostem Vonage — patrz
     # _build_conversation_config_override) sprawdzane PRZED starym twilio_call_sid,
     # oba klucze i tak niosą tę samą wartość dla nowych połączeń.
-    call_sid = dyn_vars.get("call_sid") or dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
+    # 2026-09-10 — system__call_sid sprawdzane NAJPIERW: dla SIP direct (vonage_answer_
+    # gemini_live) wstrzykujemy UUID Vonage jako nagłówek SIP X-CALL-ID (zarezerwowany przez
+    # ElevenLabs, nadpisuje ich własny system__call_sid), żeby ID rozmowy w tym webhooku
+    # zgadzało się z UUID pod którym /vonage/events zakłada wpis w call_logs — bez tego
+    # transkrypt zapisywał się pod WEWNĘTRZNYM call_sid ElevenLabs (SCL_xxx), którego panel
+    # nigdy nie znajdował przy wyświetlaniu historii rozmowy dla danego wpisu w logu połączeń.
+    call_sid = (
+        dyn_vars.get("system__call_sid") or dyn_vars.get("call_sid")
+        or dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
+    )
     duration = int(metadata.get("call_duration_secs") or 0)
     transcript = data.get("transcript") or []
 
