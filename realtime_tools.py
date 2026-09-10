@@ -301,9 +301,13 @@ Jeśli "say_exactly" NIE występuje w wyniku — sformułuj pożegnanie sam, np.
                     "DOKŁADNA treść tego czego klient chce/potrzebuje, jego słowami lub krótkim "
                     "rzeczowym streszczeniem KONKRETU sprawy (np. 'Chce przełożyć wizytę z piątku "
                     "na sobotę', 'Pyta o możliwość zniżki grupowej dla 5 osób'). "
-                    "⛔ NIE pisz o kliencie w trzeciej osobie i NIE pisz meta-opisu sytuacji "
-                    "(np. NIE 'Klient prosi o kontakt', NIE 'Proszę o kontakt z klientem') — "
-                    "to nie jest wiadomość, to opis że wiadomość istnieje. Napisz SAMĄ TREŚĆ sprawy."
+                    "⛔ NIE formułuj tego jako opis o kliencie w trzeciej osobie i NIE jako meta-opis "
+                    "sytuacji (np. NIE 'Klient prosi o kontakt', NIE 'Proszę o kontakt z klientem') — "
+                    "to pole ma zawierać SAMĄ TREŚĆ sprawy, nie opis że wiadomość istnieje. "
+                    "⚠️ To jest wewnętrzny opis PARAMETRU dla Ciebie — klient dzwoni, MÓWI, nie pisze. "
+                    "NIGDY nie używaj słów 'napisz'/'pisz' w rozmowie z klientem (np. 'napisz proszę "
+                    "ile minut potrzebujesz') — zamiast tego zapytaj głosowo, np. 'powiedz proszę' / "
+                    "'ile minut mniej więcej potrzebujesz?'."
                 ),
             },
         },
