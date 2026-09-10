@@ -1114,7 +1114,12 @@ async def websocket_gemini_live_test(websocket: WebSocket):
         # powiedzenia i tak dyktuje system_instruction ("ROZPOCZĘCIE ROZMOWY: ..."),
         # więc ta wiadomość jest tylko "zapłonem" do wywołania inferencji, nie
         # duplikuje całego promptu.
-        await asyncio.sleep(1.0)
+        # EKSPERYMENT 2026-09-10: 1.0s nie było niczym uzasadnione w kodzie/historii —
+        # wygląda na nieprzetestowany margines bezpieczeństwa. Skrócone do 0.3s żeby
+        # przyspieszyć powitanie; jeśli na żywym telefonie pierwsze słowo powitania
+        # zacznie się ucinać/gubić, podnieś z powrotem (sprawdź czy VAD/WS zdążyły się
+        # ustabilizować — "Loading Silero VAD model..." w logach tuż po connect).
+        await asyncio.sleep(0.3)
         logger.info("🎤 [GEMINI LIVE TEST] Wysyłam LLMMessagesAppendFrame (kick startowy)")
         await task.queue_frames([
             LLMMessagesAppendFrame(
@@ -1488,7 +1493,8 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         # Patrz komentarz w on_connect (Twilio) wyżej — zamiast pustego push_context_frame()
         # (który dublował cały system prompt jako seed i dawał ~15-17s do pierwszego dźwięku
         # na żywym telefonie), wysyłamy krótki jawny "zapłon" przez LLMMessagesAppendFrame.
-        await asyncio.sleep(1.0)
+        # EKSPERYMENT 2026-09-10 — patrz komentarz w on_connect (Twilio) wyżej, ten sam eksperyment.
+        await asyncio.sleep(0.3)
         logger.info("🎤 [GEMINI LIVE TEST/VONAGE] Wysyłam LLMMessagesAppendFrame (kick startowy)")
         await task.queue_frames([
             LLMMessagesAppendFrame(
