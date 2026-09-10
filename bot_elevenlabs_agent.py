@@ -359,6 +359,13 @@ async def elevenlabs_personalization(request: Request):
     body = await request.json()
     called_number = body.get("called_number") or body.get("to_number") or body.get("to") or ""
     caller_id = body.get("caller_id") or body.get("from_number") or body.get("from") or ""
+    # 2026-09-10 — call_sid z body tego webhooka (obecny na żywo dla połączeń SIP trunk,
+    # np. "SCL_yoX72P2WLD25") musi wrócić w dynamic_variables, inaczej /elevenlabs/post-call
+    # (elevenlabs_post_call niżej, sprawdza dyn_vars["call_sid"]) uznaje payload za
+    # niekompletny i po cichu pomija CAŁY raport z rozmowy — złapane na pierwszym udanym
+    # SIP direct połączeniu (called_number już przyszło dzięki poprzedniej poprawce, ale
+    # call_sid wciąż brakowało, bo tu nigdy nie było go w zwracanych dynamic_variables).
+    call_sid = body.get("call_sid") or body.get("twilio_call_sid") or ""
     logger.info(f"📞 [ELEVENLABS AGENT] Personalization: {caller_id} → {called_number} | raw={body}")
 
     tenant = await get_tenant_by_phone(called_number) if called_number else None
@@ -420,6 +427,7 @@ async def elevenlabs_personalization(request: Request):
             # in tools"), złapane na żywym pierwszym udanym SIP direct połączeniu
             # (conversation_initiation_source=sip_trunk, status=failed, 0s).
             "called_number": called_number,
+            "call_sid": call_sid,
             # Ten webhook jest w praktyce wołany WYŁĄCZNIE dla połączeń SIP trunk direct
             # (Vonage -> ElevenLabs bezpośrednio, patrz ensure_elevenlabs_sip_number) — tor
             # Twilio (register_call) przekazuje conversation_initiation_client_data INLINE,
