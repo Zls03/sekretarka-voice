@@ -1294,7 +1294,13 @@ async def vonage_answer_gemini_live(request: Request):
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (uri, z fallbackiem): {sip_number}")
             return JSONResponse(ncco)
-        logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] Import numeru nie powiódł się — fallback na most WebSocket")
+        # 2026-09-10 — ten warning strzelał myląco dla KAŻDEGO tenanta na silniku ElevenLabs,
+        # nie tylko numeru testowego — SIP_DIRECT_ENABLED=False (bo to nie jest numer testowy)
+        # też ląduje w tej gałęzi, więc "import nie powiódł się" sugerowało realny błąd tam
+        # gdzie import w ogóle nie był próbowany (most WebSocket to normalna, oczekiwana ścieżka
+        # dla wszystkich poza jednym testowym numerem). Złapane na żywo przy debugowaniu QFX.
+        if SIP_DIRECT_ENABLED:
+            logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] Import numeru nie powiódł się — fallback na most WebSocket")
         ws_uri = (
             f"wss://{host}/ws-elevenlabs-vonage?phone={tenant['phone_number']}"
             f"&callerPhone={from_number}&callSid={call_uuid}"
