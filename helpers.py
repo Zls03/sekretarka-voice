@@ -380,6 +380,14 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         # wskazuje na elevenlabs — realtime_engine (Gemini Live/OpenAI/ElevenLabs) i
         # tts_provider (kaskada) to dwa osobne, niepowiązane przełączniki.
         "elevenlabs_agent_voice_id": firm.get("elevenlabs_voice_id") or "",
+        # 2026-09-10 — stabilność/prędkość/podobieństwo głosu ElevenLabs per-tenant (panel
+        # "🔷 ElevenLabs"), patrz bot_elevenlabs_agent.py::_build_tts_override. Ten sam błąd
+        # co przy contact_owner_enabled/custom_report_format wyżej groziłby tu też — ta
+        # funkcja zwraca RĘCZNIE wybrane pola, nowa kolumna niewidoczna dla reszty backendu
+        # dopóki nie zostanie tu jawnie dopisana, więc dopisuję od razu przy wprowadzeniu.
+        "elevenlabs_tts_stability":        firm.get("elevenlabs_tts_stability"),
+        "elevenlabs_tts_speed":            firm.get("elevenlabs_tts_speed"),
+        "elevenlabs_tts_similarity_boost": firm.get("elevenlabs_tts_similarity_boost"),
         "speaking_rate":       float(firm.get("speaking_rate") or 1.06),
         "realtime_voice":      firm.get("realtime_voice") or "",
         "gemini_voice":        firm.get("gemini_voice") or "",

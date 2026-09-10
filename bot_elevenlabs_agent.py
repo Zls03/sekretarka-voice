@@ -234,6 +234,34 @@ def _resolve_agent_id(tenant: dict) -> str:
     return (tenant.get("elevenlabs_agent_id") or "").strip() or ELEVENLABS_AGENT_ID
 
 
+def _build_tts_override(tenant: dict) -> dict:
+    """2026-09-10 — głos + 3 suwaki (stabilność/prędkość/podobieństwo) per-tenant, panel
+    "🔷 ElevenLabs". Wspólne dla WSZYSTKICH torów (most WebSocket/register_call przez
+    _build_conversation_config_override NIŻEJ, i webhook personalizacji SIP direct wyżej)
+    — wcześniej każdy tor miał to zaimplementowane osobno (albo wcale, patrz historia
+    elevenlabs_personalization), co dawało rozjazd między silnikami dla tej samej firmy.
+
+    Stabilność/prędkość/podobieństwo MAJĄ sensowne domyślne wartości (te same co domyślne
+    ustawienia agenta: 0.5/1.0/0.8, patrz MIGRACJA_ELEVENLABS_NOTATKI.txt) — w odróżnieniu
+    od voice_id (pusty = dziedzicz głos agenta), te trzy zawsze się wysyła, bo suwak w
+    panelu zawsze ma jakąś wartość, nie ma stanu "nieustawiony". Dla firmy która nigdy nie
+    ruszyła suwaków efekt jest identyczny jak bez nadpisania (te same liczby co ma agent).
+
+    WYMAGA włączonego pozwolenia na nadpisywanie tts.stability/speed/similarity_boost na
+    agencie (Zabezpieczenia -> Nadpisania) — bez tego ElevenLabs po cichu je ignoruje,
+    dokładnie tak jak z tool_ids/prompt wcześniej. Włączone ręcznie przez PATCH
+    /v1/convai/agents/{id} 2026-09-10, patrz historia sesji."""
+    tts_override: dict = {
+        "stability": float(tenant.get("elevenlabs_tts_stability") if tenant.get("elevenlabs_tts_stability") is not None else 0.5),
+        "speed": float(tenant.get("elevenlabs_tts_speed") if tenant.get("elevenlabs_tts_speed") is not None else 1.0),
+        "similarity_boost": float(tenant.get("elevenlabs_tts_similarity_boost") if tenant.get("elevenlabs_tts_similarity_boost") is not None else 0.8),
+    }
+    voice_id = (tenant.get("elevenlabs_voice_id") or "").strip()
+    if voice_id:
+        tts_override["voice_id"] = voice_id
+    return tts_override
+
+
 def _build_conversation_config_override(
     tenant: dict, caller_phone: str, called_number: str, call_sid: str = "", channel: str = "twilio",
 ) -> tuple[dict, dict]:
@@ -276,15 +304,12 @@ def _build_conversation_config_override(
             "language": "pl",
         }
     }
-    # Głos per-tenant — kolumna elevenlabs_voice_id w bazie, ta sama którą panel
-    # zapisuje w zakładce "🔷 ElevenLabs" (Głos agenta). Do 2026-09-03 kod czytał inną
-    # nazwę pola (elevenlabs_agent_voice_id), której panel NIGDY nie zapisywał — więc
-    # nadpisanie głosu z panelu było martwe od początku, mimo że sam mechanizm
-    # (conversation_config_override.tts.voice_id) działał poprawnie na żywym telefonie
-    # (potwierdzone 2026-09-02 z ręcznie wstawionym do bazy voice_id "Aleksandra").
-    voice_id = tenant.get("elevenlabs_voice_id") or ""
-    if voice_id:
-        conversation_config_override["tts"] = {"voice_id": voice_id}
+    # Głos + stabilność/prędkość/podobieństwo per-tenant — patrz _build_tts_override wyżej.
+    # Do 2026-09-03 kod czytał inną nazwę pola (elevenlabs_agent_voice_id), której panel
+    # NIGDY nie zapisywał — nadpisanie głosu z panelu było martwe od początku, mimo że sam
+    # mechanizm (conversation_config_override.tts.voice_id) działał poprawnie na żywym
+    # telefonie (potwierdzone 2026-09-02 z ręcznie wstawionym do bazy voice_id "Aleksandra").
+    conversation_config_override["tts"] = _build_tts_override(tenant)
 
     dynamic_variables = {
         "business_name": tenant.get("name") or "",
@@ -414,15 +439,13 @@ async def elevenlabs_personalization(request: Request):
             "language": "pl",
         }
     }
-    # 2026-09-10 — brakowało tu nadpisania głosu per-tenant (kolumna elevenlabs_voice_id,
-    # panel "🔷 ElevenLabs"), mimo że _build_conversation_config_override (most WebSocket/
-    # register_call) robi to od dawna — patrz tam po pełne wyjaśnienie. Niewidoczne dopóki
-    # ten webhook faktycznie nie działał (przed dzisiejszymi poprawkami), ale teraz że SIP
-    # direct jest włączony dla wszystkich firm, każda z własnym głosem dostawałaby cicho
-    # domyślny głos agenta zamiast swojego.
-    voice_id = tenant.get("elevenlabs_voice_id") or ""
-    if voice_id:
-        conversation_config_override["tts"] = {"voice_id": voice_id}
+    # Głos + stabilność/prędkość/podobieństwo per-tenant — patrz _build_tts_override.
+    # Brakowało tu tego nadpisania mimo że _build_conversation_config_override (most
+    # WebSocket/register_call) robi to od dawna — niewidoczne dopóki ten webhook
+    # faktycznie nie działał (przed dzisiejszymi poprawkami), ale teraz że SIP direct
+    # jest włączony dla wszystkich firm, każda z własnym głosem/ustawieniami dostawałaby
+    # cicho domyślne wartości agenta zamiast swoich.
+    conversation_config_override["tts"] = _build_tts_override(tenant)
 
     return {
         "type": "conversation_initiation_client_data",
