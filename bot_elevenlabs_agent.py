@@ -404,18 +404,29 @@ async def elevenlabs_personalization(request: Request):
     if booking_available:
         tool_ids += [BOOK_APPOINTMENT_TOOL_ID, MANAGE_BOOKING_TOOL_ID]
 
+    conversation_config_override = {
+        "agent": {
+            "prompt": {
+                "prompt": prompt_text,
+                "tool_ids": tool_ids,
+            },
+            "first_message": first_message,
+            "language": "pl",
+        }
+    }
+    # 2026-09-10 — brakowało tu nadpisania głosu per-tenant (kolumna elevenlabs_voice_id,
+    # panel "🔷 ElevenLabs"), mimo że _build_conversation_config_override (most WebSocket/
+    # register_call) robi to od dawna — patrz tam po pełne wyjaśnienie. Niewidoczne dopóki
+    # ten webhook faktycznie nie działał (przed dzisiejszymi poprawkami), ale teraz że SIP
+    # direct jest włączony dla wszystkich firm, każda z własnym głosem dostawałaby cicho
+    # domyślny głos agenta zamiast swojego.
+    voice_id = tenant.get("elevenlabs_voice_id") or ""
+    if voice_id:
+        conversation_config_override["tts"] = {"voice_id": voice_id}
+
     return {
         "type": "conversation_initiation_client_data",
-        "conversation_config_override": {
-            "agent": {
-                "prompt": {
-                    "prompt": prompt_text,
-                    "tool_ids": tool_ids,
-                },
-                "first_message": first_message,
-                "language": "pl",
-            }
-        },
+        "conversation_config_override": conversation_config_override,
         "dynamic_variables": {
             "business_name": tenant.get("name") or "",
             "caller_phone": caller_id,
