@@ -502,6 +502,50 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
         return "Nie udało się wygenerować streszczenia."
 
 
+# CRM Integration (n8n + Pipedrive) — patrz CLAUDE.md, sekcja "CRM Integration".
+# 2026-09-13: POC ograniczony wyłącznie do numeru demo/sprzedażowego BizVoice
+# (+48459050542, "Bizvoice" w panelu) — jedyny tenant spięty z n8n/Pipedrive na tym
+# etapie. NIE ma jeszcze przełącznika per-tenant w panelu (crm_enabled), więc gating
+# tutaj wprost po numerze, żeby żadna prawdziwa rozmowa klienta (ERCO, Gabinet
+# Medycyny Pracy, itd.) nie poleciała przypadkiem do naszego prywatnego konta
+# Pipedrive testowego.
+_CRM_TEST_PHONE_NUMBERS = {"+48459050542"}
+N8N_CRM_WEBHOOK_URL = os.getenv(
+    "N8N_CRM_WEBHOOK_URL", "https://magnus1503.app.n8n.cloud/webhook/call-summary"
+)
+
+
+def _is_crm_test_tenant(tenant: dict) -> bool:
+    phone = (tenant.get("phone_number") or "").replace(" ", "").replace("-", "")
+    return phone in _CRM_TEST_PHONE_NUMBERS
+
+
+async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> None:
+    """Wysyła streszczenie rozmowy do n8n → CRM klienta. Nieblokująca — błąd tutaj
+    (n8n padł, timeout) nigdy nie może wywrócić resztę maybe_send_call_summary; mail
+    idzie niezależnie od tego czy to się uda.
+
+    tenant_phone (NUMER FIRMY, przypisany numer BizVoice — nie mylić z caller_phone,
+    czyli numerem DZWONIĄCEGO) jedzie w payloadzie właśnie po to, żeby n8n miał
+    stabilny, unikalny klucz do routingu "która firma → który CRM/credential", gdy
+    dojdzie kolejny klient z własnym Pipedrive/Bitrix24 (patrz CLAUDE.md)."""
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                N8N_CRM_WEBHOOK_URL,
+                json={
+                    "business_name": tenant.get("name") or "",
+                    "tenant_phone": tenant.get("phone_number") or "",
+                    "caller_phone": caller_phone or "",
+                    "summary": summary,
+                },
+                timeout=5.0,
+            )
+    except Exception as e:
+        logger.error(f"📋 [CRM] n8n webhook error: {e}")
+
+
 async def send_call_summary_email(
     tenant: dict, caller_phone: str, summary: str, to_email: str, pending_message: dict | None = None
 ) -> bool:
@@ -586,7 +630,8 @@ async def maybe_send_call_summary(
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     pending = (call_state or {}).get("pending_contact_owner")
-    if not lead_email_enabled or not to_email:
+    crm_enabled = _is_crm_test_tenant(tenant)
+    if not crm_enabled and (not lead_email_enabled or not to_email):
         return
     summary = await generate_conversation_summary(context, tenant)
     if summary == "Brak treści rozmowy.":
@@ -606,7 +651,10 @@ async def maybe_send_call_summary(
             summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
         else:
             summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
-    await send_call_summary_email(tenant, caller_phone, summary, to_email, pending_message=pending)
+    if lead_email_enabled and to_email:
+        await send_call_summary_email(tenant, caller_phone, summary, to_email, pending_message=pending)
+    if crm_enabled:
+        await maybe_send_to_crm(tenant, caller_phone, summary)
 
 
 # ==========================================

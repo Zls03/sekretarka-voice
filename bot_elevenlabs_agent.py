@@ -94,6 +94,8 @@ from realtime_tools import (
     is_call_allowed,
     _looks_like_vague_meta_message,
     _looks_too_short,
+    _is_crm_test_tenant,
+    maybe_send_to_crm,
 )
 from realtime_booking import _handle_book_appointment, _handle_manage_booking
 
@@ -774,7 +776,12 @@ async def elevenlabs_post_call(request: Request):
     if lead_email_enabled and to_email and summary:
         ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email, pending_message=pending_contact_owner)
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
-    elif pending_contact_owner:
+    if summary and _is_crm_test_tenant(tenant):
+        # Patrz CLAUDE.md "CRM Integration" i identyczny hook w
+        # realtime_tools.py::maybe_send_call_summary — POC ograniczony do numeru
+        # demo BizVoice, niezależny od lead_email_enabled.
+        await maybe_send_to_crm(tenant, caller_phone or "nieznany", summary)
+    if not (lead_email_enabled and to_email and summary) and pending_contact_owner:
         # Awaryjny fallback — odłożyliśmy wiadomość zakładając że poleci tu razem z raportem,
         # ale coś się zmieniło (np. lead_email_enabled wyłączone w trakcie rozmowy) — wyślij
         # ją osobno, żeby zgłoszenie nie przepadło.

@@ -166,6 +166,41 @@ gdy DODATKOWO co najmniej jeden pracownik ma podłączony Google Calendar i przy
 usługę (identyczny wymóg jak cascade, sprawdzany osobno w każdym silniku żeby
 zachowanie się nie rozjeżdżało dla tej samej konfiguracji tenanta).
 
+### CRM Integration (n8n + Pipedrive) — kierunek rozwoju (od 2026-09-13)
+
+**Cel:** każda rozmowa (niezależnie od silnika głosowego) ma trafiać jako
+kontakt + notatka do CRM klienta (start: Pipedrive, docelowo dowolny CRM przez
+n8n), NIE zastępując istniejącego raportu mailowego (`lead_email_enabled`) —
+to dodatkowy, równoległy kanał, sterowany osobnym przełącznikiem per-tenant.
+
+**Punkt zaczepienia (jeden, dla wszystkich aktywnych silników):**
+`maybe_send_call_summary()` w `realtime_tools.py` już dziś jest WSPÓLNYM
+hookiem wołanym po KAŻDEJ rozmowie dla Gemini Live, OpenAI Realtime i
+ElevenLabs (ElevenLabs konwertuje swój `transcript[]` do tego samego formatu
+linii przed wywołaniem — patrz "Lead capture" wyżej). Niezależny od
+Twilio vs Vonage — to warstwa telefonii, dispatch po `realtime_engine`
+dzieje się wcześniej, zanim dojdzie do tego punktu. Planowany webhook do n8n
+dokłada się TUTAJ, obok `send_call_summary_email` — osobna, nieblokująca
+funkcja (własny try/except, krótki timeout, nigdy nie może wywrócić
+zakończenia rozmowy), gated osobnym polem tenanta (np. `crm_enabled` +
+`crm_provider`) analogicznie do `lead_email_enabled`.
+
+Cascade (`bot.py`, stare tenanty) NIE jest częścią tego zakresu — nie
+zakładamy tam nowych firm, niski priorytet.
+
+**Przepływ danych:** backend (Railway) → POST webhook → n8n (workflow: znajdź
+lub utwórz kontakt po numerze telefonu → dodaj notatkę/aktywność z
+podsumowaniem rozmowy, tym samym tekstem co dziś idzie do maila) →
+Pipedrive API. n8n jest warstwą routingu — dodanie kolejnego CRM dla innego
+klienta to nowa gałąź w workflow n8n, nie zmiana w tym repo.
+
+**Status:** faza nauki/POC (n8n + Pipedrive), zero klientów produkcyjnych na
+tym jeszcze. Wdrażać najpierw jako jednokierunkowy zapis (rozmowa → CRM).
+Dwukierunkowe wzbogacanie kontekstu rozmowy danymi z CRM (np. rozpoznanie
+stałego klienta po numerze przed/w trakcie rozmowy) to świadomie OSOBNY,
+późniejszy etap — wchodzi w krytyczną ścieżkę samej rozmowy, wymaga twardego
+timeoutu i fallbacku gdy CRM/n8n nie odpowie na czas.
+
 ### Multi-Tenant Data
 
 Two Turso (serverless SQLite) databases:
