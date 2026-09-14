@@ -216,6 +216,13 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
 # wprowadza nowej kategorii kruchości. Sprzątane w elevenlabs_post_call niżej.
 _elevenlabs_call_states: dict[str, dict] = {}
 
+# 2026-09-14 — ElevenLabs potrafi wywołać /elevenlabs/post-call dwukrotnie dla TEJ SAMEJ
+# rozmowy (potwierdzone na żywo: identyczna notatka x2 w CRM z jednego telefonu) — typowe
+# zachowanie webhooków przy wolnej odpowiedzi (retry). Bez tej blokady cały handler
+# (transkrypt, mail, CRM) wykonywał się drugi raz. Klucz: call_sid, pamiętany na całe
+# życie procesu — to samo bezpieczne założenie co przy _elevenlabs_call_states wyżej.
+_processed_post_call_sids: set[str] = set()
+
 _elevenlabs_client = None
 
 
@@ -734,6 +741,11 @@ async def elevenlabs_post_call(request: Request):
             f"data.keys()={list(data.keys())} dynamic_variables={dyn_vars}"
         )
         return {"status": "ignored"}
+
+    if call_sid in _processed_post_call_sids:
+        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} już przetworzony, pomijam duplikat webhooka")
+        return {"status": "duplicate_ignored"}
+    _processed_post_call_sids.add(call_sid)
 
     tenant = await get_tenant_by_phone(called_number)
     if not tenant:
