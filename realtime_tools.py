@@ -465,6 +465,8 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "brak konkretów) lub \"—\" (rozmowa nie dotyczyła żadnej sprawy — samo pytanie o "
                 "godziny/adres/FAQ bez intencji zakupowej). Wybierz jedno, nie tłumacz wyboru.\n"
                 "- Kto dzwonił: imię/nazwisko jeśli klient je podał (inaczej pomiń punkt)\n"
+                "- Firma: nazwa firmy dzwoniącego, TYLKO jeśli klient ją wprost podał (inaczej pomiń "
+                "punkt — nie zgaduj i nie wpisuj nazwy firmy do której dzwoni, chodzi o firmę KLIENTA)\n"
                 "- Powód kontaktu: konkretnie czego klient chciał/szukał/o co pytał\n"
                 "- Szczegóły: wszystko dodatkowe co klient podał i co ma znaczenie dla TEJ "
                 "konkretnej firmy (np. lokalizacja, rodzaj usługi/produktu, termin, pilność, "
@@ -521,7 +523,7 @@ def _is_crm_test_tenant(tenant: dict) -> bool:
     return phone in _CRM_TEST_PHONE_NUMBERS
 
 
-_SUMMARY_FIELD_LABELS = ["Priorytet", "Kto dzwonił", "Powód kontaktu", "Szczegóły", "Wynik rozmowy"]
+_SUMMARY_FIELD_LABELS = ["Priorytet", "Kto dzwonił", "Firma", "Powód kontaktu", "Szczegóły", "Wynik rozmowy"]
 
 
 def _parse_summary_fields(summary: str) -> dict:
@@ -602,7 +604,14 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
     błędnie zakładały że summary.startswith(emoji) — to nigdy nie mogło zadziałać na
     prawdziwej rozmowie, tylko na ręcznie spreparowanych testowych payloadach gdzie emoji
     wstawialiśmy na starcie tekstu. Stąd `priority` jako osobne, czyste pole zamiast
-    każenia n8n zgadywać format z surowego summary."""
+    każenia n8n zgadywać format z surowego summary.
+
+    2026-09-17 — dodane pola `name`/`organization` (z nowego punktu "Firma" w prompcie,
+    patrz summarize_conversation_lines) — n8n używa ich żeby nazwać kontakt w Pipedrive
+    imieniem/firmą klienta zamiast samym numerem telefonu, gdy klient je poda. Jedyna
+    zmiana w SAMYM prompcie (nie tylko w parsowaniu) w tym pliku — dodaje jeden,
+    opcjonalny punkt do streszczenia używanego też przez mail, ale GPT pomija go gdy
+    brak danych, więc raporty innych firm wyglądają tak jak wcześniej."""
     try:
         fields = _parse_summary_fields(summary)
         priority = fields.get("Priorytet") or ""
@@ -619,6 +628,8 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
                     "caller_phone": caller_phone or "",
                     "summary": summary,
                     "priority": priority,
+                    "name": fields.get("Kto dzwonił") or "",
+                    "organization": fields.get("Firma") or "",
                     "reason": fields.get("Powód kontaktu") or "",
                     "details": fields.get("Szczegóły") or "",
                     "outcome": fields.get("Wynik rozmowy") or "",
