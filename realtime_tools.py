@@ -32,6 +32,7 @@ samym polem co w cascade (bot.py, sekcja "Lead email po rozmowie"): `lead_email_
 checkbox "Raport z rozmowy na email" w panelu, więc zero nowej konfiguracji potrzebne."""
 
 import os
+import re
 import time
 import uuid
 import asyncio
@@ -520,6 +521,64 @@ def _is_crm_test_tenant(tenant: dict) -> bool:
     return phone in _CRM_TEST_PHONE_NUMBERS
 
 
+_SUMMARY_FIELD_LABELS = ["Priorytet", "Kto dzwonił", "Powód kontaktu", "Szczegóły", "Wynik rozmowy"]
+
+
+def _parse_summary_fields(summary: str) -> dict:
+    """Wyciąga pojedyncze pola (Powód kontaktu/Szczegóły/Wynik rozmowy/Kto dzwonił) z
+    tekstu streszczenia — WYŁĄCZNIE do wzbogacenia CRM (osobne pola zamiast jednego
+    bloku tekstu). Celowo parsuje istniejący tekst zamiast zmieniać prompt w
+    summarize_conversation_lines() — GPT nie zawsze trzyma się ściśle jednej linii na
+    punkt (bywa że pisze wszystko jednym ciągiem bez \\n), więc kotwiczymy się na
+    samych etykietach ("Powód kontaktu:" itd.), nie na podziale linii — działa
+    niezależnie od tego jak GPT akurat sformatował odpowiedź. Zero zmian w funkcji
+    generującej tekst do maila = zero ryzyka dla raportów innych firm."""
+    fields: dict[str, str] = {}
+    pattern = "|".join(re.escape(label) for label in _SUMMARY_FIELD_LABELS)
+    matches = list(re.finditer(rf"(?:{pattern}):\s*", summary))
+    for i, m in enumerate(matches):
+        label = m.group(0).rstrip(": \t").strip("- ").strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(summary)
+        fields[label] = summary[start:end].strip(" -\n\t")
+    return fields
+
+
+async def estimate_deal_value(summary: str, tenant: dict) -> int | None:
+    """Osobne, dodatkowe wywołanie GPT WYŁĄCZNIE do oszacowania wartości transakcji dla
+    CRM (pole Deal.value) — woła się tylko dla testowego tenanta CRM i tylko gdy
+    rozmowa wygląda na gorący lead (patrz maybe_send_to_crm). Celowo CAŁKOWICIE
+    odizolowane od summarize_conversation_lines/generate_conversation_summary (funkcja
+    mailowa) — nowa, osobna funkcja, nie modyfikacja tamtego promptu — więc nie ma
+    żadnego ryzyka dla raportów mailowych innych firm."""
+    try:
+        additional_info = (tenant.get("additional_info") or "").strip()
+        system_content = (
+            "Na podstawie poniższego streszczenia rozmowy telefonicznej i cennika/oferty "
+            "firmy oszacuj miesięczną wartość tej transakcji w złotych, jeśli da się to "
+            "wywnioskować z rozmowy (np. klient wspomniał konkretny pakiet/usługę z "
+            "cennika). Odpowiedz WYŁĄCZNIE samą liczbą całkowitą (bez \"zł\", bez spacji, "
+            "bez opisu), albo słowem \"brak\" jeśli nie da się tego ocenić.\n"
+            f"Cennik/kontekst firmy: {additional_info}"
+        )
+        import openai
+        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = await client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": summary},
+            ],
+            max_tokens=20,
+            temperature=0,
+        )
+        digits = "".join(ch for ch in response.choices[0].message.content if ch.isdigit())
+        return int(digits) if digits else None
+    except Exception as e:
+        logger.error(f"📋 [CRM] Estymacja wartości deala error: {e}")
+        return None
+
+
 async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> None:
     """Wysyła streszczenie rozmowy do n8n → CRM klienta. Nieblokująca — błąd tutaj
     (n8n padł, timeout) nigdy nie może wywrócić resztę maybe_send_call_summary; mail
@@ -528,8 +587,28 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
     tenant_phone (NUMER FIRMY, przypisany numer BizVoice — nie mylić z caller_phone,
     czyli numerem DZWONIĄCEGO) jedzie w payloadzie właśnie po to, żeby n8n miał
     stabilny, unikalny klucz do routingu "która firma → który CRM/credential", gdy
-    dojdzie kolejny klient z własnym Pipedrive/Bitrix24 (patrz CLAUDE.md)."""
+    dojdzie kolejny klient z własnym Pipedrive/Bitrix24 (patrz CLAUDE.md).
+
+    2026-09-14 — dodane pola reason/details/outcome (parsowane z summary, patrz
+    _parse_summary_fields) i estimated_value (patrz estimate_deal_value, tylko dla
+    🔥 GORĄCY LEAD) — dają n8n materiał do ustawienia osobnych pól w Pipedrive (Deal
+    custom fields + Deal.value) zamiast tylko jednego bloku tekstu w notatce.
+
+    2026-09-17 — dodane pole `priority` (parsowane z linii "Priorytet: <emoji> <etykieta>"
+    w summary, patrz _parse_summary_fields). WAŻNE: priorytet w summary NIE jest na
+    początku całego tekstu — to jeden z wypunktowań w środku ("- Priorytet: 🔥 GORĄCY
+    LEAD\n- Kto dzwonił: ...", patrz prompt w summarize_conversation_lines()). Test na
+    żywym telefonie (2026-09-17) pokazał że zarówno ten hook, jak i n8n Code node,
+    błędnie zakładały że summary.startswith(emoji) — to nigdy nie mogło zadziałać na
+    prawdziwej rozmowie, tylko na ręcznie spreparowanych testowych payloadach gdzie emoji
+    wstawialiśmy na starcie tekstu. Stąd `priority` jako osobne, czyste pole zamiast
+    każenia n8n zgadywać format z surowego summary."""
     try:
+        fields = _parse_summary_fields(summary)
+        priority = fields.get("Priorytet") or ""
+        estimated_value = None
+        if "🔥" in priority:
+            estimated_value = await estimate_deal_value(summary, tenant)
         import httpx
         async with httpx.AsyncClient() as client:
             await client.post(
@@ -539,8 +618,13 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
                     "tenant_phone": tenant.get("phone_number") or "",
                     "caller_phone": caller_phone or "",
                     "summary": summary,
+                    "priority": priority,
+                    "reason": fields.get("Powód kontaktu") or "",
+                    "details": fields.get("Szczegóły") or "",
+                    "outcome": fields.get("Wynik rozmowy") or "",
+                    "estimated_value": estimated_value,
                 },
-                timeout=5.0,
+                timeout=8.0,
             )
     except Exception as e:
         logger.error(f"📋 [CRM] n8n webhook error: {e}")
