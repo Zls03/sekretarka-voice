@@ -752,6 +752,29 @@ async def elevenlabs_post_call(request: Request):
         logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: nie znaleziono tenanta dla {called_number}")
         return {"status": "ignored"}
 
+    # 2026-09-18 — powyższy _processed_post_call_sids (in-memory) NIE wystarczał: potwierdzone
+    # na żywo (3 realne testy, zawsze dokładnie 2 identyczne notatki w CRM) że retry webhooka
+    # z ElevenLabs potrafi trafić na INNY proces/replikę Railway niż ten, który obsłużył
+    # pierwsze wywołanie — założenie "to jeden długo działający proces" (patrz komentarz przy
+    # _elevenlabs_call_states wyżej) okazało się fałszywe dla post-call, mimo że bezpieczne dla
+    # stanu W TRAKCIE jednej rozmowy (tam most WebSocket faktycznie trzyma jeden proces).
+    # Sprawdzamy więc DODATKOWO trwały stan w DB (call_transcripts przeżywa restart/inną
+    # replikę) — jeśli transkrypt dla tego call_sid już istnieje, ktoś (inny proces) już to
+    # przetworzył. Nieidealne (race dwóch request'ów w tej samej milisekundzie wciąż możliwy),
+    # ale naprawia realny, powtarzalny przypadek z testów zamiast tylko teoretyczny.
+    is_saas = tenant.get("id", "").startswith("firm_")
+    target_db = saas_db if is_saas else db
+    try:
+        already_saved = await target_db.execute(
+            "SELECT id FROM call_transcripts WHERE call_sid = ? LIMIT 1", [call_sid]
+        )
+    except Exception as e:
+        logger.error(f"⚠️ [ELEVENLABS AGENT] Post-call: DB dedup check error: {e}")
+        already_saved = None
+    if already_saved:
+        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} ma już transkrypt w DB, pomijam duplikat webhooka (inna replika/restart)")
+        return {"status": "duplicate_ignored"}
+
     saved = await save_elevenlabs_transcript(tenant, call_sid, transcript, analysis)
     logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({call_sid})")
 
