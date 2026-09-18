@@ -431,6 +431,21 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "llm_provider":        firm.get("llm_provider") or "groq",
         "llm_model":           firm.get("llm_model") or "",
 
+        # 2026-09-18 — TEN SAM błąd co przy contact_owner_enabled (2026-09-07) i
+        # custom_report_format (2026-09-09) wyżej: nowa kolumna w `firms` (panel,
+        # sekcja "Integracja CRM") była niewidoczna dla reszty backendu, bo ta funkcja
+        # zwraca ręcznie wybrane pola, nie surowy wiersz z bazy — maybe_send_to_crm()
+        # w realtime_tools.py zawsze dostawał crm_provider/crm_domain/crm_api_key
+        # puste mimo poprawnie zapisanych danych w panelu.
+        "crm_enabled":   int(firm.get("crm_enabled") or 0),
+        "crm_provider":  firm.get("crm_provider") or "",
+        "crm_domain":    firm.get("crm_domain") or "",
+        # crm_api_key jest w bazie zaszyfrowany (AES-GCM, ten sam ENCRYPTION_KEY co
+        # twilio_auth_token — panel go tak zapisuje, patrz encrypt() w
+        # bizvoice-panel/src/app/api/firms/[id]/route.ts) — trzeba go tu odszyfrować,
+        # inaczej n8n dostałby ciphertext zamiast prawdziwego tokenu Pipedrive.
+        "crm_api_key":   decrypt_token(firm.get("crm_api_key") or ""),
+
         "services":      services,
         "working_hours": working_hours,
         "faq":           faq_rows,
