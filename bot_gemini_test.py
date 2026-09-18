@@ -1362,9 +1362,19 @@ async def vonage_sip_fallback_elevenlabs(request: Request):
         body = await request.json()
     except Exception:
         body = (await request.body()).decode("utf-8", errors="replace")
-    logger.info(
-        f"ℹ️ [ELEVENLABS/VONAGE SIP] eventUrl odpytany (NIE musi oznaczać awarii — patrz "
-        f"komentarz w kodzie) | query={dict(request.query_params)} | body={body}"
+    # 2026-09-18 — status'y realnie zaobserwowane na żywo (2 pełne, udane rozmowy,
+    # potwierdzone Voice Inspectorem) dla NORMALNEGO przebiegu leg'a SIP: started →
+    # ringing → answered → completed. Tylko coś SPOZA tej listy (np. failed/rejected/
+    # busy/timeout/cannot_route — nazwy nie potwierdzone na żywo, bo jeszcze nie
+    # złapaliśmy prawdziwej awarii PO naprawie allowed_addresses) oznacza że warto na
+    # to realnie zerknąć — stąd WARNING tylko dla nieznanego statusu, reszta to INFO.
+    _BENIGN_SIP_STATUSES = {"started", "ringing", "answered", "completed"}
+    status = body.get("status") if isinstance(body, dict) else None
+    log_fn = logger.info if status in _BENIGN_SIP_STATUSES else logger.warning
+    log_fn(
+        f"{'ℹ️' if status in _BENIGN_SIP_STATUSES else '⚠️'} [ELEVENLABS/VONAGE SIP] "
+        f"eventUrl odpytany, status={status!r} (spoza {_BENIGN_SIP_STATUSES} = warto sprawdzić) "
+        f"| query={dict(request.query_params)} | body={body}"
     )
     if not ws_uri:
         return JSONResponse([{"action": "talk", "text": "Przepraszamy, wystąpił błąd połączenia.", "language": "pl-PL"}])
