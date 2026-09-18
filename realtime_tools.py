@@ -505,13 +505,14 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
         return "Nie udało się wygenerować streszczenia."
 
 
-# CRM Integration (n8n + Pipedrive) — patrz CLAUDE.md, sekcja "CRM Integration".
+# CRM Integration (n8n + dowolny CRM klienta) — patrz CLAUDE.md, sekcja "CRM Integration".
 # 2026-09-13: POC ograniczony wyłącznie do numeru demo/sprzedażowego BizVoice
-# (+48459050542, "Bizvoice" w panelu) — jedyny tenant spięty z n8n/Pipedrive na tym
-# etapie. NIE ma jeszcze przełącznika per-tenant w panelu (crm_enabled), więc gating
-# tutaj wprost po numerze, żeby żadna prawdziwa rozmowa klienta (ERCO, Gabinet
-# Medycyny Pracy, itd.) nie poleciała przypadkiem do naszego prywatnego konta
-# Pipedrive testowego.
+# (+48459050542) przez sztywną listę numerów. 2026-09-18: zastąpione przełącznikiem
+# per-tenant z panelu (firms.crm_enabled/crm_provider/crm_domain/crm_api_key,
+# patrz bizvoice-panel/src/app/firm/[id]/page.tsx sekcja "Integracja CRM") — każda
+# firma sama decyduje i sama podaje swój klucz, zero sztywnych numerów w kodzie.
+# _CRM_TEST_PHONE_NUMBERS zostaje jako fallback WYŁĄCZNIE na wypadek starych tenantów
+# sprzed migracji których ktoś zapomniał przełączyć w panelu — docelowo martwy kod.
 _CRM_TEST_PHONE_NUMBERS = {"+48459050542"}
 N8N_CRM_WEBHOOK_URL = os.getenv(
     "N8N_CRM_WEBHOOK_URL", "https://magnus1503.app.n8n.cloud/webhook/call-summary"
@@ -519,6 +520,11 @@ N8N_CRM_WEBHOOK_URL = os.getenv(
 
 
 def _is_crm_test_tenant(tenant: dict) -> bool:
+    """Nazwa zostaje z czasów POC (patrz komentarz wyżej) żeby nie zmieniać nazwy w
+    wywołaniach w bot_elevenlabs_agent.py/realtime_tools.py — dziś sprawdza realny
+    przełącznik per-firma, nie tylko testowy numer."""
+    if int(tenant.get("crm_enabled") or 0) == 1 and (tenant.get("crm_api_key") or "").strip():
+        return True
     phone = (tenant.get("phone_number") or "").replace(" ", "").replace("-", "")
     return phone in _CRM_TEST_PHONE_NUMBERS
 
@@ -626,6 +632,15 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
                     "business_name": tenant.get("name") or "",
                     "tenant_phone": tenant.get("phone_number") or "",
                     "caller_phone": caller_phone or "",
+                    # 2026-09-18 — crm_provider/crm_domain/crm_api_key per-firma (panel, patrz
+                    # ensureColumns() w bizvoice-panel/api/firms/[id]/route.ts) — n8n routuje po
+                    # crm_provider i używa TEGO klucza/domeny zamiast sztywnego credentiala.
+                    # Puste dla starego testowego tenanta (fallback po numerze w
+                    # _is_crm_test_tenant) — n8n dla niego dalej używa własnego, zapisanego
+                    # credentiala Pipedrive dopóki nie zostanie przełączony w panelu.
+                    "crm_provider": tenant.get("crm_provider") or "",
+                    "crm_domain": tenant.get("crm_domain") or "",
+                    "crm_api_key": tenant.get("crm_api_key") or "",
                     "summary": summary,
                     "priority": priority,
                     "name": fields.get("Kto dzwonił") or "",
