@@ -1345,9 +1345,27 @@ async def vonage_sip_fallback_elevenlabs(request: Request):
     2026-09-09) porażka connect->SIP PO WYSŁANIU NCCO kończyła połączenie bez żadnej
     ścieżki dla dzwoniącego — złapane na żywo dwa razy. wsUri (już zbudowany, gotowy
     URI mostu WebSocket) jest przekazywany w query stringu z miejsca budowania
-    oryginalnej NCCO, więc tu nic nie trzeba odtwarzać z tenanta na nowo."""
+    oryginalnej NCCO, więc tu nic nie trzeba odtwarzać z tenanta na nowo.
+
+    2026-09-18 — POPRAWKA: wcześniej ten endpoint zakładał bezwarunkowo (samym faktem
+    bycia wywołanym), że SIP connect zawiódł, i logował to jako WARNING. Na żywo
+    (Voice Inspector + brak "WebSocket connected" w logach most nigdy się realnie NIE
+    uruchamiał) potwierdzone, że Vonage odpytuje ten eventUrl RÓWNIEŻ przy udanych
+    połączeniach (widziane 2x na rozmowę — raz przy starcie, raz przy końcu), nie tylko
+    przy realnej awarii. Zwracamy fresh NCCO z fallbackiem jak dotychczas (siatka
+    bezpieczeństwa zostaje — na wypadek gdyby TYM razem to było prawdziwe niepowodzenie,
+    Vonage i tak zignoruje tę NCCO jeśli leg już żyje), ale logujemy SUROWĄ treść którą
+    Vonage faktycznie przysłał zamiast zgadywać — dopiero to pozwoli kiedyś odróżnić
+    realną awarię od nieszkodliwego zdarzenia."""
     ws_uri = request.query_params.get("wsUri", "")
-    logger.warning(f"⚠️ [ELEVENLABS/VONAGE SIP] eventUrl fallback wywołany (SIP connect zawiódł) — most WebSocket: {ws_uri}")
+    try:
+        body = await request.json()
+    except Exception:
+        body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info(
+        f"ℹ️ [ELEVENLABS/VONAGE SIP] eventUrl odpytany (NIE musi oznaczać awarii — patrz "
+        f"komentarz w kodzie) | query={dict(request.query_params)} | body={body}"
+    )
     if not ws_uri:
         return JSONResponse([{"action": "talk", "text": "Przepraszamy, wystąpił błąd połączenia.", "language": "pl-PL"}])
     ncco = [{
