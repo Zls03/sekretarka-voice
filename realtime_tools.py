@@ -679,11 +679,13 @@ async def send_call_summary_email(
 
     transcript_lines: 2026-09-23 — pełny zapis rozmowy ("Klient: .../Asystent: ..."), ta sama
     lista co idzie do GPT na podsumowanie (extract_conversation_lines/conversation_lines).
-    Renderowany jako zwinięta sekcja <details> pod podsumowaniem — zero kosztu (te dane i tak
-    już mamy w pamięci po zakończeniu rozmowy, żadnego dodatkowego wywołania). Zastępuje
-    nagranie audio dla klientów którzy chcą zweryfikować co dokładnie padło w rozmowie, bez
-    kwestii RODO związanych z nagraniem głosu (to sam tekst, ten sam co i tak widać w
-    zakładce "Logi" w panelu)."""
+    Renderowany jako "dymki" (osobny blok na turę, kolor per rozmówca) pod podsumowaniem —
+    zero kosztu (te dane i tak już mamy w pamięci po zakończeniu rozmowy, żadnego dodatkowego
+    wywołania). Zastępuje nagranie audio dla klientów którzy chcą zweryfikować co dokładnie
+    padło w rozmowie, bez kwestii RODO związanych z nagraniem głosu (to sam tekst, ten sam co
+    i tak widać w zakładce "Logi" w panelu). ŚWIADOMIE bez <details>/zwijania — sprawdzone na
+    żywo (Gmail web) że klienci poczty ignorują ten tag i renderują zawartość zawsze rozwiniętą,
+    więc lepiej postawić na czytelne, zawsze widoczne dymki niż pozorne zwijanie."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam raportu")
@@ -697,12 +699,25 @@ async def send_call_summary_email(
 
     transcript_block = ""
     if transcript_lines:
-        transcript_html = "<br>".join(_html.escape(line) for line in transcript_lines)
+        turns_html = ""
+        for line in transcript_lines:
+            is_client = line.startswith("Klient:")
+            speaker = "Klient" if is_client else "Asystent"
+            text = _html.escape(line.split(":", 1)[1].strip() if ":" in line else line)
+            bg, border, label_color, indent = (
+                ("#e8f4fd", "#2196F3", "#1565c0", "24px") if is_client
+                else ("#f2f2f2", "#9e9e9e", "#616161", "0")
+            )
+            turns_html += f"""
+            <div style="background: {bg}; border-left: 3px solid {border}; border-radius: 6px; padding: 8px 12px; margin: 6px 0; margin-left: {indent}; font-size: 13px; line-height: 1.5;">
+                <strong style="color: {label_color}; font-size: 11px; text-transform: uppercase;">{speaker}</strong><br>{text}
+            </div>
+            """
         transcript_block = f"""
-        <details style="margin: 15px 0;">
-            <summary style="cursor: pointer; color: #2196F3; font-weight: bold;">📝 Pełny zapis rozmowy</summary>
-            <p style="background: #f7f7f7; padding: 15px; border-radius: 5px; margin-top: 10px; font-size: 13px; line-height: 1.6;">{transcript_html}</p>
-        </details>
+        <div style="margin: 20px 0;">
+            <p style="font-weight: bold; color: #333; margin-bottom: 8px;">📝 Pełny zapis rozmowy</p>
+            {turns_html}
+        </div>
         """
 
     business_name = tenant.get("name", "Firma")
