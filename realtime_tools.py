@@ -740,13 +740,13 @@ async def send_call_summary_email(
         {lead_block}
         <p><strong>📋 Podsumowanie:</strong></p>
         <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; white-space: pre-line;">{summary}</p>
-        {transcript_block}
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Data i godzina:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;">{call_time_str}</td></tr>
         </table>
+        {transcript_block}
         <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
         <p style="color: #999; font-size: 12px;">Automatyczny raport rozmowy — asystent głosowy (test Realtime) • {business_name}</p>
     </div>
