@@ -418,6 +418,12 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "custom_report_format":      int(firm.get("custom_report_format") or 0),
         "contact_owner_closing_line": firm.get("contact_owner_closing_line") or "",
         "report_empty_calls":        int(firm.get("report_empty_calls") or 0),
+        # 2026-09-23 — TEN SAM błąd co przy contact_owner_enabled/custom_report_format/
+        # crm_enabled wyżej: checkbox "📝 Pełny zapis rozmowy na email" w panelu zapisywał
+        # się poprawnie w bazie, ale ta funkcja go nie przepisywała dalej, więc
+        # maybe_send_call_summary()/elevenlabs_post_call zawsze widziały 0 — złapane na
+        # żywym telefonie (mail przyszedł z datą/godziną, ale bez sekcji transkryptu).
+        "transcript_email_enabled":  int(firm.get("transcript_email_enabled") or 0),
 
         "notification_email":  firm.get("notification_email") or firm.get("email") or "",
         "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
