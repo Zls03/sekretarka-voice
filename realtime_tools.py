@@ -361,14 +361,10 @@ do usłyszenia!", "Miłego dnia!") — RÓŻNE za każdym razem. Jedno pożegnan
 # RAPORT Z ROZMOWY — Faza 5, pierwszy kawałek (patrz docstring pliku)
 # ==========================================
 
-async def generate_conversation_summary(context: LLMContext, tenant: dict | None = None) -> str:
-    """Streszcza rozmowę przez szybkie wywołanie GPT. Ten sam pomysł co
-    flows.py::generate_conversation_summary, tylko czyta uniwersalny LLMContext
-    (context.get_messages(), format OpenAI: {"role": ..., "content": ...}) zamiast
-    flow_manager.get_current_context() z pipecat_flows.
-
-    Ekstrakcja z LLMContext -> lista "Klient: .../Asystent: ..." -> delegacja do
-    summarize_conversation_lines() (wspólnej z bot_elevenlabs_agent.py, patrz tam)."""
+def extract_conversation_lines(context: LLMContext) -> list[str]:
+    """Wydzielone z generate_conversation_summary() (2026-09-23) żeby maybe_send_call_summary
+    mogło dołączyć pełny zapis rozmowy do maila (rozwijana sekcja), nie tylko streszczenie —
+    ta sama lista wejściowa co idzie do GPT, tylko bez wołania summarize_conversation_lines()."""
     messages = context.get_messages()
     conversation = []
     for msg in messages:
@@ -386,7 +382,18 @@ async def generate_conversation_summary(context: LLMContext, tenant: dict | None
         if len(content) > 2:
             label = "Klient" if role == "user" else "Asystent"
             conversation.append(f"{label}: {content[:200]}")
+    return conversation
 
+
+async def generate_conversation_summary(context: LLMContext, tenant: dict | None = None) -> str:
+    """Streszcza rozmowę przez szybkie wywołanie GPT. Ten sam pomysł co
+    flows.py::generate_conversation_summary, tylko czyta uniwersalny LLMContext
+    (context.get_messages(), format OpenAI: {"role": ..., "content": ...}) zamiast
+    flow_manager.get_current_context() z pipecat_flows.
+
+    Ekstrakcja z LLMContext -> lista "Klient: .../Asystent: ..." (extract_conversation_lines)
+    -> delegacja do summarize_conversation_lines() (wspólnej z bot_elevenlabs_agent.py, patrz tam)."""
+    conversation = extract_conversation_lines(context)
     return await summarize_conversation_lines(conversation, tenant)
 
 
@@ -657,7 +664,8 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
 
 
 async def send_call_summary_email(
-    tenant: dict, caller_phone: str, summary: str, to_email: str, pending_message: dict | None = None
+    tenant: dict, caller_phone: str, summary: str, to_email: str, pending_message: dict | None = None,
+    transcript_lines: list[str] | None = None,
 ) -> bool:
     """Email z raportem PO KAŻDEJ rozmowie. Jedyny mechanizm "zgłoszeniowy" od 2026-09-03
     (submit_lead usunięty — patrz docstring generate_conversation_summary) — summary jest
@@ -667,11 +675,35 @@ async def send_call_summary_email(
     pending_message: 2026-09-09 — gdy contact_owner odłożył wiadomość dla właściciela (patrz
     handle_contact_owner) bo firma ma raport włączony na TEN SAM adres, treść trafia tu jako
     osobna, wyróżniona sekcja NAD podsumowaniem — dosłowna (nie przepuszczona przez GPT),
-    żeby nie zgubić/nie sparafrazować tego co klient faktycznie powiedział."""
+    żeby nie zgubić/nie sparafrazować tego co klient faktycznie powiedział.
+
+    transcript_lines: 2026-09-23 — pełny zapis rozmowy ("Klient: .../Asystent: ..."), ta sama
+    lista co idzie do GPT na podsumowanie (extract_conversation_lines/conversation_lines).
+    Renderowany jako zwinięta sekcja <details> pod podsumowaniem — zero kosztu (te dane i tak
+    już mamy w pamięci po zakończeniu rozmowy, żadnego dodatkowego wywołania). Zastępuje
+    nagranie audio dla klientów którzy chcą zweryfikować co dokładnie padło w rozmowie, bez
+    kwestii RODO związanych z nagraniem głosu (to sam tekst, ten sam co i tak widać w
+    zakładce "Logi" w panelu)."""
     resend_api_key = os.getenv("RESEND_API_KEY")
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam raportu")
         return False
+
+    import html as _html
+    from datetime import datetime as _datetime
+    from zoneinfo import ZoneInfo as _ZoneInfo
+
+    call_time_str = _datetime.now(_ZoneInfo("Europe/Warsaw")).strftime("%d.%m.%Y, %H:%M")
+
+    transcript_block = ""
+    if transcript_lines:
+        transcript_html = "<br>".join(_html.escape(line) for line in transcript_lines)
+        transcript_block = f"""
+        <details style="margin: 15px 0;">
+            <summary style="cursor: pointer; color: #2196F3; font-weight: bold;">📝 Pełny zapis rozmowy</summary>
+            <p style="background: #f7f7f7; padding: 15px; border-radius: 5px; margin-top: 10px; font-size: 13px; line-height: 1.6;">{transcript_html}</p>
+        </details>
+        """
 
     business_name = tenant.get("name", "Firma")
     lead_block = ""
@@ -693,9 +725,12 @@ async def send_call_summary_email(
         {lead_block}
         <p><strong>📋 Podsumowanie:</strong></p>
         <p style="background: #e8f4fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; white-space: pre-line;">{summary}</p>
+        {transcript_block}
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Telefon:</strong></td>
                 <td style="padding: 8px; border-bottom: 1px solid #eee;"><a href="tel:{caller_phone}">{caller_phone}</a></td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 120px;"><strong>Data i godzina:</strong></td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{call_time_str}</td></tr>
         </table>
         <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
         <p style="color: #999; font-size: 12px;">Automatyczny raport rozmowy — asystent głosowy (test Realtime) • {business_name}</p>
@@ -762,7 +797,10 @@ async def maybe_send_call_summary(
         else:
             summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
     if lead_email_enabled and to_email:
-        await send_call_summary_email(tenant, caller_phone, summary, to_email, pending_message=pending)
+        transcript_lines = extract_conversation_lines(context) if int(tenant.get("transcript_email_enabled") or 0) else None
+        await send_call_summary_email(
+            tenant, caller_phone, summary, to_email, pending_message=pending, transcript_lines=transcript_lines
+        )
     if crm_enabled:
         await maybe_send_to_crm(tenant, caller_phone, summary)
 

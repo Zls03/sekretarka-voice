@@ -809,7 +809,11 @@ async def elevenlabs_post_call(request: Request):
         caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
         summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
     if lead_email_enabled and to_email and summary:
-        ok = await send_call_summary_email(tenant, caller_phone or "nieznany", summary, to_email, pending_message=pending_contact_owner)
+        ok = await send_call_summary_email(
+            tenant, caller_phone or "nieznany", summary, to_email,
+            pending_message=pending_contact_owner,
+            transcript_lines=conversation_lines if int(tenant.get("transcript_email_enabled") or 0) else None,
+        )
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
     if summary and _is_crm_test_tenant(tenant):
         # Patrz CLAUDE.md "CRM Integration" i identyczny hook w
