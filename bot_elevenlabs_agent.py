@@ -91,6 +91,7 @@ from realtime_tools import (
     send_message_email,
     send_call_summary_email,
     summarize_conversation_lines,
+    persist_call_summary,
     is_call_allowed,
     _looks_like_vague_meta_message,
     _looks_too_short,
@@ -808,6 +809,8 @@ async def elevenlabs_post_call(request: Request):
         # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
         caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
         summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
+    if summary:
+        await persist_call_summary(tenant, call_sid, summary)
     if lead_email_enabled and to_email and summary:
         ok = await send_call_summary_email(
             tenant, caller_phone or "nieznany", summary, to_email,

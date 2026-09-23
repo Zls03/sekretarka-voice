@@ -776,23 +776,32 @@ async def send_call_summary_email(
 
 
 async def maybe_send_call_summary(
-    tenant: dict, caller_phone: str, context: LLMContext, call_state: dict | None = None
+    tenant: dict, caller_phone: str, context: LLMContext, call_state: dict | None = None,
+    call_sid: str | None = None,
 ) -> None:
     """Woła się w finally: bloku websocket handlera — PO KAŻDEJ rozmowie, niezależnie jak się
     skończyła (cisza, limit czasu, contact_owner, end_conversation, zwykłe rozłączenie).
-    Bramkowane tym samym polem co cascade (patrz docstring pliku) — jeśli tenant nie ma
-    włączonego raportu w panelu, nic się nie wysyła.
+    Streszczenie liczy się ZAWSZE (patrz 2026-09-23 niżej) — mail/webhook CRM zostają
+    bramkowane jak wcześniej ustawieniami panelu.
 
     call_state: gdy handle_contact_owner (tej samej rozmowy) odłożył wiadomość dla właściciela
     (patrz komentarz 2026-09-09 tam) bo raport i "email do powiadomień" wskazują na TEN SAM
     adres — doklejamy ją tu do JEDNEGO maila zamiast wysyłać osobno. Gdy call_state=None albo
-    bez odłożonej wiadomości — zachowanie identyczne jak wcześniej."""
+    bez odłożonej wiadomości — zachowanie identyczne jak wcześniej.
+
+    call_sid: 2026-09-23 — gdy podane, streszczenie + priorytet zapisują się też do wiersza
+    call_logs (portal /crm dla klienta, patrz helpers.py::persist_call_summary) — WYMAGA żeby
+    save_call_transcript() (tworzy wiersz call_logs) wykonało się PRZED tym wywołaniem, inaczej
+    UPDATE trafia w pustkę (patrz kolejność w bot_gemini_test.py/bot_openai_realtime.py)."""
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     pending = (call_state or {}).get("pending_contact_owner")
     crm_enabled = _is_crm_test_tenant(tenant)
-    if not crm_enabled and (not lead_email_enabled or not to_email):
-        return
+    # 2026-09-23 — USUNIĘTE: wczesny return gdy ani lead_email_enabled ani crm_enabled (Pipedrive
+    # test tenant) nie są włączone. Streszczenie zasila teraz TEŻ portal /crm (call_logs.summary/
+    # priority) niezależnie od tych dwóch przełączników, więc musi liczyć się zawsze — koszt
+    # jednego dodatkowego wywołania GPT-4.1-mini na rozmowę, akceptowalny (call_logs to dziś
+    # główne źródło danych dla klienckiego CRM, nie tylko dodatek do maila).
     summary = await generate_conversation_summary(context, tenant)
     if summary == "Brak treści rozmowy.":
         # 2026-09-09 — domyślnie nadal pomijamy (większość firm nie chce maila za KAŻDE
@@ -811,6 +820,8 @@ async def maybe_send_call_summary(
             summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
         else:
             summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
+    if call_sid:
+        await persist_call_summary(tenant, call_sid, summary)
     if lead_email_enabled and to_email:
         transcript_lines = extract_conversation_lines(context) if int(tenant.get("transcript_email_enabled") or 0) else None
         await send_call_summary_email(
@@ -837,6 +848,49 @@ async def maybe_send_call_summary(
 #      trwania połączenia (UPDATE tego samego wiersza call_logs + odjęcie kredytów/minut).
 #   Rozdzielone bo to dwa różne, niezależne od siebie w czasie zdarzenia (koniec pipeline'u
 #   vs. webhook od Vonage) — dokładnie tak jak w cascade, nie uproszczenie.
+
+_call_logs_columns_ensured = False
+
+
+async def _ensure_call_logs_columns() -> None:
+    """Jednorazowo (per proces/cold start) dokłada kolumny summary/priority/seen do call_logs
+    w SaaS DB — te same rozmowy co dziś idą do maila teraz zasilają też portal /crm (bizvoice-panel).
+    Wzorzec identyczny jak ensureColumns() w bizvoice-panel/api/firms/[id]/route.ts (ALTER w
+    try/except, bezpieczne do powtarzania — TursoDB.execute i tak łyka błąd i loguje go, nie
+    podnosi wyjątku, ale global flag oszczędza redundantne wywołania po pierwszym udanym/nieudanym
+    razie w życiu procesu)."""
+    global _call_logs_columns_ensured
+    if _call_logs_columns_ensured:
+        return
+    _call_logs_columns_ensured = True
+    for sql in (
+        "ALTER TABLE call_logs ADD COLUMN summary TEXT",
+        "ALTER TABLE call_logs ADD COLUMN priority TEXT",
+        "ALTER TABLE call_logs ADD COLUMN seen INTEGER DEFAULT 0",
+    ):
+        await saas_db.execute(sql)
+
+
+async def persist_call_summary(tenant: dict, call_sid: str, summary: str) -> None:
+    """Zapisuje streszczenie+priorytet do wiersza call_logs (musi już istnieć — patrz
+    save_call_transcript/save_elevenlabs_transcript, wołane WCZEŚNIEJ w tym samym finally: bloku).
+    Tylko SaaS (portal /crm dotyczy firm_ tenantów) — dla starych tenantów admina to no-op.
+    Best-effort: błąd nie może wywrócić wysyłki maila/webhooka, które dzieją się zaraz po tym.
+    Priorytet parsowany tu (nie przez wywołujących) żeby WSZYSTKIE 3 silniki (Gemini Live,
+    OpenAI Realtime, ElevenLabs) zapisywały identycznie, jednym wspólnym kodem."""
+    tenant_id = tenant.get("id", "")
+    if not tenant_id.startswith("firm_") or not call_sid:
+        return
+    try:
+        priority = _parse_summary_fields(summary).get("Priorytet") or ""
+        await _ensure_call_logs_columns()
+        await saas_db.execute(
+            "UPDATE call_logs SET summary = ?, priority = ? WHERE call_sid = ?",
+            [summary, priority, call_sid],
+        )
+    except Exception as e:
+        logger.error(f"[CRM] persist_call_summary error: {e}")
+
 
 async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, context: LLMContext) -> None:
     """Zapisuje wiersz call_logs (in_progress) + transkrypt do call_transcripts.

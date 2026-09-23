@@ -678,13 +678,13 @@ async def websocket_gemini_test(websocket: WebSocket):
     finally:
         logger.info("🏁 [REALTIME TEST] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state)
-        except Exception as e:
-            logger.error(f"[REALTIME TEST] Call summary error: {e}")
-        try:
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[REALTIME TEST] Call transcript error: {e}")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state, call_sid=call_sid)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST] Call summary error: {e}")
 
 
 @router.get("/health-gemini-test")
@@ -889,10 +889,10 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     finally:
         logger.info("🏁 [REALTIME TEST/VONAGE] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state)
-        except Exception as e:
-            logger.error(f"[REALTIME TEST/VONAGE] Call summary error: {e}")
-        try:
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[REALTIME TEST/VONAGE] Call transcript error: {e}")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, call_state, call_sid=call_sid)
+        except Exception as e:
+            logger.error(f"[REALTIME TEST/VONAGE] Call summary error: {e}")

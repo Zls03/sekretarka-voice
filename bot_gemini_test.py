@@ -1145,13 +1145,16 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     finally:
         logger.info("🏁 [GEMINI LIVE TEST] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state)
-        except Exception as e:
-            logger.error(f"[GEMINI LIVE TEST] Call summary error: {e}")
-        try:
+            # 2026-09-23 — save_call_transcript PRZED maybe_send_call_summary: tworzy wiersz
+            # call_logs, który maybe_send_call_summary potem UPDATE'uje (summary/priority dla
+            # portalu /crm) — odwrotna kolejność trafiałaby w jeszcze nieistniejący wiersz.
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[GEMINI LIVE TEST] Call transcript error: {e}")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state, call_sid=call_sid)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST] Call summary error: {e}")
 
 
 @app.get("/health-gemini-live-test")
@@ -1548,13 +1551,13 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     finally:
         logger.info("🏁 [GEMINI LIVE TEST/VONAGE] Koniec połączenia")
         try:
-            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state)
-        except Exception as e:
-            logger.error(f"[GEMINI LIVE TEST/VONAGE] Call summary error: {e}")
-        try:
             await save_call_transcript(tenant, call_sid, caller_phone, llm_context)
         except Exception as e:
             logger.error(f"[GEMINI LIVE TEST/VONAGE] Call transcript error: {e}")
+        try:
+            await maybe_send_call_summary(tenant, caller_phone, llm_context, gemini_state, call_sid=call_sid)
+        except Exception as e:
+            logger.error(f"[GEMINI LIVE TEST/VONAGE] Call summary error: {e}")
 
 
 @app.websocket("/ws-elevenlabs-vonage")
