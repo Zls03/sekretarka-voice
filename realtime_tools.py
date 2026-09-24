@@ -877,7 +877,15 @@ async def persist_call_summary(tenant: dict, call_sid: str, summary: str) -> Non
     Tylko SaaS (portal /crm dotyczy firm_ tenantów) — dla starych tenantów admina to no-op.
     Best-effort: błąd nie może wywrócić wysyłki maila/webhooka, które dzieją się zaraz po tym.
     Priorytet parsowany tu (nie przez wywołujących) żeby WSZYSTKIE 3 silniki (Gemini Live,
-    OpenAI Realtime, ElevenLabs) zapisywały identycznie, jednym wspólnym kodem."""
+    OpenAI Realtime, ElevenLabs) zapisywały identycznie, jednym wspólnym kodem.
+
+    2026-09-24 — tu też, przy okazji KAŻDEJ rozmowy (nie tylko gdy admin akurat otworzy
+    zakładkę Statystyki/Logi danej firmy — poprzedni, niepewny wyzwalacz w
+    bizvoice-panel/api/firms/[id]/stats/route.ts), czyścimy stare call_transcripts (surowy,
+    słowo-w-słowo zapis — bardziej wrażliwe dane niż samo streszczenie, więc krótsza retencja
+    ma sens). call_logs (lekki rekord: telefon/streszczenie/priorytet — realny rekord CRM,
+    portal /crm i "stały klient" na nim polegają) NIE jest tu kasowany — dłuższa retencja
+    ustawiona osobno w panelu (365 dni zamiast 30, patrz stats/route.ts)."""
     tenant_id = tenant.get("id", "")
     if not tenant_id.startswith("firm_") or not call_sid:
         return
@@ -887,6 +895,10 @@ async def persist_call_summary(tenant: dict, call_sid: str, summary: str) -> Non
         await saas_db.execute(
             "UPDATE call_logs SET summary = ?, priority = ? WHERE call_sid = ?",
             [summary, priority, call_sid],
+        )
+        await saas_db.execute(
+            "DELETE FROM call_transcripts WHERE tenant_id = ? AND created_at < datetime('now', '-30 days')",
+            [tenant_id],
         )
     except Exception as e:
         logger.error(f"[CRM] persist_call_summary error: {e}")
