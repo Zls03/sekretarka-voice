@@ -97,6 +97,7 @@ from realtime_tools import (
     _looks_too_short,
     _is_crm_test_tenant,
     maybe_send_to_crm,
+    _send_push_notifications,
 )
 from realtime_booking import _handle_book_appointment, _handle_manage_booking
 
@@ -797,13 +798,20 @@ async def elevenlabs_post_call(request: Request):
             label = "Klient" if role == "user" else "Asystent"
             conversation_lines.append(f"{label}: {content[:200]}")
     summary = await summarize_conversation_lines(conversation_lines, tenant)
+    # 2026-09-25 — patrz identyczny komentarz/flaga w realtime_tools.py::maybe_send_call_summary
+    # (push leci TYLKO dla rozmów z realną treścią, nie za każde ciche połączenie). Zapamiętane
+    # PRZED podmianami niżej, bo "Brak treści rozmowy." zaraz zostanie nadpisane fallbackiem.
+    has_real_content = summary != "Brak treści rozmowy."
     if summary == "Brak treści rozmowy." or summary == "Nie udało się wygenerować streszczenia.":
         # Zapasowo — wbudowane streszczenie ElevenLabs lepsze niż nic, gdyby nasze zawiodło.
         summary = analysis.get("transcript_summary") or ""
+        if summary:
+            has_real_content = True
     if not summary and pending_contact_owner:
         # 2026-09-09 — odłożona wiadomość z contact_owner to NIE pusta rozmowa, transkrypt po
         # prostu nie dał GPT wystarczająco treści — realny lead istnieje, musi trafić do maila.
         summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
+        has_real_content = True
     elif not summary and int(tenant.get("report_empty_calls") or 0):
         # 2026-09-09 — patrz identyczny komentarz w realtime_tools.py::maybe_send_call_summary
         # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
@@ -837,6 +845,14 @@ async def elevenlabs_post_call(request: Request):
                 fallback_to,
             )
             logger.warning("📧 [ELEVENLABS AGENT] pending_contact_owner: raport nie poleciał, wysłano awaryjnie osobno")
+
+    if has_real_content and summary:
+        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        await _send_push_notifications(
+            tenant,
+            title="📞 Nowe zgłoszenie",
+            body=f"{caller_display}: {summary}",
+        )
 
     return {"status": "ok"}
 
