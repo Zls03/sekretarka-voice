@@ -363,6 +363,7 @@ VONAGE_APPLICATION_ID / VONAGE_PRIVATE_KEY   # JWT RS256 do Vonage REST API (tra
 ELEVENLABS_AGENT_ID                     # fallback gdy tenant nie ma własnego elevenlabs_agent_id
 ELEVENLABS_SHARED_SECRET                # opcjonalny nagłówek weryfikujący /elevenlabs/personalization i /tools/contact_owner
 TEST_TENANT_ID                          # wymuszony tenant na ścieżce Vonage testowej
+VAPID_PRIVATE_KEY                       # web push do portalu /crm (PWA) po rozmowach z realną treścią — patrz realtime_tools.py::_send_push_notifications. Ten sam klucz co NEXT_PUBLIC_VAPID_PUBLIC_KEY w bizvoice-panel (para, wygenerowana raz przez `npx web-push generate-vapid-keys`), tylko prywatna połowa
 ```
 
 Optional: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY`, Azure TTS credentials.

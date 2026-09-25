@@ -18,3 +18,4 @@ pydub==0.25.1
 deepgram-sdk==4.7.0
 dateparser
 cryptography
+pywebpush==2.0.3

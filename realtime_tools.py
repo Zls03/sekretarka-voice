@@ -33,6 +33,7 @@ checkbox "Raport z rozmowy na email" w panelu, więc zero nowej konfiguracji pot
 
 import os
 import re
+import json
 import time
 import uuid
 import asyncio
@@ -841,6 +842,68 @@ async def send_call_summary_email(
         return False
 
 
+async def _send_push_notifications(tenant: dict, title: str, body: str, url: str = "/crm") -> None:
+    """Web push do wszystkich subskrypcji portalu /crm tej firmy (crm_push_subscriptions —
+    zapisywane przez bizvoice-panel po zgodzie właściciela w przeglądarce, patrz
+    src/app/crm/(dashboard)/PushNotifications.tsx). Wołana WYŁĄCZNIE dla rozmów z realną
+    treścią (patrz warunek w maybe_send_call_summary) — świadomie NIE za każde puste
+    połączenie, żeby nie zalewać telefonu właściciela szumem.
+
+    Osobna, w pełni nieblokująca funkcja (własny try/except na poziomie całej funkcji i
+    per-subskrypcja) — brak kluczy VAPID, padnięty request do jednego urządzenia, czy
+    cokolwiek innego tutaj NIGDY nie może wywrócić reszty maybe_send_call_summary (mail/
+    CRM muszą polecieć niezależnie). Wygasłe subskrypcje (404/410 — użytkownik
+    odinstalował PWA albo wyczyścił dane przeglądarki) są od razu kasowane z bazy, żeby
+    nie próbować ich bez końca przy każdej kolejnej rozmowie."""
+    vapid_private_key = os.getenv("VAPID_PRIVATE_KEY")
+    firm_id = tenant.get("id")
+    if not vapid_private_key or not firm_id:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return
+
+    try:
+        rows = await saas_db.execute(
+            "SELECT endpoint, p256dh, auth FROM crm_push_subscriptions WHERE firm_id = ?",
+            [firm_id],
+        )
+    except Exception as e:
+        logger.error(f"📲 [PUSH] Nie udało się pobrać subskrypcji: {e}")
+        return
+    if not rows:
+        return
+
+    payload = json.dumps({"title": title, "body": body[:180], "url": url})
+    for row in rows:
+        subscription_info = {
+            "endpoint": row.get("endpoint"),
+            "keys": {"p256dh": row.get("p256dh"), "auth": row.get("auth")},
+        }
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=vapid_private_key,
+                vapid_claims={"sub": "mailto:kontakt@bizvoice.pl"},
+            )
+        except WebPushException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (404, 410):
+                try:
+                    await saas_db.execute(
+                        "DELETE FROM crm_push_subscriptions WHERE endpoint = ?",
+                        [subscription_info["endpoint"]],
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.error(f"📲 [PUSH] Błąd wysyłki (status={status}): {e}")
+        except Exception as e:
+            logger.error(f"📲 [PUSH] Nieoczekiwany błąd wysyłki: {e}")
+
+
 async def maybe_send_call_summary(
     tenant: dict, caller_phone: str, context: LLMContext, call_state: dict | None = None,
     call_sid: str | None = None,
@@ -869,6 +932,12 @@ async def maybe_send_call_summary(
     # jednego dodatkowego wywołania GPT-4.1-mini na rozmowę, akceptowalny (call_logs to dziś
     # główne źródło danych dla klienckiego CRM, nie tylko dodatek do maila).
     summary = await generate_conversation_summary(context, tenant)
+    # 2026-09-25 — zapamiętaj PRZED podmianą summary niżej na tekst pustej rozmowy: push
+    # leci TYLKO dla rozmów z realną treścią (GPT faktycznie coś streścił, LUB jest
+    # odłożona wiadomość z contact_owner — patrz komentarz "pending" wyżej, to też realny
+    # lead mimo że transkrypt był za krótki dla GPT), NIE za każde ciche rozłączenie —
+    # świadoma decyzja, żeby nie zalewać telefonu właściciela szumem.
+    has_real_content = (summary != "Brak treści rozmowy.") or bool(pending)
     if summary == "Brak treści rozmowy.":
         # 2026-09-09 — domyślnie nadal pomijamy (większość firm nie chce maila za KAŻDE
         # rozłączenie bez słowa). Nowy przełącznik per-firma (QFX Group, na żądanie
@@ -895,6 +964,13 @@ async def maybe_send_call_summary(
         )
     if crm_enabled:
         await maybe_send_to_crm(tenant, caller_phone, summary)
+    if has_real_content:
+        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        await _send_push_notifications(
+            tenant,
+            title="📞 Nowe zgłoszenie",
+            body=f"{caller_display}: {summary}",
+        )
 
 
 # ==========================================
