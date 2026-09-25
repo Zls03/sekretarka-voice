@@ -1493,6 +1493,15 @@ async def ensure_vonage_user(tenant: dict) -> str | None:
             )
             if response.status_code in (200, 201, 409):
                 return user_name
+            # 2026-09-25 — bug złapany na żywo (pierwszy test, Bizvoice): Vonage NIE
+            # zwraca 409 dla już istniejącego Usera, jak sugerowałaby dokumentacja/
+            # konwencja REST — zwraca 400 Bad Request z code="user:error:duplicate-name"
+            # ("The request failed because the user name already exists"). Bez tego
+            # sprawdzenia KAŻDE kolejne wywołanie (po pierwszym udanym utworzeniu Usera)
+            # było traktowane jako twarda porażka — /vonage/client-token zwracał 502
+            # przy każdym wejściu na zakładkę "Telefon" mimo że User realnie istniał.
+            if response.status_code == 400 and "duplicate-name" in response.text:
+                return user_name
             logger.error(f"📱 [HUMAN-FIRST] Vonage ensure_user error: {response.status_code} — {response.text}")
             return None
     except Exception as e:
