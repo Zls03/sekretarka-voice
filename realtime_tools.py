@@ -414,12 +414,41 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
     (dokładanie meta-promptowania nietechnicznemu userowi) — ta sama instrukcja działa dla
     każdej branży, a kontekst firmy (co robi, czego może dotyczyć rozmowa) wystarcza żeby
     model wiedział co jest istotne (np. że "montaż" u firmy klimatyzacyjnej = montaż klimy).
-    Bez tenant (stare wywołania) zachowanie identyczne jak wcześniej — proste 2-3 zdania."""
+    Bez tenant (stare wywołania) zachowanie identyczne jak wcześniej — proste 2-3 zdania.
+
+    ⚠️ ANTY-HALUCYNACJA (2026-09-25, potwierdzony żywy przypadek — QFX Group, klient bez
+    słowa się rozłączył po powitaniu, GPT-4.1-mini i tak wymyślił fikcyjnego rozmówcę
+    "Anna Nowak" z telefonem/emailem, mimo jawnej instrukcji "napisz jedno zdanie jeśli
+    pusto"). Trzy niezależne warstwy, żadna nie polega wyłącznie na tym że model
+    "zachowa się rozsądnie":
+      1. TWARDY WARUNEK WEJŚCIOWY — dawniej sprawdzaliśmy tylko `not conversation` (pusta
+         lista), ale samo powitanie bota to już 1 element (niepusta lista!), więc ten
+         przypadek przechodził dalej do GPT. Teraz wymagamy co najmniej jednej REALNEJ
+         linii "Klient: ..." o sensownej długości — bez tego GPT w ogóle nie jest wołany,
+         więc fizycznie nie ma jak halucynować.
+      2. temperature=0 (było 0.3) + jawny zakaz wymyślania danych dopisany do KAŻDEGO
+         wariantu promptu niżej (ANTI_HALLUCINATION).
+      3. Weryfikacja po fakcie (_contains_unverified_contact_details) — jeśli GPT mimo
+         wszystko wpisze numer telefonu/email którego nie ma w prawdziwym transkrypcie,
+         całe podsumowanie jest odrzucane (nie da się "zgadnąć" cudzego numeru, więc to
+         twardy dowód konfabulacji — a skoro model zmyślił jeden fakt, nie ufamy reszcie)."""
     try:
-        if not conversation:
+        client_lines = [
+            l for l in conversation
+            if l.startswith("Klient: ") and len(l) > len("Klient: ") + 3
+        ]
+        if not client_lines:
             return "Brak treści rozmowy."
 
         conversation_text = "\n".join(conversation[-20:])
+
+        ANTI_HALLUCINATION = (
+            " ⛔ KRYTYCZNE: NIGDY nie wymyślaj imion, numerów telefonu, adresów e-mail, "
+            "dat ani żadnych innych faktów, których nie ma DOSŁOWNIE w rozmowie poniżej — "
+            "nawet jeśli oczekiwana struktura punktów tego wymaga. Brakującą informację "
+            "po prostu pomiń, nie zgaduj i nie dopowiadaj. Lepiej krótsze i niepełne "
+            "podsumowanie niż jedno wymyślone słowo."
+        )
 
         if tenant and int(tenant.get("custom_report_format") or 0) == 1:
             # 2026-09-09 — format raportu na życzenie konkretnego klienta (kancelaria
@@ -455,6 +484,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "była pusta/bez treści (np. sama cisza, natychmiastowe rozłączenie) — "
                 "napisz jedno zdanie o tym zamiast reszty punktów."
                 f"{context_block}"
+                f"{ANTI_HALLUCINATION}"
             )
             max_tokens = 400
         elif tenant:
@@ -485,6 +515,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "(np. sama cisza, natychmiastowe rozłączenie) — pomiń Priorytet i napisz jedno "
                 "zdanie o tym zamiast reszty punktów."
                 f"{context_block}"
+                f"{ANTI_HALLUCINATION}"
             )
             max_tokens = 350
         else:
@@ -492,6 +523,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "Streść poniższą rozmowę telefoniczną w 2-3 zdaniach po polsku. "
                 "Napisz: czego klient szukał/pytał, czy zostawił dane kontaktowe "
                 "lub opisał konkretną sprawę, i jaki był wynik rozmowy. Pisz zwięźle."
+                f"{ANTI_HALLUCINATION}"
             )
             max_tokens = 150
 
@@ -504,12 +536,46 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 {"role": "user", "content": conversation_text},
             ],
             max_tokens=max_tokens,
-            temperature=0.3,
+            temperature=0,  # było 0.3 — zero losowości, patrz duży komentarz ANTY-HALUCYNACJA wyżej
         )
-        return response.choices[0].message.content.strip()
+        result = response.choices[0].message.content.strip()
+
+        if _contains_unverified_contact_details(result, conversation_text):
+            logger.error(
+                "📋 [SUMMARY] Odrzucono wygenerowane podsumowanie — zawiera numer telefonu "
+                f"lub email spoza transkryptu (prawdopodobna halucynacja GPT). Surowe "
+                f"wyjście modelu: {result!r} | Źródłowy transkrypt: {conversation_text!r}"
+            )
+            return "Rozmowa zawierała ograniczoną treść — pełny zapis dostępny osobno w panelu."
+
+        return result
     except Exception as e:
         logger.error(f"📋 [REALTIME TEST] Summary generation error: {e}")
         return "Nie udało się wygenerować streszczenia."
+
+
+_PHONE_CANDIDATE_RE = re.compile(r"\+?\d[\d\s\-]{5,}\d")
+_EMAIL_CANDIDATE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _contains_unverified_contact_details(summary: str, source_text: str) -> bool:
+    """Warstwa 3 anty-halucynacyjnej ochrony (patrz duży komentarz w
+    summarize_conversation_lines()) — True gdy podsumowanie zawiera numer telefonu lub
+    adres e-mail, którego nie ma (choćby w innym formatowaniu) w prawdziwym transkrypcie
+    rozmowy. Numer porównujemy po wyciągnięciu samych cyfr (klient mógł podać go ze
+    spacjami/myślnikami, GPT mógł sformatować inaczej niż w rozmowie), email dosłownie
+    (case-insensitive, dokładny string) — oba typy danych da się jednoznacznie
+    zweryfikować, bo model nie ma jak "zgadnąć" cudzego prawdziwego numeru/emaila."""
+    source_digits = re.sub(r"\D", "", source_text)
+    for match in _PHONE_CANDIDATE_RE.findall(summary):
+        digits = re.sub(r"\D", "", match)
+        if len(digits) >= 7 and digits not in source_digits:
+            return True
+    source_lower = source_text.lower()
+    for match in _EMAIL_CANDIDATE_RE.findall(summary):
+        if match.lower() not in source_lower:
+            return True
+    return False
 
 
 # CRM Integration (n8n + dowolny CRM klienta) — patrz CLAUDE.md, sekcja "CRM Integration".
