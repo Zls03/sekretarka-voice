@@ -155,12 +155,13 @@ from google.genai.types import ThinkingConfig
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
 # patrz docstring wyżej po co ten podział.
-from helpers import get_tenant_by_phone, db, saas_db
+from helpers import get_tenant_by_phone, get_tenant_by_id_light, db, saas_db
 from realtime_prompt import build_realtime_instructions
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool,
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
+    build_human_first_ncco, generate_vonage_client_jwt, ensure_vonage_user,
 )
 from realtime_booking import build_book_appointment_tool, build_manage_booking_tool
 
@@ -1162,31 +1163,13 @@ async def health_gemini_live():
     return {"status": "ok", "provider": "gemini-live", "model": GEMINI_LIVE_MODEL}
 
 
-@app.get("/vonage/answer-gemini-live")
-async def vonage_answer_gemini_live(request: Request):
-    to_number = request.query_params.get("to", "")
-    from_number = request.query_params.get("from", "")
-    call_uuid = request.query_params.get("uuid", "")
-    # region_url — bug znaleziony na żywym telefonie (400 Bad Request przy transferze,
-    # mimo poprawnego JSON body): Vonage przypisuje KAŻDE połączenie do konkretnego
-    # regionalnego centrum danych (potwierdzone przez Vonage API Support: "if you
-    # receive a 400 or 404 response... your call is likely residing on a different
-    # Data Center"). Ten region_url przychodzi TYLKO w tym evencie Answer i trzeba go
-    # zapamiętać na całą rozmowę — sztywne api.nexmo.com trafia w złe centrum danych
-    # dla połączeń spoza jego regionu.
-    region_url = request.query_params.get("region_url", "")
-    logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number} (region={region_url or 'brak'})")
-
-    tenant = await get_tenant_by_phone(to_number)
-    if not tenant:
-        ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
-        return JSONResponse(ncco)
-
-    if not await is_call_allowed(tenant):
-        ncco = [{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}]
-        return JSONResponse(ncco)
-
-    host = request.headers.get("host", "localhost")
+async def build_ai_ncco(tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str) -> list:
+    """Wyodrębnione z vonage_answer_gemini_live (2026-09-25) żeby dało się wołać ten sam
+    dispatch po realtime_engine z DWÓCH miejsc: bezpośrednio przy Answer (tenant bez
+    human_first_enabled — dziś zdecydowana większość) i z /vonage/human-first-fallback
+    (gdy właściciel nie odebrał appki WebRTC, patrz build_human_first_ncco w
+    realtime_tools.py). Zero zmiany zachowania dla istniejących firm — identyczna logika,
+    tylko przeniesiona do osobnej funkcji zwracającej listę NCCO zamiast JSONResponse."""
     # realtime_engine ('gemini'/'openai'/'elevenlabs', panel: zakładka "Głos agenta")
     # decyduje który pipeline odbiera ten numer — SAM numer telefonu obsługuje wszystkie
     # trzy silniki, tu jest jedyne miejsce rozgałęzienia. /ws-gemini-test-vonage to
@@ -1307,7 +1290,7 @@ async def vonage_answer_gemini_live(request: Request):
                 }],
             }]
             logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (uri, z fallbackiem): {sip_number}")
-            return JSONResponse(ncco)
+            return ncco
         # 2026-09-10 — ten warning strzelał myląco dla KAŻDEGO tenanta na silniku ElevenLabs,
         # nie tylko numeru testowego — SIP_DIRECT_ENABLED=False (bo to nie jest numer testowy)
         # też ląduje w tej gałęzi, więc "import nie powiódł się" sugerowało realny błąd tam
@@ -1325,7 +1308,7 @@ async def vonage_answer_gemini_live(request: Request):
             f"&callerPhone={from_number}&callSid={call_uuid}&regionUrl={quote(region_url, safe='')}"
         )
 
-    ncco = [
+    return [
         {
             "action": "connect",
             "endpoint": [
@@ -1337,7 +1320,115 @@ async def vonage_answer_gemini_live(request: Request):
             ],
         }
     ]
+
+
+@app.get("/vonage/answer-gemini-live")
+async def vonage_answer_gemini_live(request: Request):
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
+    # region_url — bug znaleziony na żywym telefonie (400 Bad Request przy transferze,
+    # mimo poprawnego JSON body): Vonage przypisuje KAŻDE połączenie do konkretnego
+    # regionalnego centrum danych (potwierdzone przez Vonage API Support: "if you
+    # receive a 400 or 404 response... your call is likely residing on a different
+    # Data Center"). Ten region_url przychodzi TYLKO w tym evencie Answer i trzeba go
+    # zapamiętać na całą rozmowę — sztywne api.nexmo.com trafia w złe centrum danych
+    # dla połączeń spoza jego regionu.
+    region_url = request.query_params.get("region_url", "")
+    logger.info(f"📞 [GEMINI LIVE TEST/VONAGE] Answer: {from_number} → {to_number} (region={region_url or 'brak'})")
+
+    tenant = await get_tenant_by_phone(to_number)
+    if not tenant:
+        ncco = [{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}]
+        return JSONResponse(ncco)
+
+    if not await is_call_allowed(tenant):
+        ncco = [{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}]
+        return JSONResponse(ncco)
+
+    host = request.headers.get("host", "localhost")
+
+    # "Najpierw dzwoni do właściciela" (human_first_enabled, panel: zakładka "Ustawienia" →
+    # "Przekierowanie połączeń") — TYLKO dla firm na Vonage (telephony_provider), domyślnie
+    # WYŁĄCZONE (0) dla każdej firmy, więc zero zmiany zachowania dopóki ktoś świadomie tego
+    # nie włączy. Porażka przygotowania (np. Vonage User/RTC niedostępne) cicho spada na
+    # zwykłą ścieżkę AI niżej — właściciel nigdy nie traci połączenia przez błąd tej funkcji.
+    if tenant.get("human_first_enabled") and (tenant.get("telephony_provider") or "vonage") == "vonage":
+        human_first_ncco = await build_human_first_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
+        if human_first_ncco:
+            logger.info(f"📱 [HUMAN-FIRST/VONAGE] Dzwonię najpierw do appki właściciela: {tenant.get('id')}")
+            return JSONResponse(human_first_ncco)
+        logger.warning(f"📱 [HUMAN-FIRST/VONAGE] Przygotowanie nie powiodło się — od razu sekretarka AI: {tenant.get('id')}")
+
+    ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
     return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/human-first-fallback", methods=["GET", "POST"])
+async def vonage_human_first_fallback(request: Request):
+    """eventUrl (eventType=synchronous) dla connect->app w build_human_first_ncco —
+    Vonage odpytuje to gdy właściciel nie odbierze appki WebRTC w portalu /crm
+    (timeout/busy/rejected/failed/unanswered — appka niezalogowana daje ten sam efekt
+    co odrzucenie, Vonage po prostu nie znajduje żadnego zarejestrowanego urządzenia).
+    Zwraca BEZWARUNKOWO świeżą NCCO z build_ai_ncco (dokładnie ten sam wzorzec co
+    sprawdzony na żywo w vonage_sip_fallback_elevenlabs — Vonage odpytuje ten URL
+    również przy SUKCESIE connect, ale wtedy po prostu ignoruje zwróconą NCCO bo leg
+    już żyje). to/from/uuid/regionUrl są przekazane w query stringu z miejsca budowania
+    oryginalnej NCCO (patrz build_human_first_ncco) — ten webhook nie ma dostępu do
+    obiektu tenanta, więc odtwarza go na nowo po numerze."""
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
+    region_url = request.query_params.get("regionUrl", "")
+    try:
+        body = await request.json()
+    except Exception:
+        body = (await request.body()).decode("utf-8", errors="replace")
+    status = body.get("status") if isinstance(body, dict) else None
+    logger.info(f"📱 [HUMAN-FIRST/VONAGE] eventUrl odpytany, status={status!r} | body={body}")
+
+    tenant = await get_tenant_by_phone(to_number)
+    if not tenant:
+        return JSONResponse([{"action": "talk", "text": "Przepraszamy, wystąpił błąd połączenia.", "language": "pl-PL"}])
+
+    host = request.headers.get("host", "localhost")
+    ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
+    return JSONResponse(ncco)
+
+
+PANEL_SHARED_SECRET = os.getenv("PANEL_SHARED_SECRET", "")
+
+
+@app.post("/vonage/client-token")
+async def vonage_client_token(request: Request):
+    """Woływane z bizvoice-panel (Vercel, POST /api/crm/vonage/token) za każdym wejściem
+    właściciela na zakładkę "Telefon" w portalu /crm — mintuje świeży JWT do zalogowania
+    appki WebRTC (Vonage Client SDK) jako Vonage User TEJ firmy (patrz
+    generate_vonage_client_jwt/ensure_vonage_user w realtime_tools.py). Osobny sekret
+    (PANEL_SHARED_SECRET) od ELEVENLABS_SHARED_SECRET — inny kierunek zaufania (panel →
+    ten backend, nie ElevenLabs → ten backend) i inna rotacja. Panel jest jedynym
+    wołającym — to on już zweryfikował sesję CRM właściciela (bv_crm_session), ten
+    endpoint ufa że firm_id przyszło od prawdziwie zalogowanego właściciela TEJ firmy."""
+    if not PANEL_SHARED_SECRET or request.headers.get("x-bizvoice-secret", "") != PANEL_SHARED_SECRET:
+        logger.warning("🚫 [HUMAN-FIRST] Zły/brak x-bizvoice-secret na /vonage/client-token — odrzucam")
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    body = await request.json()
+    firm_id = (body or {}).get("firm_id", "")
+    tenant = await get_tenant_by_id_light(firm_id)
+    if not tenant:
+        return JSONResponse({"error": "firm_not_found"}, status_code=404)
+
+    user_name = await ensure_vonage_user(tenant)
+    if not user_name:
+        return JSONResponse({"error": "vonage_user_failed"}, status_code=502)
+
+    ttl_seconds = 6 * 3600
+    token = generate_vonage_client_jwt(user_name, ttl_seconds=ttl_seconds)
+    if not token:
+        return JSONResponse({"error": "token_generation_failed"}, status_code=500)
+
+    return JSONResponse({"token": token, "user_name": user_name, "expires_in": ttl_seconds})
 
 
 @app.api_route("/vonage/sip-fallback-elevenlabs", methods=["GET", "POST"])

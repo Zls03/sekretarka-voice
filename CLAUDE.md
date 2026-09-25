@@ -364,6 +364,68 @@ ELEVENLABS_AGENT_ID                     # fallback gdy tenant nie ma własnego e
 ELEVENLABS_SHARED_SECRET                # opcjonalny nagłówek weryfikujący /elevenlabs/personalization i /tools/contact_owner
 TEST_TENANT_ID                          # wymuszony tenant na ścieżce Vonage testowej
 VAPID_PRIVATE_KEY                       # web push do portalu /crm (PWA) po rozmowach z realną treścią — patrz realtime_tools.py::_send_push_notifications. Ten sam klucz co NEXT_PUBLIC_VAPID_PUBLIC_KEY w bizvoice-panel (para, wygenerowana raz przez `npx web-push generate-vapid-keys`), tylko prywatna połowa
+PANEL_SHARED_SECRET                     # weryfikuje POST /vonage/client-token (mintowanie JWT appki WebRTC właściciela) — woła go WYŁĄCZNIE bizvoice-panel, ten sam sekret musi być ustawiony tam jako PANEL_SHARED_SECRET (Vercel). Inny kierunek zaufania niż ELEVENLABS_SHARED_SECRET, nie mylić
 ```
+
+## "Najpierw dzwoni do właściciela" — human-first call routing (2026-09-25, Vonage gotowe, Twilio jeszcze nie)
+
+Dla firm które chcą zachować swój dotychczasowy numer (np. z wizytówki) — właściciel
+ustawia na NIM przekierowanie na numer Vonage/Twilio przypisany tej firmie, a
+połączenia najpierw dzwonią do NIEGO (appka WebRTC w portalu `/crm`, zakładka
+"Telefon" — jeszcze niezbudowana UI, tylko backend), i dopiero gdy nie odbierze,
+przechodzą do sekretarki AI jak dziś. Każda rozmowa — czy odebrał właściciel, czy
+bot — trafia do tego samego raportu/CRM co dziś (bo obie ścieżki i tak kończą się w
+`build_ai_ncco` gdy właściciel nie odbierze; gdy odbierze, połączenie po prostu nigdy
+nie dociera do bota, więc świadomie NIE ma dziś żadnego zapisu/podsumowania dla
+rozmów faktycznie odebranych przez właściciela — to następny krok, nie część tego
+etapu).
+
+Sterowane 3 polami tenanta (panel: zakładka "Ustawienia" → "Przekierowanie
+połączeń"): `telephony_provider` (`vonage`/`twilio`, czysto informacyjne DZIŚ — patrz
+niżej), `human_first_enabled`, `human_first_timeout_seconds`. Wszystkie domyślnie
+0/"vonage"/15 — zero zmiany zachowania dla żadnej istniejącej firmy dopóki ktoś
+świadomie tego nie włączy. **KRYTYCZNE:** te pola muszą być jawnie przepisane w
+`_get_tenant_from_saas` (helpers.py) — sam fakt istnienia kolumny w `firms` nie
+wystarczy, ta funkcja zwraca ręcznie wybrany słownik, nie surowy wiersz (patrz
+komentarze przy `contact_owner_enabled`/`custom_report_format` w tym samym pliku —
+to już trzeci raz ktoś/coś o tym zapomina).
+
+**Mechanizm (Vonage, `bot_gemini_test.py`):** `vonage_answer_gemini_live` sprawdza
+`human_first_enabled` PRZED zbudowaniem zwykłej NCCO. Jeśli włączone: NCCO
+`connect`→`{"type": "app", "user": <Vonage User tej firmy>}` z `eventType: synchronous`
++ `eventUrl` → `/vonage/human-first-fallback`. Gdy właściciel nie odbierze (timeout/
+busy/rejected/failed — appka niezalogowana daje identyczny efekt, Vonage po prostu nie
+znajduje zarejestrowanego urządzenia), Vonage odpytuje ten fallback, który
+bezwarunkowo zwraca świeżą NCCO z `build_ai_ncco` (WYODRĘBNIONE z dawnej treści
+`vonage_answer_gemini_live` — identyczny dispatch po `realtime_engine` co zawsze,
+teraz reużywalny z dwóch miejsc). Ten sam wzorzec eventType=synchronous już
+sprawdzony na żywo w `vonage_sip_fallback_elevenlabs` — Vonage odpytuje eventUrl
+NAWET przy sukcesie, ale wtedy po prostu ignoruje zwróconą NCCO bo leg już żyje.
+
+Vonage User (`realtime_tools.py::ensure_vonage_user`) — jeden per firma,
+deterministyczna nazwa `owner-<firm_id>`, tworzony leniwie/idempotentnie (POST
+`/v1/users`, 409 = już istnieje = sukces) przy pierwszej potrzebie (pierwsze
+połączenie z `human_first_enabled=1` ALBO pierwsze wejście na zakładkę "Telefon").
+Wymaga capability **RTC włączonej na Aplikacji Vonage** (dashboard.vonage.com →
+Applications → `bizvoice-gemini-test` → Edit → Capabilities → "RTC (In-app voice &
+messaging)") — WŁĄCZONE 2026-09-25, ta sama aplikacja/klucze co `transfer_to_owner`
+(`VONAGE_APPLICATION_ID`/`VONAGE_PRIVATE_KEY`), żadnych nowych poświadczeń Vonage nie
+trzeba.
+
+JWT appki WebRTC (`realtime_tools.py::generate_vonage_client_jwt`) — INNY kształt niż
+`_generate_vonage_jwt` (ten do REST API): ma `sub`+`acl`, TTL 6h zamiast 60s. Mintowany
+przez `POST /vonage/client-token` (Railway), wołany WYŁĄCZNIE z `bizvoice-panel`
+(Vercel) — auth przez `PANEL_SHARED_SECRET` (nagłówek `x-bizvoice-secret`, patrz wyżej
+w Required Environment Variables). Panel jeszcze nie ma tej strony/wywołania
+zaimplementowanego — to następny krok (WebRTC UI w `/crm`).
+
+**Twilio: NIE zaimplementowane jeszcze** (`telephony_provider='twilio'` dziś
+zachowuje się identycznie jak brak human-first — pole samo w sobie nic nie robi dla
+Twilio, sprawdzane explicit w `vonage_answer_gemini_live`: `and (tenant.get(
+"telephony_provider") or "vonage") == "vonage"`). Odpowiednik Twilio: Twilio Voice SDK
++ `<Dial timeout="N" action=".../twilio/human-first-fallback"><Client>identity</Client
+></Dial>`, JWT przez Twilio Access Token (API Key/Secret, nie JWT RS256 jak Vonage) —
+osobny mechanizm, świadomie odłożony na po zbudowaniu i przetestowaniu ścieżki Vonage
+end-to-end (włącznie z appką WebRTC w `/crm`).
 
 Optional: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY`, Azure TTS credentials.

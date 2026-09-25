@@ -1457,6 +1457,115 @@ przeproś i zaproponuj zamiast tego zostawienie wiadomości przez contact_owner.
     )
 
 
+VONAGE_USERS_API_BASE = "https://api.nexmo.com"
+
+
+def _vonage_user_name(tenant: dict) -> str:
+    """Nazwa Vonage User (Users API) dla appki WebRTC właściciela — jedna na firmę,
+    deterministyczna z tenant id, więc nie trzeba jej nigdzie osobno przechowywać.
+    Sanityzacja na wszelki wypadek gdyby id tenanta kiedyś zawierało coś spoza
+    A-Za-z0-9_- (dziś zawsze bezpieczne, ale Vonage 400-uje na nieoczekiwanych znakach)."""
+    raw = str(tenant.get("id") or "")
+    safe = re.sub(r"[^A-Za-z0-9_-]", "-", raw)
+    return f"owner-{safe}"
+
+
+async def ensure_vonage_user(tenant: dict) -> str | None:
+    """Tworzy (idempotentnie) Vonage User odpowiadający właścicielowi TEJ firmy —
+    wymagany jako cel NCCO connect->app (dzwonienie do appki WebRTC w portalu /crm,
+    patrz build_human_first_ncco niżej) i jako `sub` w JWT logującym appkę do Vonage
+    Client SDK (patrz generate_vonage_client_jwt). Jeden User na firmę wystarczy —
+    ten sam login/JWT może być użyty na wielu urządzeniach naraz (Vonage sam dzwoni
+    do wszystkich zalogowanych naraz). POST /v1/users zwraca 409 gdy User już
+    istnieje — to SUKCES (już utworzony wcześniej), nie błąd."""
+    token = _generate_vonage_jwt()
+    if not token:
+        return None
+    user_name = _vonage_user_name(tenant)
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{VONAGE_USERS_API_BASE}/v1/users",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"name": user_name, "display_name": tenant.get("name") or user_name},
+                timeout=10.0,
+            )
+            if response.status_code in (200, 201, 409):
+                return user_name
+            logger.error(f"📱 [HUMAN-FIRST] Vonage ensure_user error: {response.status_code} — {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"📱 [HUMAN-FIRST] Vonage ensure_user exception: {e}")
+        return None
+
+
+def generate_vonage_client_jwt(user_name: str, ttl_seconds: int = 6 * 3600) -> str | None:
+    """JWT do zalogowania appki WebRTC (Vonage Client SDK, portal /crm) jako dany User —
+    INNY kształt niż _generate_vonage_jwt (ten do REST API: krótkożyjący, bez `sub`/`acl`).
+    `acl` z pełnym dostępem do standardowych ścieżek Client SDK — zawężanie per-endpoint
+    nie ma tu sensu (User i tak widzi/odbiera tylko własne połączenia; izolację między
+    firmami zapewnia to, że każda ma WŁASNEGO Vonage Usera, nie ACL). TTL 6h — appka w
+    /crm sama odświeży token przy każdym wejściu na zakładkę "Telefon"."""
+    app_id = os.getenv("VONAGE_APPLICATION_ID")
+    private_key = os.getenv("VONAGE_PRIVATE_KEY")
+    if not app_id or not private_key:
+        logger.warning("📱 [HUMAN-FIRST] Brak VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY — token appki niedostępny")
+        return None
+    private_key = private_key.replace("\\n", "\n")
+    import jwt as pyjwt
+    now = int(time.time())
+    payload = {
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "jti": str(uuid.uuid4()),
+        "application_id": app_id,
+        "sub": user_name,
+        "acl": {"paths": {
+            "/*/users/**": {}, "/*/conversations/**": {}, "/*/sessions/**": {},
+            "/*/devices/**": {}, "/*/image/**": {}, "/*/media/**": {},
+            "/*/applications/**": {}, "/*/push/**": {}, "/*/knocking/**": {}, "/*/legs/**": {},
+        }},
+    }
+    return pyjwt.encode(payload, private_key, algorithm="RS256")
+
+
+async def build_human_first_ncco(
+    tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str,
+) -> list | None:
+    """NCCO dla firm z human_first_enabled=1 (Vonage) — dzwoni NAJPIERW do appki WebRTC
+    właściciela (portal /crm, zakładka "Telefon", Vonage Client SDK) zamiast od razu do
+    sekretarki AI. Jeśli właściciel nie odbierze w human_first_timeout_seconds (albo
+    appka w ogóle nie jest zalogowana — Vonage po prostu nie znajdzie żadnego
+    zarejestrowanego urządzenia i connect zawiedzie tak samo jak przy odrzuceniu),
+    Vonage odpytuje eventUrl (/vonage/human-first-fallback) i dostaje stamtąd dokładnie
+    tę samą NCCO co dziś dla zwykłego połączenia (build_ai_ncco w bot_gemini_test.py) —
+    ten sam mechanizm eventType=synchronous już sprawdzony na żywo w
+    vonage_sip_fallback_elevenlabs (Vonage odpytuje ten URL nawet przy SUKCESIE, fresh
+    NCCO jest wtedy po prostu ignorowana bo leg już żyje).
+    Zwraca None gdy Vonage User nie dał się przygotować (np. RTC capability wyłączone/
+    błąd API) — wołający spada wtedy z powrotem na zwykłą ścieżkę AI, klient nigdy nie
+    zostaje bez żadnej ścieżki połączenia."""
+    user_name = await ensure_vonage_user(tenant)
+    if not user_name:
+        return None
+    from_e164 = to_number if to_number.startswith("+") else f"+{to_number}"
+    timeout = int(tenant.get("human_first_timeout_seconds") or 15)
+    fallback_url = (
+        f"https://{host}/vonage/human-first-fallback"
+        f"?to={quote(to_number, safe='')}&from={quote(from_number, safe='')}"
+        f"&uuid={quote(call_uuid, safe='')}&regionUrl={quote(region_url or '', safe='')}"
+    )
+    return [{
+        "action": "connect",
+        "from": from_e164.lstrip("+"),
+        "timeout": timeout,
+        "eventType": "synchronous",
+        "eventUrl": [fallback_url],
+        "endpoint": [{"type": "app", "user": user_name}],
+    }]
+
+
 async def is_call_allowed(tenant: dict) -> bool:
     """Pre-call guard, 1:1 z bot.py (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
     i /vonage/answer poniżej). Bez tego zablokowany/bez-środków tenant i tak dostawałby pełne, płatne

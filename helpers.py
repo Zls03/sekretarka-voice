@@ -402,6 +402,13 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "booking_enabled":    int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
         "transfer_enabled":   int(firm.get("transfer_enabled") or 0),
         "transfer_number":    firm.get("transfer_number") or "",
+        # 2026-09-25 — "Najpierw dzwoni do właściciela" (panel: zakładka "Ustawienia" →
+        # "Przekierowanie połączeń", build_human_first_ncco w realtime_tools.py). TEN SAM
+        # błąd co przy transfer_enabled/contact_owner_enabled wyżej czyha tu regularnie na
+        # tę funkcję — dopisane od razu przy dodaniu kolumn, nie po fakcie.
+        "telephony_provider":          firm.get("telephony_provider") or "vonage",
+        "human_first_enabled":         int(firm.get("human_first_enabled") or 0),
+        "human_first_timeout_seconds": int(firm.get("human_first_timeout_seconds") or 15),
         # 2026-09-07: pole zapomniane przy pierwotnym budowaniu tego słownika — bez niego
         # tenant.get("contact_owner_enabled", 1) w bot_gemini_test.py/bot_elevenlabs_agent.py
         # ZAWSZE dostawał domyślne 1, więc checkbox "Zbieranie wiadomości dla właściciela"
@@ -480,6 +487,34 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
 
     logger.warning(f"❌ No tenant found for suffix: {phone_suffix}")
     return None
+
+
+async def get_tenant_by_id_light(firm_id: str) -> Optional[Dict]:
+    """Odchudzona wersja get_tenant_by_phone — po id zamiast po numerze, TYLKO pola
+    potrzebne dla appki WebRTC właściciela (/vonage/client-token w bot_gemini_test.py):
+    Vonage User (id+name) i weryfikacja że firma jest na Vonage/ma włączone human-first.
+    Świadomie BEZ services/staff/faq/working_hours jak get_tenant_by_phone — ten endpoint
+    jest wołany za każdym wejściem właściciela na zakładkę "Telefon" w /crm, więc ma być
+    tani. SaaS-only (kolumna firm_id istnieje tylko w firms, nie w tenants Admin DB —
+    human-first to funkcja tylko dla firm z panelu)."""
+    if not saas_db.is_configured or not firm_id:
+        return None
+    rows = await saas_db.execute(
+        "SELECT id, name, phone_number, telephony_provider, human_first_enabled, human_first_timeout_seconds "
+        "FROM firms WHERE id = ?",
+        [firm_id],
+    )
+    if not rows:
+        return None
+    firm = rows[0]
+    return {
+        "id": firm["id"],
+        "name": firm.get("name") or "",
+        "phone_number": firm.get("phone_number") or "",
+        "telephony_provider": firm.get("telephony_provider") or "vonage",
+        "human_first_enabled": int(firm.get("human_first_enabled") or 0),
+        "human_first_timeout_seconds": int(firm.get("human_first_timeout_seconds") or 15),
+    }
 
 
 # ==========================================
