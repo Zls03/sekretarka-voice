@@ -1167,9 +1167,28 @@ async def health_gemini_live():
 async def vonage_test_siperb(request: Request):
     """TYMCZASOWY endpoint (2026-09-27) — wyłącznie do ręcznego testu Vonage SIP Trunk
     ("aisekretarka") -> Siperb ("Trunk wychodzący", nazwa połączenia "vonage") -> appka
-    Siperb na telefonie. Do usunięcia po zakończeniu testu, niezależnie od wyniku —
-    nie jest wpięty w żadną logikę tenant/human-first, więc nie wpływa na nic poza samym
-    testem."""
+    Siperb na telefonie. Do usunięcia po zakończeniu testu, niezależnie od wyniku.
+
+    2026-09-27 — TYMCZASOWO podpięty jako Answer URL na poziomie CAŁEJ aplikacji Vonage
+    ("bizvoice-gemini-test"), która obsługuje DWA numery: Bizvoice (...542, testowy) I
+    numer prawdziwej, aktywnej firmy (...552) — złapane na żywo zanim wyrządziło szkodę.
+    Dlatego: testowa ścieżka Siperb TYLKO dla numeru Bizvoice, każdy inny numer spada na
+    normalną, produkcyjną ścieżkę (identyczną jak vonage_answer_gemini_live), żeby ...552
+    działało dokładnie tak jak przed tym testem."""
+    to_number = request.query_params.get("to", "")
+    if to_number.lstrip("+").lstrip("0") != "48459050542":
+        from_number = request.query_params.get("from", "")
+        call_uuid = request.query_params.get("uuid", "")
+        region_url = request.query_params.get("region_url", "")
+        host = request.headers.get("host", "localhost")
+        tenant = await get_tenant_by_phone(to_number)
+        if not tenant:
+            return JSONResponse([{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}])
+        if not await is_call_allowed(tenant):
+            return JSONResponse([{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}])
+        ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
+        return JSONResponse(ncco)
+
     logger.info(f"🧪 [SIPERB TEST] Answer webhook wywołany: {dict(request.query_params)}")
     ncco = [{
         "action": "connect",
