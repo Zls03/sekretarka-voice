@@ -1163,6 +1163,39 @@ async def health_gemini_live():
     return {"status": "ok", "provider": "gemini-live", "model": GEMINI_LIVE_MODEL}
 
 
+@app.api_route("/vonage/test-siperb", methods=["GET", "POST"])
+async def vonage_test_siperb(request: Request):
+    """TYMCZASOWY endpoint (2026-09-27) — wyłącznie do ręcznego testu Vonage SIP Trunk
+    ("aisekretarka") -> Siperb ("Trunk wychodzący", nazwa połączenia "vonage") -> appka
+    Siperb na telefonie. Do usunięcia po zakończeniu testu, niezależnie od wyniku —
+    nie jest wpięty w żadną logikę tenant/human-first, więc nie wpływa na nic poza samym
+    testem."""
+    logger.info(f"🧪 [SIPERB TEST] Answer webhook wywołany: {dict(request.query_params)}")
+    ncco = [{
+        "action": "connect",
+        "timeout": 20,
+        "eventType": "synchronous",
+        "eventUrl": [f"https://{request.headers.get('host', 'localhost')}/vonage/test-siperb-event"],
+        "endpoint": [{
+            "type": "sip",
+            "uri": "sip:siperb-bizvoice@eu-west-1-sbc-1.siperb.com;transport=udp",
+        }],
+    }]
+    return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/test-siperb-event", methods=["GET", "POST"])
+async def vonage_test_siperb_event(request: Request):
+    """eventUrl dla powyższego testu — loguje surowy status żeby zobaczyć DOKŁADNIE co
+    Vonage/Siperb zwracają (np. sip_code, reason) gdyby połączenie nie doszło do skutku."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info(f"🧪 [SIPERB TEST] eventUrl: query={dict(request.query_params)} | body={body}")
+    return JSONResponse([])
+
+
 async def build_ai_ncco(tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str) -> list:
     """Wyodrębnione z vonage_answer_gemini_live (2026-09-25) żeby dało się wołać ten sam
     dispatch po realtime_engine z DWÓCH miejsc: bezpośrednio przy Answer (tenant bez
