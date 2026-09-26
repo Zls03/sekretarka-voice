@@ -1163,56 +1163,13 @@ async def health_gemini_live():
     return {"status": "ok", "provider": "gemini-live", "model": GEMINI_LIVE_MODEL}
 
 
-@app.api_route("/vonage/test-siperb", methods=["GET", "POST"])
-async def vonage_test_siperb(request: Request):
-    """TYMCZASOWY endpoint (2026-09-27) — wyłącznie do ręcznego testu Vonage SIP Trunk
-    ("aisekretarka") -> Siperb ("Trunk wychodzący", nazwa połączenia "vonage") -> appka
-    Siperb na telefonie. Do usunięcia po zakończeniu testu, niezależnie od wyniku.
-
-    2026-09-27 — TYMCZASOWO podpięty jako Answer URL na poziomie CAŁEJ aplikacji Vonage
-    ("bizvoice-gemini-test"), która obsługuje DWA numery: Bizvoice (...542, testowy) I
-    numer prawdziwej, aktywnej firmy (...552) — złapane na żywo zanim wyrządziło szkodę.
-    Dlatego: testowa ścieżka Siperb TYLKO dla numeru Bizvoice, każdy inny numer spada na
-    normalną, produkcyjną ścieżkę (identyczną jak vonage_answer_gemini_live), żeby ...552
-    działało dokładnie tak jak przed tym testem."""
-    to_number = request.query_params.get("to", "")
-    if to_number.lstrip("+").lstrip("0") != "48459050542":
-        from_number = request.query_params.get("from", "")
-        call_uuid = request.query_params.get("uuid", "")
-        region_url = request.query_params.get("region_url", "")
-        host = request.headers.get("host", "localhost")
-        tenant = await get_tenant_by_phone(to_number)
-        if not tenant:
-            return JSONResponse([{"action": "talk", "text": "Numer testowy nieaktywny.", "language": "pl-PL"}])
-        if not await is_call_allowed(tenant):
-            return JSONResponse([{"action": "talk", "text": "Przepraszamy, linia jest chwilowo niedostępna.", "language": "pl-PL"}])
-        ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
-        return JSONResponse(ncco)
-
-    logger.info(f"🧪 [SIPERB TEST] Answer webhook wywołany: {dict(request.query_params)}")
-    ncco = [{
-        "action": "connect",
-        "timeout": 20,
-        "eventType": "synchronous",
-        "eventUrl": [f"https://{request.headers.get('host', 'localhost')}/vonage/test-siperb-event"],
-        "endpoint": [{
-            "type": "sip",
-            "uri": "sip:siperb-bizvoice@eu-west-1-sbc-1.siperb.com;transport=udp",
-        }],
-    }]
-    return JSONResponse(ncco)
-
-
-@app.api_route("/vonage/test-siperb-event", methods=["GET", "POST"])
-async def vonage_test_siperb_event(request: Request):
-    """eventUrl dla powyższego testu — loguje surowy status żeby zobaczyć DOKŁADNIE co
-    Vonage/Siperb zwracają (np. sip_code, reason) gdyby połączenie nie doszło do skutku."""
-    try:
-        body = await request.json()
-    except Exception:
-        body = (await request.body()).decode("utf-8", errors="replace")
-    logger.info(f"🧪 [SIPERB TEST] eventUrl: query={dict(request.query_params)} | body={body}")
-    return JSONResponse([])
+## 2026-09-27 — test Vonage SIP Trunk ("aisekretarka") -> Siperb ("Trunk wychodzący")
+## usunięty stąd po nieudanej próbie (sip_code 404 cannot_route za każdym razem,
+## niezależnie od IP allowlist) — czeka na odpowiedź supportu Siperb co do właściwego
+## SIP URI dla połączeń przychodzących przez ten typ połączenia. Konfiguracja po stronie
+## Vonage (dodatkowy User Key/Secret "siperb-bizvoice" na trunku "aisekretarka") i po
+## stronie Siperb (połączenie "vonage", Trunk wychodzący) zostawione nietknięte do
+## ponownego użycia, gdy dostaniemy odpowiedź.
 
 
 async def build_ai_ncco(tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str) -> list:
