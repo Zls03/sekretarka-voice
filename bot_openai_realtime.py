@@ -478,7 +478,7 @@ async def apply_crm_when_ready(
         )
         known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
         if known_name:
-            updated_prompt = append_known_caller_hint(updated_prompt, known_name)
+            updated_prompt = append_known_caller_hint(updated_prompt, known_name, has_contact_owner=has_contact_owner)
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile
 
@@ -619,7 +619,7 @@ async def websocket_gemini_test(websocket: WebSocket):
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
     if known_name:
-        system_prompt = append_known_caller_hint(system_prompt, known_name)
+        system_prompt = append_known_caller_hint(system_prompt, known_name, has_contact_owner=contact_owner_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -836,7 +836,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
     if known_name:
-        system_prompt = append_known_caller_hint(system_prompt, known_name)
+        system_prompt = append_known_caller_hint(system_prompt, known_name, has_contact_owner=contact_owner_available)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.

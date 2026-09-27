@@ -299,7 +299,7 @@ async def _build_conversation_config_override(
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
     if known_name:
-        prompt_text = append_known_caller_hint(prompt_text, known_name)
+        prompt_text = append_known_caller_hint(prompt_text, known_name, has_contact_owner=contact_owner_available)
     first_message = build_greeting_message(tenant)
 
     tool_ids = []
@@ -437,7 +437,7 @@ async def elevenlabs_personalization(request: Request):
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_id)
     if known_name:
-        prompt_text = append_known_caller_hint(prompt_text, known_name)
+        prompt_text = append_known_caller_hint(prompt_text, known_name, has_contact_owner=contact_owner_available)
     first_message = build_greeting_message(tenant)
 
     tool_ids = []

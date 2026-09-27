@@ -524,7 +524,7 @@ pożegnanie, nie dwa. Bez wywołania tej funkcji rozmowa NIE ROZŁĄCZY SIĘ sam
     return role_content + addendum
 
 
-def append_known_caller_hint(prompt: str, known_name: str) -> str:
+def append_known_caller_hint(prompt: str, known_name: str, has_contact_owner: bool = True) -> str:
     """Dokleja krótki blok informujący model, że dzwoniący to znany kontakt z portalu
     /crm (zakładka Klienci — imię wpisane ręcznie przez właściciela, albo zapisane
     automatycznie po wcześniejszym contact_owner, patrz helpers.py::maybe_save_contact_name).
@@ -536,7 +536,11 @@ def append_known_caller_hint(prompt: str, known_name: str) -> str:
     Rozwiązuje problem Pan/Pani dla znanych/stałych klientów: bez tego model zawsze
     startuje w stanie NIEZNANA (patrz FORMA ZWRACANIA SIĘ w build_role_prompt) i ma
     twardy zakaz zgadywania/zmyślania imienia. Tu świadomie PRZEŁAMUJEMY ten zakaz, bo
-    źródło nie jest zgadywaniem modelu — to zweryfikowane dane z kartoteki."""
+    źródło nie jest zgadywaniem modelu — to zweryfikowane dane z kartoteki.
+
+    has_contact_owner: gdy True, dokładamy instrukcję żeby przy zbieraniu wiadomości dla
+    właściciela (contact_owner) POTWIERDZIĆ znane imię zamiast pytać od zera — user feedback:
+    pytanie "na jakie imię mam zapisać?" brzmi głupio, skoro numer już jest rozpoznany."""
     first_name = (known_name or "").strip().split()[0] if (known_name or "").strip() else ""
     if not first_name:
         return prompt
@@ -544,6 +548,14 @@ def append_known_caller_hint(prompt: str, known_name: str) -> str:
     forma = "Panie" if gender == "Pana" else "Pani"
     stan = "MĘSKA" if gender == "Pana" else "ŻEŃSKA"
     voc = vocative_imie(first_name)
+    contact_owner_note = ""
+    if has_contact_owner:
+        contact_owner_note = f"""
+Jeśli klient chce zostawić wiadomość dla właściciela (contact_owner) — NIE pytaj "na jakie imię
+mam zapisać". Zamiast tego POTWIERDŹ krótko, np. "Zapisuję jako {first_name}, dobrze?" albo
+"Czy to nadal {first_name}?". Jeśli potwierdzi → użyj "{first_name}" jako customer_name, bez
+dodatkowych pytań. Jeśli zaprzeczy lub sam poda inne imię → użyj TEGO nowego imienia zamiast
+"{first_name}" — to znaczy że akurat dzwoni ktoś inny z tego numeru."""
     return prompt + f"""
 
 ⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
@@ -551,4 +563,5 @@ Ten numer telefonu jest zapisany w bazie klientów pod imieniem "{first_name}". 
 zgadywanie — to zweryfikowane dane, więc zakaz zmyślania imienia/zgadywania płci wyżej TU NIE
 OBOWIĄZUJE. Stan rozmówcy jest od razu {stan} (nie NIEZNANA) — możesz zwracać się po imieniu
 od pierwszego zdania, np. "{forma} {voc}". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
-inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad."""
+inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad.
+{contact_owner_note}"""

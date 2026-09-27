@@ -1042,7 +1042,7 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
     if known_name:
-        system_prompt = append_known_caller_hint(system_prompt, known_name)
+        system_prompt = append_known_caller_hint(system_prompt, known_name, has_contact_owner=contact_owner_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
@@ -1612,7 +1612,7 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
     if known_name:
-        system_prompt = append_known_caller_hint(system_prompt, known_name)
+        system_prompt = append_known_caller_hint(system_prompt, known_name, has_contact_owner=contact_owner_available)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
