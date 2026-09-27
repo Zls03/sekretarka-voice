@@ -161,7 +161,7 @@ from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool,
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
-    build_human_first_ncco,
+    build_human_first_ncco, process_human_first_recording,
 )
 from realtime_booking import build_book_appointment_tool, build_manage_booking_tool
 
@@ -1449,6 +1449,45 @@ async def vonage_human_first_fallback(request: Request):
     host = request.headers.get("host", "localhost")
     ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
     return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/human-first-recording", methods=["GET", "POST"])
+async def vonage_human_first_recording(request: Request):
+    """eventUrl dla action "record" w build_human_first_ncco — Vonage POSTuje tu link do
+    nagrania PO zakończeniu połączenia, niezależnie czy właściciel odebrał czy nie (jeśli
+    connect->sip nigdy się nie połączył, nagranie jest puste/krótkie —
+    process_human_first_recording cicho pomija zapis gdy Deepgram nie zwróci żadnego
+    transkryptu). Fire-and-forget: Vonage dostaje szybkie potwierdzenie, faktyczne
+    pobranie+transkrypcja+podsumowanie (kilka-kilkanaście sekund) dzieje się w tle."""
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    recording_url = body.get("recording_url") if isinstance(body, dict) else None
+    logger.info(f"📼 [HUMAN-FIRST/RECORDING] eventUrl odpytany | body={body}")
+    if not recording_url:
+        return JSONResponse({"status": "ignored"})
+
+    tenant = await get_tenant_by_phone(to_number)
+    if not tenant:
+        return JSONResponse({"status": "ignored"})
+
+    duration_seconds = 0
+    try:
+        start = body.get("start_time")
+        end = body.get("end_time")
+        if start and end:
+            from datetime import datetime as _dt
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
+            duration_seconds = int((_dt.strptime(end, fmt) - _dt.strptime(start, fmt)).total_seconds())
+    except Exception:
+        pass
+
+    asyncio.create_task(process_human_first_recording(tenant, recording_url, from_number, call_uuid, duration_seconds))
+    return JSONResponse({"status": "ok"})
 
 
 @app.api_route("/vonage/sip-fallback-elevenlabs", methods=["GET", "POST"])
