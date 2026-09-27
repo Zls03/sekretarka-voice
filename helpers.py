@@ -403,6 +403,13 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "booking_enabled":    int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
         "transfer_enabled":   int(firm.get("transfer_enabled") or 0),
         "transfer_number":    firm.get("transfer_number") or "",
+        # 2026-09-28 — "najpierw dzwoni do właściciela" v2 (SIP/Siperb, patrz
+        # realtime_tools.py::build_human_first_ncco). TEN SAM błąd co przy
+        # transfer_enabled/contact_owner_enabled wyżej czyha tu regularnie — dopisane od
+        # razu przy dodaniu kolumn, nie po fakcie.
+        "human_first_enabled":         int(firm.get("human_first_enabled") or 0),
+        "human_first_timeout_seconds": int(firm.get("human_first_timeout_seconds") or 15),
+        "siperb_sip_username":         firm.get("siperb_sip_username") or "",
         # 2026-09-07: pole zapomniane przy pierwotnym budowaniu tego słownika — bez niego
         # tenant.get("contact_owner_enabled", 1) w bot_gemini_test.py/bot_elevenlabs_agent.py
         # ZAWSZE dostawał domyślne 1, więc checkbox "Zbieranie wiadomości dla właściciela"

@@ -1478,6 +1478,50 @@ przeproś i zaproponuj zamiast tego zostawienie wiadomości przez contact_owner.
     )
 
 
+async def build_human_first_ncco(
+    tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str,
+) -> list | None:
+    """NCCO dla firm z human_first_enabled=1 — dzwoni NAJPIERW do apki Siperb właściciela
+    (SIP, konto założone RĘCZNIE dla TEJ FIRMY — patrz panel: zakładka Ustawienia, sekcja
+    "Najpierw dzwoni do właściciela") zamiast od razu do sekretarki AI. v2 tego mechanizmu:
+    poprzednia wersja (Vonage Users API + appka WebRTC w /crm) USUNIĘTA 2026-09-28 — nie
+    dzwoniła niezawodnie na zablokowanym telefonie (ograniczenia przeglądarki w tle). SIP
+    przez natywną appkę Siperb (CallKit/ConnectionService) faktycznie dzwoni — potwierdzone
+    na żywo 2026-09-27 (patrz historia sesji: sip_code 404 cannot_route naprawiony przez
+    support Siperb — literówka w polu Username + niedopasowana domena From).
+
+    Zwraca None gdy tenant nie ma wypełnionego siperb_sip_username (nawet jeśli
+    human_first_enabled=1 — właściciel włączył przełącznik, ale nie dokończył jeszcze
+    zakładania/wpisywania połączenia Siperb) — wołający spada wtedy z powrotem na zwykłą
+    ścieżkę AI, klient nigdy nie zostaje bez żadnej ścieżki połączenia.
+
+    ⚠️ "eu-west-1-sbc-1.siperb.com" jest na sztywno — to domena SBC z JEDYNEGO konta
+    Siperb jakie na razie przetestowaliśmy (nasze, "siperb-bizvoice"). Nie potwierdzone czy
+    KAŻDE nowo zakładane konto Siperb dostaje tę samą domenę SBC, czy to zależy od regionu
+    wybranego przy zakładaniu konta — przy PIERWSZYM prawdziwym kliencie sprawdź w jego
+    apce Siperb (Connections → jego połączenie → to pole) i popraw jeśli inne."""
+    sip_username = (tenant.get("siperb_sip_username") or "").strip()
+    if not sip_username:
+        return None
+    timeout = int(tenant.get("human_first_timeout_seconds") or 15)
+    fallback_url = (
+        f"https://{host}/vonage/human-first-fallback"
+        f"?to={quote(to_number, safe='')}&from={quote(from_number, safe='')}"
+        f"&uuid={quote(call_uuid, safe='')}&regionUrl={quote(region_url or '', safe='')}"
+    )
+    return [{
+        "action": "connect",
+        "from": from_number.lstrip("+") if from_number else to_number.lstrip("+"),
+        "timeout": timeout,
+        "eventType": "synchronous",
+        "eventUrl": [fallback_url],
+        "endpoint": [{
+            "type": "sip",
+            "uri": f"sip:{sip_username}@eu-west-1-sbc-1.siperb.com;transport=udp",
+        }],
+    }]
+
+
 async def is_call_allowed(tenant: dict) -> bool:
     """Pre-call guard, 1:1 z bot.py (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
     i /vonage/answer poniżej). Bez tego zablokowany/bez-środków tenant i tak dostawałby pełne, płatne

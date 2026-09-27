@@ -366,23 +366,58 @@ TEST_TENANT_ID                          # wymuszony tenant na ścieżce Vonage t
 VAPID_PRIVATE_KEY                       # web push do portalu /crm (PWA) po rozmowach z realną treścią — patrz realtime_tools.py::_send_push_notifications. Ten sam klucz co NEXT_PUBLIC_VAPID_PUBLIC_KEY w bizvoice-panel (para, wygenerowana raz przez `npx web-push generate-vapid-keys`), tylko prywatna połowa
 ```
 
-## "Najpierw dzwoni do właściciela" — USUNIĘTE (2026-09-28)
+## "Najpierw dzwoni do właściciela" v2 — przez apkę Siperb/SIP (2026-09-28)
 
-Mechanizm z appką WebRTC właściciela w portalu `/crm` (zakładka "Telefon", Vonage Users
-API + Client SDK) został CAŁKOWICIE USUNIĘTY — nigdy nie rozwiązał realnego problemu
-(appka webowa nie dzwoni niezawodnie na zablokowanym telefonie, ograniczenia przeglądarki
-w tle). Usunięte: `/crm/telefon` (panel), `/api/crm/vonage/token` (panel),
-`/vonage/human-first-fallback` + `/vonage/client-token` (ten backend),
-`ensure_vonage_user`/`generate_vonage_client_jwt`/`build_human_first_ncco`
-(realtime_tools.py), `get_tenant_by_id_light` (helpers.py), sekcja "Przekierowanie
-połączeń" w panelu admina (firm/[id]/page.tsx). Kolumny `telephony_provider`/
-`human_first_enabled`/`human_first_timeout_seconds` ZOSTAJĄ w tabeli `firms`
-(nieużywane, nieszkodliwe — nie warto ryzykować DROP COLUMN), ale świadomie NIE są już
-przepisywane w `_get_tenant_from_saas`.
+**Historia:** v1 (Vonage Users API + appka WebRTC w `/crm`, zakładka "Telefon") USUNIĘTA
+2026-09-28 — nie dzwoniła niezawodnie na zablokowanym telefonie (ograniczenia przeglądarki
+w tle). v2 zamiast tego kieruje przez SIP do zewnętrznej, gotowej appki **Siperb**
+(natywna integracja z systemem telefonicznym telefonu — CallKit/ConnectionService —
+faktycznie dzwoni nawet zablokowany), potwierdzone na żywo 2026-09-27 po naprawie przez
+support Siperb (literówka w polu Username + niedopasowana domena From w ich trunk
+matching — Vonage wysyła INVITE z domeny `sip.nexmo.com`, więc "Serwer punktu końcowego"
+połączenia w Siperb MUSI być ustawiony na `sip.nexmo.com:5060` UDP, nie na własną domenę
+trunku Vonage typu `aisekretarka.sip-eu.vonage.com`).
 
-Jeśli temat wróci — kolejne podejście planowane przez gotową appkę SIP (np. Siperb,
-patrz historia sesji) zamiast Vonage Users API: appka SIP ma natywną integrację z
-systemem telefonicznym (CallKit/ConnectionService), więc realnie dzwoni nawet na
-zablokowanym telefonie, czego appka webowa w przeglądarce nie potrafi.
+**WAŻNE — brak automatyzacji, konfiguracja ręczna per klient:** Siperb NIE oferuje (na
+razie sprawdzone) samoobsługowego, multi-tenant sposobu żeby wielu klientów bezpiecznie
+współdzieliło jedno konto — nie ma pewności czy urządzenia zarejestrowane na tym samym
+koncie są izolowane per połączenie (Connection) czy dzwonią wszystkie naraz niezależnie od
+tego, do której trafiło połączenie przychodzące. Dlatego **każdy klient korzystający z tej
+funkcji musi mieć OSOBNE, w pełni odrębne konto Siperb** (nie tylko osobne połączenie na
+wspólnym koncie) — inaczej telefon klienta A mógłby usłyszeć połączenie klienta B.
+
+**Sterowane 3 polami tenanta** (panel: `firm/[id]/page.tsx`, zakładka Ustawienia, sekcja
+"Najpierw dzwoni do właściciela"): `human_first_enabled`, `human_first_timeout_seconds`,
+`siperb_sip_username`. Wszystkie domyślnie 0/15/"" — zero zmiany zachowania dla żadnej
+firmy dopóki ktoś świadomie NIE włączy przełącznika I NIE wypełni SIP username (backend
+sprawdza oba warunki, patrz niżej). **KRYTYCZNE:** te pola muszą być jawnie przepisane w
+`_get_tenant_from_saas` (helpers.py) — sam fakt istnienia kolumny w `firms` nie wystarczy
+(ten sam błąd co przy `contact_owner_enabled`/`custom_report_format`, powtórzony już
+kilka razy w historii tego pliku).
+
+**Mechanizm (`bot_gemini_test.py`):** `vonage_answer_gemini_live` sprawdza
+`human_first_enabled` PRZED zbudowaniem zwykłej NCCO. Jeśli włączone, woła
+`realtime_tools.py::build_human_first_ncco`, które buduje NCCO `connect`→SIP→
+`sip:<siperb_sip_username>@eu-west-1-sbc-1.siperb.com;transport=udp` z `eventType:
+synchronous` + `eventUrl` → `/vonage/human-first-fallback` (identyczny, sprawdzony wzorzec
+co `vonage_sip_fallback_elevenlabs` — Vonage odpytuje eventUrl NAWET przy sukcesie, ale
+wtedy po prostu ignoruje zwróconą NCCO bo leg już żyje). Gdy `siperb_sip_username` jest
+puste (przełącznik włączony, ale klient nie dokończył konfiguracji Siperb) —
+`build_human_first_ncco` zwraca `None`, cicho spada na zwykłą ścieżkę AI, klient NIGDY nie
+zostaje bez żadnej ścieżki połączenia.
+
+⚠️ **`eu-west-1-sbc-1.siperb.com` jest na sztywno zakodowane** — to domena SBC z JEDYNEGO
+przetestowanego konta Siperb (naszego, testowego, "siperb-bizvoice"). Nie potwierdzone czy
+każde nowo zakładane konto Siperb dostaje tę samą domenę SBC (może zależeć od regionu
+wybranego przy rejestracji) — przy PIERWSZYM prawdziwym kliencie sprawdź w jego apce
+Siperb (Connections → jego połączenie → to pole) i popraw `build_human_first_ncco` jeśli
+inne (np. przez dodanie kolejnego pola tenanta zamiast stałej).
+
+**Co NIE jest jeszcze zrobione:** gdy właściciel faktycznie odbierze przez Siperb,
+połączenie nigdy nie dociera do bota — świadomie NIE ma dziś żadnego nagrania/transkryptu/
+zapisu w CRM dla takich rozmów (tylko dla tych, które trafiły do sekretarki AI). Dodanie
+nagrywania+transkrypcji+podsumowania dla rozmów odebranych osobiście przez właściciela to
+odrębny, późniejszy kawałek pracy (Vonage `record` + Deepgram + `summarize_conversation_lines`
+z realtime_tools.py), nie część tego etapu.
 
 Optional: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY`, Azure TTS credentials.

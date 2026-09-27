@@ -161,6 +161,7 @@ from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool,
     build_transfer_tool, send_missed_transfer_email,
     maybe_send_call_summary, save_call_transcript, apply_call_charge, is_call_allowed,
+    build_human_first_ncco,
 )
 from realtime_booking import build_book_appointment_tool, build_manage_booking_tool
 
@@ -1403,6 +1404,49 @@ async def vonage_answer_gemini_live(request: Request):
 
     host = request.headers.get("host", "localhost")
 
+    # "Najpierw dzwoni do właściciela" v2 (human_first_enabled, panel: zakładka Ustawienia →
+    # "Najpierw dzwoni do właściciela") — przez apkę Siperb (SIP), patrz
+    # realtime_tools.py::build_human_first_ncco. Domyślnie WYŁĄCZONE (0) dla każdej firmy,
+    # więc zero zmiany zachowania dopóki ktoś świadomie tego nie włączy I nie wypełni
+    # siperb_sip_username. Porażka przygotowania (brak/puste SIP username) cicho spada na
+    # zwykłą ścieżkę AI niżej — właściciel nigdy nie traci połączenia przez błąd tej funkcji.
+    if tenant.get("human_first_enabled"):
+        human_first_ncco = await build_human_first_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
+        if human_first_ncco:
+            logger.info(f"📱 [HUMAN-FIRST/SIPERB] Dzwonię najpierw do apki Siperb właściciela: {tenant.get('id')}")
+            return JSONResponse(human_first_ncco)
+        logger.warning(f"📱 [HUMAN-FIRST/SIPERB] Brak siperb_sip_username — od razu sekretarka AI: {tenant.get('id')}")
+
+    ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
+    return JSONResponse(ncco)
+
+
+@app.api_route("/vonage/human-first-fallback", methods=["GET", "POST"])
+async def vonage_human_first_fallback(request: Request):
+    """eventUrl (eventType=synchronous) dla connect->sip w build_human_first_ncco — Vonage
+    odpytuje to gdy właściciel nie odbierze apki Siperb (timeout/busy/rejected/failed —
+    apka niezalogowana/offline daje ten sam efekt, Siperb po prostu nie znajduje
+    zarejestrowanego urządzenia). Zwraca BEZWARUNKOWO świeżą NCCO z build_ai_ncco (ten sam
+    sprawdzony wzorzec co vonage_sip_fallback_elevenlabs — Vonage odpytuje ten URL NAWET
+    przy sukcesie connect, ale wtedy po prostu ignoruje zwróconą NCCO bo leg już żyje).
+    to/from/uuid/regionUrl są przekazane w query stringu z miejsca budowania oryginalnej
+    NCCO — ten webhook nie ma dostępu do obiektu tenanta, więc odtwarza go po numerze."""
+    to_number = request.query_params.get("to", "")
+    from_number = request.query_params.get("from", "")
+    call_uuid = request.query_params.get("uuid", "")
+    region_url = request.query_params.get("regionUrl", "")
+    try:
+        body = await request.json()
+    except Exception:
+        body = (await request.body()).decode("utf-8", errors="replace")
+    status = body.get("status") if isinstance(body, dict) else None
+    logger.info(f"📱 [HUMAN-FIRST/SIPERB] eventUrl odpytany, status={status!r} | body={body}")
+
+    tenant = await get_tenant_by_phone(to_number)
+    if not tenant:
+        return JSONResponse([{"action": "talk", "text": "Przepraszamy, wystąpił błąd połączenia.", "language": "pl-PL"}])
+
+    host = request.headers.get("host", "localhost")
     ncco = await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url)
     return JSONResponse(ncco)
 
