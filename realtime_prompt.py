@@ -17,7 +17,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from flows_helpers import build_business_context, _assistant_gender, POLISH_DAYS
-from polish_mappings import normalize_polish_text, vocative_imie, odmien_imie
+from polish_mappings import normalize_polish_text, vocative_imie, odmien_imie, detect_gender
 
 
 def build_greeting_message(tenant: dict, client_profile: dict = None) -> str:
@@ -522,3 +522,33 @@ pożegnanie, nie dwa. Bez wywołania tej funkcji rozmowa NIE ROZŁĄCZY SIĘ sam
 {booking_block}"""
 
     return role_content + addendum
+
+
+def append_known_caller_hint(prompt: str, known_name: str) -> str:
+    """Dokleja krótki blok informujący model, że dzwoniący to znany kontakt z portalu
+    /crm (zakładka Klienci — imię wpisane ręcznie przez właściciela, albo zapisane
+    automatycznie po wcześniejszym contact_owner, patrz helpers.py::maybe_save_contact_name).
+
+    Świadomie NIEZALEŻNE od client_profile/_build_crm_hint wyżej (to osobny system —
+    booking CRM przez internal API panelu, tylko dla firm z booking_enabled i historią
+    wizyt) — crm_contacts działa dla KAŻDEJ firmy, niezależnie od bookingu.
+
+    Rozwiązuje problem Pan/Pani dla znanych/stałych klientów: bez tego model zawsze
+    startuje w stanie NIEZNANA (patrz FORMA ZWRACANIA SIĘ w build_role_prompt) i ma
+    twardy zakaz zgadywania/zmyślania imienia. Tu świadomie PRZEŁAMUJEMY ten zakaz, bo
+    źródło nie jest zgadywaniem modelu — to zweryfikowane dane z kartoteki."""
+    first_name = (known_name or "").strip().split()[0] if (known_name or "").strip() else ""
+    if not first_name:
+        return prompt
+    gender = detect_gender(first_name)  # "Pana" lub "Pani"
+    forma = "Panie" if gender == "Pana" else "Pani"
+    stan = "MĘSKA" if gender == "Pana" else "ŻEŃSKA"
+    voc = vocative_imie(first_name)
+    return prompt + f"""
+
+⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
+Ten numer telefonu jest zapisany w bazie klientów pod imieniem "{first_name}". To NIE jest
+zgadywanie — to zweryfikowane dane, więc zakaz zmyślania imienia/zgadywania płci wyżej TU NIE
+OBOWIĄZUJE. Stan rozmówcy jest od razu {stan} (nie NIEZNANA) — możesz zwracać się po imieniu
+od pierwszego zdania, np. "{forma} {voc}". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
+inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad."""

@@ -87,8 +87,8 @@ from pipecat.services.openai.realtime.events import (
     SessionUpdateEvent,
 )
 
-from helpers import get_tenant_by_phone, get_client_profile, db
-from realtime_prompt import build_realtime_instructions, build_greeting_message
+from helpers import get_tenant_by_phone, get_client_profile, db, get_crm_contact_name
+from realtime_prompt import build_realtime_instructions, build_greeting_message, append_known_caller_hint
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool,
     maybe_send_call_summary, save_call_transcript, is_call_allowed,
@@ -455,7 +455,7 @@ def build_realtime_llm(
 
 async def apply_crm_when_ready(
     llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task,
-    has_booking: bool = False, has_contact_owner: bool = True,
+    caller_phone: str = "", has_booking: bool = False, has_contact_owner: bool = True,
 ) -> dict | None:
     """Powitanie leci OD RAZU z generycznym promptem (bez czekania na CRM, ~2-3s HTTP
     do panelu) — ta funkcja czeka na wynik w tle i, jeśli okaże się że dzwoni znany
@@ -476,6 +476,9 @@ async def apply_crm_when_ready(
             tenant, client_profile, include_greeting=False, has_booking=has_booking,
             has_contact_owner=has_contact_owner,
         )
+        known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+        if known_name:
+            updated_prompt = append_known_caller_hint(updated_prompt, known_name)
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile
 
@@ -614,6 +617,9 @@ async def websocket_gemini_test(websocket: WebSocket):
     system_prompt = build_realtime_instructions(
         tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+    if known_name:
+        system_prompt = append_known_caller_hint(system_prompt, known_name)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -659,7 +665,7 @@ async def websocket_gemini_test(websocket: WebSocket):
         await say_now(llm, call_state, build_greeting_message(tenant, None))
         asyncio.create_task(monitor_call_health(task, llm, call_state))
         asyncio.create_task(apply_crm_when_ready(
-            llm, tenant, client_profile_task, has_booking=booking_available,
+            llm, tenant, client_profile_task, caller_phone=caller_phone, has_booking=booking_available,
             has_contact_owner=contact_owner_available,
         ))
 
@@ -828,6 +834,9 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
     system_prompt = build_realtime_instructions(
         tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+    if known_name:
+        system_prompt = append_known_caller_hint(system_prompt, known_name)
     # Per-tenant głos/tempo (jeszcze bez UI w panelu — pole "realtime_voice" dopiero powstanie,
     # "speaking_rate" już istnieje, reużywany z cascade). Brak wartości = fallback na
     # OPENAI_REALTIME_VOICE / domyślne tempo API, więc nic się nie psuje zanim panel dojrzeje.
@@ -870,7 +879,7 @@ async def websocket_gemini_test_vonage(websocket: WebSocket):
         await say_now(llm, call_state, build_greeting_message(tenant, None))
         asyncio.create_task(monitor_call_health(task, llm, call_state))
         asyncio.create_task(apply_crm_when_ready(
-            llm, tenant, client_profile_task, has_booking=booking_available,
+            llm, tenant, client_profile_task, caller_phone=caller_phone, has_booking=booking_available,
             has_contact_owner=contact_owner_available,
         ))
 

@@ -155,8 +155,8 @@ from google.genai.types import ThinkingConfig
 # Reużywamy istniejących modułów: helpers.py (odczyt danych firmy + CRM, bez zależności
 # od pipecat — bezpieczny import wprost). Budowanie promptu i tools — osobne pliki,
 # patrz docstring wyżej po co ten podział.
-from helpers import get_tenant_by_phone, get_tenant_by_id_light, db, saas_db
-from realtime_prompt import build_realtime_instructions
+from helpers import get_tenant_by_phone, get_tenant_by_id_light, db, saas_db, get_crm_contact_name
+from realtime_prompt import build_realtime_instructions, append_known_caller_hint
 from realtime_tools import (
     build_contact_owner_tool, build_end_conversation_tool,
     build_transfer_tool, send_missed_transfer_email,
@@ -1040,6 +1040,9 @@ async def websocket_gemini_live_test(websocket: WebSocket):
     system_prompt = build_realtime_instructions(
         tenant, None, has_booking=booking_available, has_contact_owner=contact_owner_available
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+    if known_name:
+        system_prompt = append_known_caller_hint(system_prompt, known_name)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice
@@ -1607,6 +1610,9 @@ async def websocket_gemini_live_test_vonage(websocket: WebSocket):
         tenant, None, has_transfer=transfer_available, has_booking=booking_available,
         has_contact_owner=contact_owner_available,
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+    if known_name:
+        system_prompt = append_known_caller_hint(system_prompt, known_name)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
     llm, user_aggregator, assistant_aggregator, llm_context = build_gemini_live_llm(
         system_prompt, tools=tools, voice=gemini_voice

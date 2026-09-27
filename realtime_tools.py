@@ -49,7 +49,7 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 
 # db/saas_db — bezpieczny import wprost, helpers.py nie ma zależności od pipecat
 # (patrz docstring bot_gemini_test.py po pełne wyjaśnienie tego wzorca).
-from helpers import db, saas_db
+from helpers import db, saas_db, maybe_save_contact_name
 
 PRICE_PER_MINUTE = 0.39  # zł/min — MUSI być zsynchronizowane z bot.py::PRICE_PER_MINUTE
 
@@ -217,6 +217,14 @@ def build_contact_owner_tool(
             logger.warning(f"📞 [REALTIME TEST] contact_owner: mętna wiadomość, odrzucam: {message[:60]!r}")
             await params.result_callback({"status": "error", "reason": "message_too_vague"})
             return
+
+        # Auto-zapis imienia do portalu /crm (zakładka Klienci) — TYLKO gdy tam jeszcze nic
+        # nie ma (patrz maybe_save_contact_name). customer_name tu to coś co klient SAM
+        # wprost podał (model musiał o to zapytać, żeby w ogóle wypełnić ten parametr) —
+        # nie zgadywanie z transkryptu, więc bezpieczne do auto-zapisu. Poboczny, nieblokujący
+        # zapis — błąd nie może wywrócić wysyłki wiadomości do właściciela.
+        if customer_name != "Nieznany":
+            asyncio.create_task(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
 
         # 2026-09-09 — jeśli ta sama firma MA TEŻ włączony raport z rozmowy (lead_email_enabled)
         # na TEN SAM adres — nie wysyłaj osobnego maila teraz. Zamiast tego odłóż treść do

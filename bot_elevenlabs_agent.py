@@ -85,8 +85,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameProcessor
 
-from helpers import get_tenant_by_phone, db, saas_db
-from realtime_prompt import build_realtime_instructions, build_greeting_message
+from helpers import get_tenant_by_phone, db, saas_db, get_crm_contact_name, maybe_save_contact_name
+from realtime_prompt import build_realtime_instructions, build_greeting_message, append_known_caller_hint
 from realtime_tools import (
     send_message_email,
     send_call_summary_email,
@@ -273,7 +273,7 @@ def _build_tts_override(tenant: dict) -> dict:
     return tts_override
 
 
-def _build_conversation_config_override(
+async def _build_conversation_config_override(
     tenant: dict, caller_phone: str, called_number: str, call_sid: str = "", channel: str = "twilio",
 ) -> tuple[dict, dict]:
     """Wspólne dla obu transportów (Twilio register_call i Vonage WebSocket, patrz
@@ -297,6 +297,9 @@ def _build_conversation_config_override(
         tenant, None, include_greeting=False,
         has_contact_owner=contact_owner_available, has_booking=booking_available,
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
+    if known_name:
+        prompt_text = append_known_caller_hint(prompt_text, known_name)
     first_message = build_greeting_message(tenant)
 
     tool_ids = []
@@ -347,7 +350,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
     if not ELEVENLABS_API_KEY or not agent_id:
         raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
 
-    conversation_config_override, dynamic_variables = _build_conversation_config_override(
+    conversation_config_override, dynamic_variables = await _build_conversation_config_override(
         tenant, caller_phone, called_number, call_sid, channel="twilio",
     )
 
@@ -432,6 +435,9 @@ async def elevenlabs_personalization(request: Request):
         tenant, None, include_greeting=False,
         has_contact_owner=contact_owner_available, has_booking=booking_available,
     )
+    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_id)
+    if known_name:
+        prompt_text = append_known_caller_hint(prompt_text, known_name)
     first_message = build_greeting_message(tenant)
 
     tool_ids = []
@@ -508,6 +514,12 @@ async def elevenlabs_tool_contact_owner(request: Request):
     tenant = await get_tenant_by_phone(called_number) if called_number else None
     if not tenant:
         return {"status": "error", "reason": "tenant_not_found"}
+
+    # Auto-zapis imienia do portalu /crm (zakładka Klienci) — 1:1 z handle_contact_owner w
+    # realtime_tools.py (Gemini Live/OpenAI Realtime): TYLKO gdy dla tego numeru jeszcze nie
+    # ma żadnego imienia, i tylko gdy klient sam wprost je podał (nie "Nieznany"/puste).
+    if customer_name and customer_name != "Nieznany":
+        asyncio.create_task(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
 
     if tenant.get("contact_owner_enabled", 1) != 1:
         # Twardy blok — narzędzie w ElevenLabs jest statycznie przypięte do agenta
@@ -973,7 +985,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
             await self.push_frame(frame, direction)
 
     async def _connect(self):
-        conversation_config_override, dynamic_variables = _build_conversation_config_override(
+        conversation_config_override, dynamic_variables = await _build_conversation_config_override(
             self._tenant, self._caller_phone, self._called_number, self._call_sid, channel="vonage",
         )
         url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self._agent_id}"
