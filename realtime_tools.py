@@ -1581,15 +1581,22 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
         return []
     try:
         import httpx
+        # nova-3 + language=pl — TEN SAM model co bot.py/cascade (DeepgramSTTService,
+        # live_options) używa dla polskiego na żywo od dawna, sprawdzony na produkcji.
+        # DEEPGRAM_BASE_URL (opcjonalny, "api.eu.deepgram.com") — ten sam env var co
+        # cascade, żeby oba tory trzymały się tego samego regionu gdy ktoś go ustawi.
+        base_url = os.getenv("DEEPGRAM_BASE_URL", "").strip() or "api.deepgram.com"
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.deepgram.com/v1/listen",
+                f"https://{base_url}/v1/listen",
                 params={
-                    "model": "nova-2",
+                    "model": "nova-3",
                     "language": "pl",
                     "multichannel": "true",
                     "utterances": "true",
                     "punctuate": "true",
+                    "smart_format": "true",
+                    "numerals": "true",
                 },
                 headers={"Authorization": f"Token {api_key}", "Content-Type": "audio/wav"},
                 content=audio_bytes,
