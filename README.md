@@ -2,39 +2,53 @@
 
 Głosowy asystent AI dla polskich firm usługowych (salony, siłownie, warsztaty, przychodnie). Odbiera połączenia telefoniczne, prowadzi naturalną rozmowę po polsku i obsługuje: umawianie wizyt, odpowiedzi na pytania FAQ, przekazywanie zgłoszeń serwisowych oraz przekierowania do właściciela.
 
-System działa w architekturze multi-tenant SaaS — jeden backend obsługuje wiele firm jednocześnie, każda z własną konfiguracją głosu, przepływu rozmowy i integracji.
+System działa w architekturze multi-tenant SaaS — jeden backend obsługuje wiele firm jednocześnie, każda z własną konfiguracją głosu, przepływu rozmowy i integracji. Ten plik to skrót — pełny, aktualny opis architektury jest w [`CLAUDE.md`](./CLAUDE.md), traktuj go jako źródło prawdy gdy coś tu wygląda nieaktualnie.
+
+> **2026-09-29:** stary silnik "cascade" (Deepgram STT + LLM + Pipecat Flows, plik
+> `bot.py` + towarzyszące `flows*.py`) został usunięty z repo — obsługiwał tylko firmy
+> sprzed migracji na Gemini Live/OpenAI Realtime/ElevenLabs, a jego usługa Railowa
+> (`web-production-f570f`) już wcześniej przestała istnieć. Cała logika, która była
+> warta zachowania (rezerwacje, integracja z Deepgram), została już wcześniej 1:1
+> przeniesiona do aktywnego kodu niżej. Historia w git, jeśli kiedyś potrzebna.
 
 ---
 
 ## Jak to działa
 
+**Trzy silniki głosowe, wybierane per-firma polem `realtime_engine`** — dziś aktywne
+dla realnych, płacących klientów: **Gemini Live** i **ElevenLabs** (OpenAI Realtime jako
+sprawdzony fallback, nie promowany aktywnie).
+
 ```
-Kliient dzwoni na numer Twilio
-        │
-        ▼
-POST /twilio/incoming          ← Twilio webhook, zwraca TwiML z adresem WebSocket
-        │
-        ▼
-WebSocket /ws/{call_sid}       ← Pipecat pipeline (real-time audio stream)
-   ├─ Deepgram STT             ← rozpoznawanie mowy (polski)
-   ├─ OpenAI / Groq LLM        ← rozumienie intencji, generowanie odpowiedzi
-   ├─ FlowManager              ← maszyna stanów (Pipecat Flows)
-   └─ TTS (ElevenLabs/Google/Azure/Cartesia)  ← synteza mowy
-        │
-        ▼
-POST /twilio/after-stream      ← zapis logu rozmowy, naliczanie kredytów
+                    Twilio/Vonage — połączenie przychodzące
+                                │
+                                ▼
+                bot_gemini_test.py (orkiestrator, mimo nazwy)
+                dispatch po tenant.realtime_engine
+                    ├─ "gemini"      → Gemini Live (audio-to-audio, w tym pliku)
+                    ├─ "openai"      → bot_openai_realtime.py (router)
+                    └─ "elevenlabs"  → bot_elevenlabs_agent.py (router — agent
+                                        skonfigurowany w dashboardzie ElevenLabs)
+                                │
+                                ▼
+                realtime_tools.py: podsumowanie GPT-4.1-mini, zapis do CRM
+                (call_logs/call_transcripts), naliczanie kredytów — wspólne
+                dla wszystkich 3 silników
 ```
+
+Jedna usługa Railway (`web-production-fb477`, start command `bot_gemini_test:app`
+ustawiony bezpośrednio w Railway dashboardzie).
 
 ---
 
 ## Funkcje
 
-- **Rezerwacje** — wybór usługi, pracownika, daty i godziny; walidacja slotów w czasie rzeczywistym; zapis do bazy danych
+- **Rezerwacje** — wybór usługi, pracownika, daty i godziny do Google Calendar; walidacja slotów w czasie rzeczywistym
 - **FAQ** — odpowiedzi na pytania o ceny, godziny, lokalizację, płatności
-- **Zgłoszenia serwisowe** — zbieranie opisu problemu, wysyłka e-mail do właściciela z priorytetem (pilne / normalne)
-- **Przekierowanie** — transfer rozmowy do właściciela lub zostawienie wiadomości
-- **Multi-tenant** — każda firma ma swój głos TTS, prompt systemowy, godziny pracy, listę usług i pracowników
-- **Polskie NLP** — parsowanie dat względnych ("jutro", "w przyszły piątek"), odmiana nazw przez przypadki, korekcja STT
+- **Zgłoszenia / kontakt z właścicielem** — zbieranie wiadomości w trakcie rozmowy (`contact_owner`), przekierowanie na żywo (Vonage)
+- **Podsumowanie + CRM** — po każdej rozmowie: priorytet, kto dzwonił, powód, wynik — trafia do panelu CRM i (opcjonalnie) mailem
+- **Multi-tenant** — każda firma ma swój głos, prompt systemowy, godziny pracy, listę usług i pracowników
+- **Polskie NLP** — parsowanie dat względnych ("jutro", "w przyszły piątek"), odmiana nazw przez przypadki, wykrywanie płci rozmówcy
 
 ---
 
@@ -42,14 +56,12 @@ POST /twilio/after-stream      ← zapis logu rozmowy, naliczanie kredytów
 
 | Warstwa | Technologia |
 |---------|-------------|
-| Framework konwersacyjny | [Pipecat](https://github.com/pipecat-ai/pipecat) 0.0.104 |
+| Silniki głosowe | Gemini Live (`gemini-3.1-flash-live-preview`) · ElevenLabs Conversational AI · OpenAI Realtime (`gpt-realtime-2.1-mini`, fallback) |
+| Framework konwersacyjny | [Pipecat](https://github.com/pipecat-ai/pipecat) |
 | API serwera | FastAPI + uvicorn |
-| Telefonia | Twilio (WebSocket audio, TwiML) |
-| STT | Deepgram (model nova-3, język PL) |
-| LLM | OpenAI GPT-4o-mini / Groq / Cerebras |
-| TTS | ElevenLabs (domyślny) · Google Chirp3-HD · Azure Neural · Cartesia |
+| Telefonia | Twilio i Vonage (WebSocket audio / NCCO) |
 | Baza danych | Turso (serverless SQLite) — dwie instancje: Admin + SaaS |
-| Hosting | Railway (backend) |
+| Hosting | Railway |
 
 ---
 
@@ -57,17 +69,25 @@ POST /twilio/after-stream      ← zapis logu rozmowy, naliczanie kredytów
 
 ```
 sekretarka-voice/
-├── bot.py                    # FastAPI server, WebSocket pipeline, Twilio webhooks
-├── flows.py                  # Główny przepływ rozmowy (greeting → booking/FAQ/contact)
-├── flows_booking_simple.py   # Sub-flow rezerwacji (wieloetapowy: usługa→termin→potwierdzenie)
-├── flows_contact.py          # Flow kontaktu z właścicielem i zgłoszeń serwisowych
-├── flows_helpers.py          # Parsowanie polskich dat/godzin, integracje z API
-├── helpers.py                # Klient Turso DB, lookup tenanta, szyfrowanie AES-GCM
-├── polish_mappings.py        # Słowniki językowe (nazwy dni, miesięcy, odmiana imion)
-├── constants.py              # Stałe: Urgency, TTSProvider, BookingField
+├── bot_gemini_test.py         # Orkiestrator — Gemini Live, dispatch, webhooki
+│                               Twilio+Vonage, montuje routery niżej
+├── bot_openai_realtime.py     # Router OpenAI Realtime, montowany w bot_gemini_test.py
+├── bot_elevenlabs_agent.py    # Most do ElevenLabs Conversational AI (agent w ich dashboardzie)
+├── realtime_prompt.py         # Wspólny system prompt dla wszystkich 3 silników
+├── realtime_tools.py          # Wspólne tools (contact_owner, transfer, itd.) + podsumowanie
+│                               rozmowy (GPT-4.1-mini) + zapis do CRM
+├── realtime_booking.py        # Rezerwacje (Google Calendar)
+│
+├── flows_helpers.py           # Parsowanie polskich dat/godzin, budowa kontekstu firmy
+├── polish_mappings.py         # Słowniki językowe (dni, miesiące, odmiana imion, płeć)
+├── helpers.py                 # Klient Turso DB, lookup tenanta (obie bazy), AES-GCM
+├── constants.py                # TTSProvider enum — jedyne co jeszcze stąd realnie importuje
+│                               services/tts_factory.py
 ├── services/
-│   └── tts_factory.py        # Fabryka serwisów TTS (wybór providera per tenant)
-└── schema.sql                # Schemat bazy danych
+│   └── tts_factory.py         # Fabryka serwisów TTS
+└── schema.sql                 # Historyczny snapshot schematu Admin DB — NIE aktualizowany
+                                na bieżąco, realne kolumny dodawane przez lazy ALTER TABLE
+                                w helpers.py/realtime_tools.py mogą się różnić
 ```
 
 ---
@@ -90,32 +110,38 @@ pip install -r requirements.txt
 cp .env.example .env           # uzupełnij kluczami API
 
 # 5. Uruchom serwer
-uvicorn bot:app --host 0.0.0.0 --port 8000
+uvicorn bot_gemini_test:app --host 0.0.0.0 --port 8000
 ```
 
-Do lokalnego testowania połączeń Twilio potrzebujesz tunelu (np. `ngrok http 8000`) i ustawienia webhooka w konsoli Twilio.
+Do lokalnego testowania połączeń Twilio/Vonage potrzebujesz tunelu (np. `ngrok http 8000`) i ustawienia webhooka w konsoli Twilio/Vonage.
 
 ---
 
 ## Zmienne środowiskowe
 
 ```
-DEEPGRAM_API_KEY
-OPENAI_API_KEY
-ELEVENLABS_API_KEY
+DEEPGRAM_API_KEY                        # transkrypcja nagrań "najpierw dzwoni do właściciela"
+OPENAI_API_KEY                          # GPT-4.1-mini — podsumowania rozmów
+ELEVENLABS_API_KEY                      # agent ElevenLabs (scope ElevenAgents: Write)
 TWILIO_ACCOUNT_SID
 TWILIO_AUTH_TOKEN
 TURSO_DATABASE_URL
 TURSO_AUTH_TOKEN
 SAAS_TURSO_DATABASE_URL
 SAAS_TURSO_AUTH_TOKEN
-ENCRYPTION_KEY                         # AES-GCM (tokeny Google OAuth)
-GOOGLE_APPLICATION_CREDENTIALS_JSON   # konto usługowe Google TTS/Calendar (JSON)
-PANEL_API_URL                          # URL panelu SaaS (domyślnie: http://localhost:3000)
-RESEND_API_KEY                         # e-mail notyfikacje
+ENCRYPTION_KEY                          # AES-GCM (tokeny Google OAuth)
+GOOGLE_API_KEY                          # Gemini Live (Developer API, nie Vertex)
+GOOGLE_APPLICATION_CREDENTIALS_JSON     # Google Calendar
+VONAGE_APPLICATION_ID / VONAGE_PRIVATE_KEY   # JWT RS256 — transfer_to_owner, Siperb
+ELEVENLABS_AGENT_ID                     # fallback gdy tenant nie ma własnego
+ELEVENLABS_SHARED_SECRET                # opcjonalna weryfikacja webhooków ElevenLabs
+VAPID_PRIVATE_KEY                       # web push do /crm po rozmowach z realną treścią
+PANEL_API_URL                           # URL panelu SaaS (domyślnie: http://localhost:3000)
+RESEND_API_KEY                          # e-mail notyfikacje
+TEST_TENANT_ID                          # wymuszony tenant na ścieżce Vonage testowej
 ```
 
-Opcjonalne: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`.
+Opcjonalne: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY` — pełna lista z komentarzem do każdej w [`CLAUDE.md`](./CLAUDE.md#required-environment-variables).
 
 ---
 

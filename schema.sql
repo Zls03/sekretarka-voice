@@ -1,5 +1,10 @@
 -- VOICE AI - MULTI-TENANT DATABASE SCHEMA
 -- =========================================
+-- ⚠️ HISTORYCZNY SNAPSHOT (Admin DB, tabela `tenants` i pokrewne) — NIE jest aktualizowany
+-- na bieżąco i NIE odzwierciedla kolumn dodawanych później przez lazy `ALTER TABLE` w
+-- helpers.py/realtime_tools.py (np. answered_by, human_first_*), ani w ogóle SaaS DB
+-- (tabela `firms` z panelu — ten plik jej nie opisuje). Traktuj jako punkt startowy przy
+-- zakładaniu nowej bazy Admin DB od zera, NIE jako źródło prawdy o aktualnym schemacie.
 
 -- Firmy (tenants)
 CREATE TABLE IF NOT EXISTS tenants (

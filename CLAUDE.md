@@ -9,34 +9,38 @@ Voice AI assistant for Polish service businesses (salons, gyms, clinics, warszta
 gabinety). Handles inbound phone calls via Twilio/Vonage. Multi-tenant SaaS with two
 database sources (patrz "Multi-Tenant Data" niżej).
 
-**Cztery silniki głosowe, wybierane per-tenant polem `realtime_engine`** (panel:
-zakładka "Głos agenta"), **DWIE OSOBNE usługi Railway z tego samego repo**:
+**Trzy silniki głosowe, wybierane per-tenant polem `realtime_engine`** (panel:
+zakładka "Głos agenta"), **JEDNA usługa Railway** (`bot_gemini_test.py` jako
+orkiestrator dla wszystkich trzech):
 
 | `realtime_engine` | Silnik | Plik orkiestrujący | Railway host |
 |---|---|---|---|
-| (brak/stare tenanty) | Cascade (Deepgram STT + LLM + TTS + Pipecat Flows) | `bot.py` (+ `flows.py`) | `web-production-f570f.up.railway.app` |
 | `gemini` | Gemini Live (audio-to-audio, `gemini-3.1-flash-live-preview`) | `bot_gemini_test.py` | `web-production-fb477.up.railway.app` |
 | `openai` | OpenAI Realtime (`gpt-realtime-2.1-mini`) | `bot_openai_realtime.py` (router, montowany w `bot_gemini_test.py`) | tak samo jak `gemini` |
 | `elevenlabs` | ElevenLabs Conversational AI (agent skonfigurowany w ich dashboardzie, my tylko wstrzykujemy prompt per rozmowa) | `bot_elevenlabs_agent.py` (router, montowany w `bot_gemini_test.py`) | tak samo jak `gemini` |
 
-⚠️ **`bot_gemini_test.py` mimo nazwy jest DZIŚ PRODUKCYJNYM orkiestratorem** dla
-`gemini`/`openai`/`elevenlabs` — ma własny `app = FastAPI()`, montuje
+⚠️ **`bot_gemini_test.py` mimo nazwy jest PRODUKCYJNYM orkiestratorem** dla
+wszystkich trzech silników — ma własny `app = FastAPI()`, montuje
 `openai_realtime_router` i `elevenlabs_agent_router` przez `app.include_router()`.
 Twilio i Vonage webhooki (`/twilio/incoming-gemini-live-test`,
 `/vonage/answer-gemini-live` i pochodne) w TYM pliku dispatchują dalej na podstawie
-`tenant.get("realtime_engine")` — to jest JEDEN wspólny entrypoint dla 3 z 4 silników,
-nie osobny serwis per silnik. Repo ma `Procfile` z `uvicorn bot:app` (to uruchamia
-TYLKO cascade/`web-production-f570f`) — druga usługa (`fb477`, `bot_gemini_test:app`)
-ma start command ustawiony bezpośrednio w Railow dashboardzie, nie w tym Procfile.
-Cascade (`bot.py`) i nowe silniki (`bot_gemini_test.py`) to więc DWA NIEZALEŻNE
-procesy/hosty z jednego repo, nie jeden serwis.
+`tenant.get("realtime_engine")` — to jest JEDEN wspólny entrypoint dla wszystkich 3
+silników, nie osobny serwis per silnik.
 
 **Dla klientów płacących dziś (app.bizvoice.pl) liczą się realnie tylko dwie opcje:
 Gemini Live i ElevenLabs** — to one są aktywnie rozwijane i testowane na żywo z
 prawdziwymi firmami (ERCO Klimatyzacja = gemini, Gabinet Medycyny Pracy + Bizvoice
 demo = elevenlabs). OpenAI Realtime zostaje jako sprawdzony fallback (Faza 1-2
-ukończone, przetestowane), ale nie jest aktywnie promowany. Cascade obsługuje tylko
-tenanty założone przed migracją — nie zakładaj nowych firm na cascade.
+ukończone, przetestowane), ale nie jest aktywnie promowany.
+
+**2026-09-29 — stary silnik "cascade" USUNIĘTY** (`bot.py`, `flows.py`,
+`flows_contact.py`, `flows_booking_simple.py`): obsługiwał tylko
+tenanty sprzed migracji na Gemini Live, wszyscy dzisiejsi klienci są już na
+`gemini`/`elevenlabs`/`openai`, a jego usługa Railway (`web-production-f570f`) już
+wcześniej przestała istnieć (zweryfikowane — zwraca "Application not found" na
+poziomie samego Railwaya, nie aplikacji). Cała logika warta zachowania (rezerwacje,
+integracja z Deepgram) była już wcześniej 1:1 przeniesiona do `realtime_booking.py` /
+`realtime_tools.py`. Historia w git, jeśli kiedyś potrzebna do wglądu.
 
 ## Working with me
 - Communicate in Polish
@@ -51,10 +55,10 @@ tenanty założone przed migracją — nie zakładaj nowych firm na cascade.
 pip install -r requirements.txt
 
 # Run locally
-uvicorn bot:app --host 0.0.0.0 --port 8000
+uvicorn bot_gemini_test:app --host 0.0.0.0 --port 8000
 
-# Production (Heroku)
-# Procfile: web: uvicorn bot:app --host 0.0.0.0 --port $PORT
+# Production (Railway)
+# Procfile: web: uvicorn bot_gemini_test:app --host 0.0.0.0 --port $PORT
 ```
 
 Runtime: Python 3.12. No test suite present.
@@ -62,17 +66,6 @@ Runtime: Python 3.12. No test suite present.
 ## Architecture
 
 ### Call Flow
-
-**Cascade (stare tenanty, `bot.py`):**
-```
-Twilio call → POST /twilio/incoming (returns TwiML)
-           → WebSocket /ws (Pipecat pipeline)
-                ├─ Deepgram STT
-                ├─ LLM (OpenAI/Groq/Cerebras)
-                ├─ FlowManager (state machine)
-                └─ TTS (ElevenLabs/Cartesia/Azure/Google/OpenAI)
-           → POST /twilio/after-stream (cleanup)
-```
 
 **Gemini Live / OpenAI Realtime (`bot_gemini_test.py`):**
 ```
@@ -92,28 +85,18 @@ conversation_config_override) → /elevenlabs/tools/contact_owner (webhook w tra
 
 ### Key Files
 
-**Cascade (stare tenanty, `web-production-f570f`):**
-
-| File | Purpose |
-|------|---------|
-| `bot.py` | FastAPI server, Twilio webhook handlers, WebSocket pipeline setup, tenant initialization |
-| `flows.py` | Main conversation flow definitions (greeting, check availability, booking initiation, FAQ) |
-| `flows_booking_simple.py` | Full booking sub-flow: service/date/time selection, slot validation, DB write |
-| `flows_contact.py` | Call transfer and owner contact flow |
-| `flows_helpers.py` | Polish date/time parsing, API calls, availability checking logic |
-| `polish_mappings.py` | Polish weekday/month names, hour aliases, name-to-gender detection |
-
-**Gemini Live / OpenAI Realtime / ElevenLabs (aktywne silniki, `web-production-fb477`):**
-
 | File | Purpose |
 |------|---------|
 | `bot_gemini_test.py` | Orkiestrator — `app`, Twilio+Vonage webhooki, dispatch po `realtime_engine`, CAŁA sekcja Gemini Live (pipeline, monitoring ciszy, tools) |
 | `bot_openai_realtime.py` | Orkiestrator OpenAI Realtime — webhooki/websockety/monitoring tej ścieżki, router montowany w `bot_gemini_test.py` |
 | `bot_elevenlabs_agent.py` | Most między ElevenLabs Conversational AI a naszymi danymi — `/elevenlabs/personalization` (prompt+first_message per rozmowa), `/elevenlabs/tools/contact_owner` (webhook tool), `/elevenlabs/post-call` (billing+raport). Rozmowa NIE leci przez nasz Pipecat pipeline — agenta konfiguruje się ręcznie w dashboardzie ElevenLabs, my tylko wstrzykujemy treść per-call |
-| `realtime_prompt.py` | `build_realtime_instructions()` — WSPÓLNY system prompt dla wszystkich 3 nowych silników (tożsamość/styl/biznes/FAQ/cennik/CRM + bloki `has_transfer`/`has_booking`/`has_contact_owner` sterujące co model może obiecać) |
+| `realtime_prompt.py` | `build_realtime_instructions()` — WSPÓLNY system prompt dla wszystkich 3 silników (tożsamość/styl/biznes/FAQ/cennik/CRM + bloki `has_transfer`/`has_booking`/`has_contact_owner` sterujące co model może obiecać) |
 | `realtime_tools.py` | WSPÓLNE function-calling tools: `contact_owner`, `end_conversation`, `transfer_to_owner` (Vonage-only), oraz `summarize_conversation_lines()`/`generate_conversation_summary()` — inteligentne podsumowanie GPT-4.1-mini po każdej rozmowie (patrz "Lead capture" niżej) |
-| `realtime_booking.py` | `book_appointment`/`manage_booking` tools — rezerwacja do Google Calendar dla nowych silników |
+| `realtime_booking.py` | `book_appointment`/`manage_booking` tools — rezerwacja do Google Calendar |
+| `flows_helpers.py` | Parsowanie polskich dat/godzin, budowa kontekstu firmy (`build_business_context`) — używane przez `realtime_prompt.py`/`realtime_booking.py`, mimo nazwy NIE jest częścią usuniętego cascade |
+| `polish_mappings.py` | Polish weekday/month names, hour aliases, name-to-gender detection — jw., używane przez `realtime_prompt.py`/`realtime_booking.py` |
 | `helpers.py` | Turso DB client, tenant lookup, AES-GCM encryption for OAuth tokens (współdzielony ze wszystkimi silnikami) |
+| `constants.py` | `TTSProvider` enum — używane przez `services/tts_factory.py`, jedyny realny powód dlaczego ten plik nie mógł zniknąć razem z cascade |
 
 ### Lead capture — architektura (2026-09-03+)
 
@@ -185,8 +168,7 @@ funkcja (własny try/except, krótki timeout, nigdy nie może wywrócić
 zakończenia rozmowy), gated osobnym polem tenanta (np. `crm_enabled` +
 `crm_provider`) analogicznie do `lead_email_enabled`.
 
-Cascade (`bot.py`, stare tenanty) NIE jest częścią tego zakresu — nie
-zakładamy tam nowych firm, niski priorytet.
+(Cascade nie jest już częścią żadnego zakresu — usunięty 2026-09-29, patrz "Project Overview".)
 
 **Przepływ danych:** backend (Railway) → POST webhook → n8n (workflow: znajdź
 lub utwórz kontakt po numerze telefonu → dodaj notatkę/aktywność z
@@ -210,13 +192,14 @@ Two Turso (serverless SQLite) databases:
 
 `get_tenant_by_phone()` in `helpers.py` checks Admin DB first, then SaaS DB.
 
-### Conversation Flows (Pipecat Flows)
-
-State machine managing multi-turn dialogue. Main states: greeting → {check_availability | start_booking | contact_owner | faq} → end. `flows_booking_simple.py` handles the multi-step booking sub-flow (service → date → time → name → phone → confirm → save).
-
 ### TTS Provider Selection
 
-Per-tenant `tts_provider` field selects provider. Default is ElevenLabs. Each provider has its own initialization in `bot.py`.
+`services/tts_factory.py` (`create_tts_service`) is still imported by `bot_gemini_test.py`/
+`bot_openai_realtime.py`/`realtime_booking.py`/`realtime_tools.py` — not investigated in
+detail what exactly it's used for post-cascade-removal (Gemini Live/OpenAI Realtime are
+audio-to-audio, no separate TTS step for the live conversation itself), likely a narrower
+use like a static prompt/announcement outside the main pipeline. Check before assuming
+it's dead weight.
 
 ### Polish Language Handling
 
@@ -413,11 +396,18 @@ wybranego przy rejestracji) — przy PIERWSZYM prawdziwym kliencie sprawdź w je
 Siperb (Connections → jego połączenie → to pole) i popraw `build_human_first_ncco` jeśli
 inne (np. przez dodanie kolejnego pola tenanta zamiast stałej).
 
-**Co NIE jest jeszcze zrobione:** gdy właściciel faktycznie odbierze przez Siperb,
-połączenie nigdy nie dociera do bota — świadomie NIE ma dziś żadnego nagrania/transkryptu/
-zapisu w CRM dla takich rozmów (tylko dla tych, które trafiły do sekretarki AI). Dodanie
-nagrywania+transkrypcji+podsumowania dla rozmów odebranych osobiście przez właściciela to
-odrębny, późniejszy kawałek pracy (Vonage `record` + Deepgram + `summarize_conversation_lines`
-z realtime_tools.py), nie część tego etapu.
+**Nagrywanie + CRM dla rozmów odebranych osobiście (2026-09-28, DOKOŃCZONE):** gdy
+właściciel odbierze przez Siperb, NCCO dokłada `record` (Vonage, `split=conversation`)
+równolegle do `connect`/SIP. Po zakończeniu połączenia webhook
+`/vonage/human-first-recording` woła `process_human_first_recording()`
+(`realtime_tools.py`) — pobiera nagranie (JWT auth), transkrybuje przez Deepgram
+prerecorded API (`model=nova-3`, `multichannel=true` — kanał 0 → "Klient", kanał 1 →
+"Właściciel", **mapowanie kanałów niepotwierdzone na żywym nagraniu**), podsumowuje tą
+samą funkcją `summarize_conversation_lines()` co pozostałe silniki, i zapisuje do
+`call_logs`/`call_transcripts` z `answered_by='owner'` — w panelu CRM taka rozmowa
+dostaje znaczek "Ty" w tym samym widoku Zgłoszeń, nie osobną zakładkę. Niepotwierdzone
+jeszcze na realnym połączeniu (brak testu end-to-end przez przełącznik
+`human_first_enabled` z prawdziwym `siperb_sip_username` — dotychczasowy sukces był przez
+tymczasowy endpoint testowy, nie przez tę produkcyjną ścieżkę).
 
 Optional: `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CEREBRAS_API_KEY`, Azure TTS credentials.
