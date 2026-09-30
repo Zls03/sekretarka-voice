@@ -16,8 +16,7 @@ from pipecat.services.openai.realtime.events import (
 )
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
-from app.crm_contacts import get_crm_contact_name
-from app.prompt.instructions import append_known_caller_hint, build_realtime_instructions
+from app.engines.common import CallFeatures, build_call_prompt
 
 OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
 
@@ -85,30 +84,23 @@ def build_realtime_llm(
 
 
 async def apply_crm_when_ready(
-    llm: OpenAIRealtimeLLMService, tenant: dict, client_profile_task: asyncio.Task,
-    caller_phone: str = "", has_booking: bool = False, has_contact_owner: bool = True,
+    llm: OpenAIRealtimeLLMService,
+    tenant: dict,
+    client_profile_task: asyncio.Task,
+    caller_phone: str,
+    features: CallFeatures,
 ) -> dict | None:
-    """Powitanie leci OD RAZU z generycznym promptem (bez czekania na CRM, ~2-3s HTTP
-    do panelu) — ta funkcja czeka na wynik w tle i, jeśli okaże się że dzwoni znany
-    klient, dosyła zaktualizowany prompt (session.update) w trakcie rozmowy, żeby
-    dane CRM (historia wizyt) były dostępne gdy klient o nie zapyta. include_greeting=False
-    (patrz realtime_prompt.py::build_realtime_instructions) — bez tego model mógłby
-    zrozumieć aktualizację jako polecenie przywitania się jeszcze raz.
+    """Dosyła prompt z profilem klienta (historia wizyt), gdy odpowiedź panelu dotrze.
 
-    has_booking: MUSI być przekazane z tego samego booking_available co przy budowie
-    tools/system_prompt na starcie połączenia — bez tego ta aktualizacja w trakcie
-    rozmowy nadpisałaby prompt z powrotem na "rezerwacje jeszcze w budowie", mimo że
-    book_appointment cały czas jest zarejestrowane (dokładnie ten sam błąd co wcześniej
-    znaleziony przy transfer_to_owner/has_transfer, patrz historia tego pliku)."""
+    Powitanie leci od razu z ogólnym promptem — nie czekamy 2-3 s na panel. Aktualizacja
+    idzie bez bloku powitania (inaczej model przywitałby się drugi raz) i z tymi samymi
+    `features` co na starcie, żeby prompt dalej pasował do zarejestrowanych narzędzi.
+    """
     client_profile = await client_profile_task
     if client_profile:
         logger.info(f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
-        updated_prompt = build_realtime_instructions(
-            tenant, client_profile, include_greeting=False, has_booking=has_booking,
-            has_contact_owner=has_contact_owner,
+        updated_prompt = await build_call_prompt(
+            tenant, caller_phone, features, client_profile=client_profile, include_greeting=False,
         )
-        known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
-        if known_name:
-            updated_prompt = append_known_caller_hint(updated_prompt, known_name, has_contact_owner=has_contact_owner)
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile

@@ -7,8 +7,6 @@ import json
 import websockets
 from fastapi import APIRouter, WebSocket
 from loguru import logger
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     EndFrame,
     InputAudioRawFrame,
@@ -22,15 +20,12 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.audio.vad_processor import VADProcessor
+from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.serializers.vonage import VonageFrameSerializer
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
+from app.engines.common import accept_vonage_stream, call_pipeline_params, create_local_vad, create_transport
 from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, _resolve_agent_id
-from app.engines.elevenlabs.conversation import _build_conversation_config_override
-from app.tenants import get_tenant_by_phone
+from app.engines.elevenlabs.conversation import build_conversation_config_override
 
 router = APIRouter()
 
@@ -150,7 +145,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
             await self.push_frame(frame, direction)
 
     async def _connect(self):
-        conversation_config_override, dynamic_variables = await _build_conversation_config_override(
+        conversation_config_override, dynamic_variables = await build_conversation_config_override(
             self._tenant, self._caller_phone, self._called_number, self._call_sid, channel="vonage",
         )
         url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self._agent_id}"
@@ -298,76 +293,43 @@ class ElevenLabsRealtimeService(FrameProcessor):
 
 
 async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_phone: str, called_number: str, call_sid: str):
-    """Odpowiednik build_register_call_twiml dla Vonage — patrz komentarz nad sekcją
-    "MOST VONAGE" wyżej po pełne wyjaśnienie dlaczego to osobna ścieżka, nie register_call.
+    """Rozmowa ElevenLabs na Vonage przez nasz most audio.
 
-    Billing/minuty: NIE tutaj — Vonage nalicza przez /vonage/events (bot_gemini_test.py),
-    dokładnie tak samo jak dla Gemini Live/OpenAI Realtime, niezależnie od tego który
-    silnik obsłużył audio (ten webhook czyta tylko numer+czas trwania z Vonage, nie wie
-    nic o silniku). Transkrypt + mail z podsumowaniem: załatwia już istniejący
-    /elevenlabs/post-call (patrz wyżej), wołany przez ElevenLabs niezależnie od transportu."""
+    Rozliczenie minut robi /vonage/events, a transkrypt i raport — webhook
+    /elevenlabs/post-call (oba niezależne od tego, który silnik obsłużył audio).
+    """
     agent_id = _resolve_agent_id(tenant)
     if not ELEVENLABS_API_KEY or not agent_id:
         logger.error(f"❌ [ELEVENLABS/VONAGE] ELEVENLABS_API_KEY lub agent_id nieskonfigurowane dla {tenant.get('name')} — zamykam")
         await websocket.close()
         return
 
-    transport = FastAPIWebsocketTransport(
-        websocket=websocket,
-        params=FastAPIWebsocketParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            add_wav_header=False,
-            serializer=VonageFrameSerializer(
-                params=VonageFrameSerializer.InputParams(vonage_sample_rate=16000),
-            ),
-        ),
-    )
-
-    # Ten sam lokalny VAD co Gemini Live/OpenAI Realtime na Vonage — daje
-    # allow_interruptions realne, natychmiastowe czyszczenie bufora audio Vonage na
-    # wykryte lokalnie mówienie klienta, zamiast czekać na "interruption" z ElevenLabs
-    # (które i tak przychodzi z opóźnieniem sieciowym).
-    vad_processor = VADProcessor(
-        vad_analyzer=SileroVADAnalyzer(
-            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4)
-        )
-    )
-
-    task_box = {"task": None}  # wypełniany niżej, po utworzeniu PipelineTask — patrz komentarz w __init__
+    transport = create_transport(websocket, "vonage")
+    task_box: dict = {"task": None}  # uzupełniany po utworzeniu PipelineTask — patrz ElevenLabsRealtimeService
     elevenlabs_service = ElevenLabsRealtimeService(
         tenant=tenant, caller_phone=caller_phone, called_number=called_number,
         call_sid=call_sid or "", agent_id=agent_id, api_key=ELEVENLABS_API_KEY,
         task_box=task_box,
     )
-
     pipeline = Pipeline([
         transport.input(),
-        vad_processor,
+        # Lokalny VAD przerywa bota natychmiast, gdy klient zaczyna mówić — zdarzenie
+        # "interruption" z ElevenLabs przychodzi ze sporym opóźnieniem sieciowym.
+        create_local_vad(),
         elevenlabs_service,
         transport.output(),
     ])
-
-    task = PipelineTask(
-        pipeline,
-        params=PipelineParams(
-            allow_interruptions=True,
-            enable_metrics=True,
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=16000,
-        ),
-    )
+    task = PipelineTask(pipeline, params=call_pipeline_params("vonage"))
     task_box["task"] = task
 
     @transport.event_handler("on_client_disconnected")
-    async def on_disconnect(transport, client):
+    async def on_client_disconnected(transport, client):
         logger.info("📴 [ELEVENLABS/VONAGE] Klient rozłączony")
         await task.queue_frame(EndFrame())
 
-    runner = PipelineRunner()
     logger.info(f"🚀 [ELEVENLABS/VONAGE] Start pipeline dla {tenant.get('name')}")
     try:
-        await runner.run(task)
+        await PipelineRunner().run(task)
     except Exception as e:
         logger.error(f"❌ [ELEVENLABS/VONAGE] Pipeline error: {e}")
     finally:
@@ -375,28 +337,10 @@ async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_p
 
 
 @router.websocket("/ws-elevenlabs-vonage")
-async def websocket_elevenlabs_vonage(websocket: WebSocket):
-    """Wejście dla realtime_engine == 'elevenlabs' na Vonage — patrz sekcja "MOST VONAGE"
-    w bot_elevenlabs_agent.py po pełne wyjaśnienie. Sama funkcja tylko: parsuje query
-    params (ten sam wzorzec co /ws-gemini-live-test-vonage wyżej), znajduje tenanta,
-    i oddaje sterowanie run_elevenlabs_vonage_bot() — cała logika pipeline'u/WebSocketu
-    ElevenLabs mieszka w bot_elevenlabs_agent.py, żeby nie duplikować jej w dwóch plikach."""
-    tenant_phone = websocket.query_params.get("phone")
-    caller_phone = websocket.query_params.get("callerPhone", "nieznany")
-    call_sid = websocket.query_params.get("callSid")
-    if not tenant_phone:
-        logger.error("❌ [ELEVENLABS/VONAGE] Brak phone w query params — zamykam")
-        await websocket.close()
+async def elevenlabs_vonage_stream(websocket: WebSocket):
+    """Wejście mostu dla firm z realtime_engine == "elevenlabs" na Vonage (fallback SIP direct)."""
+    start = await accept_vonage_stream(websocket, "ELEVENLABS/VONAGE")
+    if start is None:
         return
-
-    await websocket.accept()
-    logger.info(f"🔌 [ELEVENLABS/VONAGE] WebSocket connected, phone={tenant_phone}")
-
-    tenant = await get_tenant_by_phone(tenant_phone)
-    if not tenant:
-        logger.error("❌ [ELEVENLABS/VONAGE] Nie znaleziono tenanta — zamykam")
-        await websocket.close()
-        return
-
-    logger.info(f"✅ [ELEVENLABS/VONAGE] Tenant: {tenant.get('name')}")
-    await run_elevenlabs_vonage_bot(websocket, tenant, caller_phone, tenant_phone, call_sid or "")
+    logger.info(f"✅ [ELEVENLABS/VONAGE] Tenant: {start.tenant.get('name')}")
+    await run_elevenlabs_vonage_bot(websocket, start.tenant, start.caller_phone, start.tenant_phone, start.call_sid or "")

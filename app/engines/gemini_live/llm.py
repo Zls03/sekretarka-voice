@@ -10,6 +10,13 @@ from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transcriptions.language import Language
 
 GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
+# Próba użycia gemini-2.5-flash-native-audio-preview-12-2025 (2026-09-03) odrzucona natychmiast
+# przez samo Gemini: "1007 None. Unsupported language code 'pl' for model
+# models/gemini-2.5-flash-native-audio-preview-12-2025" — ten wariant w ogóle nie obsługuje
+# polskiego, więc nie nadaje się jako zamiennik niezależnie od TTFB. Zostajemy przy 3.1 preview
+# (jedyny Live API model ze wsparciem 'pl' jaki mamy) i traktujemy jego epizody podwyższonego
+# TTFB (3-11s, potwierdzone A/B testem) jako coś po stronie Google — patrz OpenAI Realtime
+# jako sprawdzony fallback (realtime_engine='openai' w panelu, zakładka "Realtime GPT").
 
 
 def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: str | None = None):

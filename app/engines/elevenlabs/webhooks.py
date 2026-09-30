@@ -11,20 +11,16 @@ from app.billing import is_call_allowed
 from app.booking.book_appointment import _handle_book_appointment
 from app.booking.manage_booking import _handle_manage_booking
 from app.call_logs import persist_call_summary
-from app.crm_contacts import get_crm_contact_name, maybe_save_contact_name
+from app.crm_contacts import maybe_save_contact_name
 from app.db import db, saas_db
 from app.engines.elevenlabs.config import (
-    BOOK_APPOINTMENT_TOOL_ID,
-    CONTACT_OWNER_TOOL_ID,
     ELEVENLABS_SHARED_SECRET,
-    MANAGE_BOOKING_TOOL_ID,
 )
-from app.engines.elevenlabs.conversation import _build_tts_override
+from app.engines.elevenlabs.conversation import build_agent_override
 from app.notifications.email import send_call_summary_email, send_message_email
 from app.notifications.push import _send_push_notifications
 from app.post_call.crm_sync import _is_crm_test_tenant, maybe_send_to_crm
 from app.post_call.summary import summarize_conversation_lines
-from app.prompt.instructions import append_known_caller_hint, build_greeting_message, build_realtime_instructions
 from app.tenants import get_tenant_by_phone
 from app.tools.guards import _looks_like_vague_meta_message, _looks_too_short
 
@@ -70,12 +66,7 @@ async def elevenlabs_personalization(request: Request):
     body = await request.json()
     called_number = body.get("called_number") or body.get("to_number") or body.get("to") or ""
     caller_id = body.get("caller_id") or body.get("from_number") or body.get("from") or ""
-    # 2026-09-10 — call_sid z body tego webhooka (obecny na żywo dla połączeń SIP trunk,
-    # np. "SCL_yoX72P2WLD25") musi wrócić w dynamic_variables, inaczej /elevenlabs/post-call
-    # (elevenlabs_post_call niżej, sprawdza dyn_vars["call_sid"]) uznaje payload za
-    # niekompletny i po cichu pomija CAŁY raport z rozmowy — złapane na pierwszym udanym
-    # SIP direct połączeniu (called_number już przyszło dzięki poprzedniej poprawce, ale
-    # call_sid wciąż brakowało, bo tu nigdy nie było go w zwracanych dynamic_variables).
+    # call_sid musi wrócić w dynamic_variables — post-call bez niego pomija cały raport.
     call_sid = body.get("call_sid") or body.get("twilio_call_sid") or ""
     logger.info(f"📞 [ELEVENLABS AGENT] Personalization: {caller_id} → {called_number} | raw={body}")
 
@@ -95,70 +86,17 @@ async def elevenlabs_personalization(request: Request):
             },
         }
 
-    contact_owner_available = tenant.get("contact_owner_enabled", 1) == 1
-    # Ta sama bramka co w _build_conversation_config_override/bot_gemini_test.py — musi
-    # dawać identyczny wynik dla tego samego tenanta niezależnie od tego, którym z trzech
-    # torów (personalization / register_call / most Vonage) leciało połączenie.
-    booking_available = tenant.get("booking_enabled") == 1 and any(
-        s.get("google_connected") and len(s.get("services", [])) > 0
-        for s in tenant.get("staff", [])
-    )
-    prompt_text = build_realtime_instructions(
-        tenant, None, include_greeting=False,
-        has_contact_owner=contact_owner_available, has_booking=booking_available,
-    )
-    known_name = await get_crm_contact_name(tenant.get("id", ""), caller_id)
-    if known_name:
-        prompt_text = append_known_caller_hint(prompt_text, known_name, has_contact_owner=contact_owner_available)
-    first_message = build_greeting_message(tenant)
-
-    tool_ids = []
-    if contact_owner_available:
-        tool_ids.append(CONTACT_OWNER_TOOL_ID)
-    if booking_available:
-        tool_ids += [BOOK_APPOINTMENT_TOOL_ID, MANAGE_BOOKING_TOOL_ID]
-
-    conversation_config_override = {
-        "agent": {
-            "prompt": {
-                "prompt": prompt_text,
-                "tool_ids": tool_ids,
-            },
-            "first_message": first_message,
-            "language": "pl",
-        }
-    }
-    # Głos + stabilność/prędkość/podobieństwo per-tenant — patrz _build_tts_override.
-    # Brakowało tu tego nadpisania mimo że _build_conversation_config_override (most
-    # WebSocket/register_call) robi to od dawna — niewidoczne dopóki ten webhook
-    # faktycznie nie działał (przed dzisiejszymi poprawkami), ale teraz że SIP direct
-    # jest włączony dla wszystkich firm, każda z własnym głosem/ustawieniami dostawałaby
-    # cicho domyślne wartości agenta zamiast swoich.
-    conversation_config_override["tts"] = _build_tts_override(tenant)
-
     return {
         "type": "conversation_initiation_client_data",
-        "conversation_config_override": conversation_config_override,
+        "conversation_config_override": await build_agent_override(tenant, caller_id),
+        # Wszystkie trzy zmienne są wymagane przez narzędzia agenta — bez nich ElevenLabs
+        # odrzuca rozmowę zaraz po starcie (agent_configuration_error). Ten webhook woła
+        # wyłącznie SIP direct z Vonage (Twilio dostaje dane inline), stąd channel="vonage".
         "dynamic_variables": {
             "business_name": tenant.get("name") or "",
             "caller_phone": caller_id,
-            # 2026-09-10 — called_number brakowało tutaj całkowicie, mimo że narzędzia
-            # (contact_owner/book_appointment/manage_booking) mają je zadeklarowane jako
-            # WYMAGANĄ dynamic_variable (patrz MIGRACJA_ELEVENLABS_NOTATKI.txt) — bez tego
-            # pola ElevenLabs odrzuca CAŁĄ rozmowę natychmiast po starcie z
-            # error_type=agent_configuration_error ("Missing required dynamic variables
-            # in tools"), złapane na żywym pierwszym udanym SIP direct połączeniu
-            # (conversation_initiation_source=sip_trunk, status=failed, 0s).
             "called_number": called_number,
             "call_sid": call_sid,
-            # Ten webhook jest w praktyce wołany WYŁĄCZNIE dla połączeń SIP trunk direct
-            # (Vonage -> ElevenLabs bezpośrednio, patrz ensure_elevenlabs_sip_number) — tor
-            # Twilio (register_call) przekazuje conversation_initiation_client_data INLINE,
-            # nie przez ten webhook (patrz docstring modułu, punkt 4), więc nigdy tu nie
-            # trafia. "twilio" było więc zwyczajnie błędną wartością — narzędzia rezerwacji
-            # używają tego pola do wyboru dostawcy SMS (patrz _build_conversation_config_override),
-            # a numer testowy jest numerem Vonage, więc musi być "vonage" jak w
-            # run_elevenlabs_vonage_bot (most WebSocket, ta sama rodzina połączeń).
             "channel": "vonage",
         },
     }

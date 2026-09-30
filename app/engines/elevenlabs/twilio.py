@@ -5,7 +5,7 @@ import asyncio
 from loguru import logger
 
 from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, _resolve_agent_id
-from app.engines.elevenlabs.conversation import _build_conversation_config_override
+from app.engines.elevenlabs.conversation import build_conversation_config_override
 
 _elevenlabs_client = None
 
@@ -32,7 +32,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
     if not ELEVENLABS_API_KEY or not agent_id:
         raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
 
-    conversation_config_override, dynamic_variables = await _build_conversation_config_override(
+    conversation_config_override, dynamic_variables = await build_conversation_config_override(
         tenant, caller_phone, called_number, call_sid, channel="twilio",
     )
 

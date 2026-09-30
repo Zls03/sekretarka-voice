@@ -7,29 +7,15 @@ from loguru import logger
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.task import PipelineTask
 
-# Próba użycia gemini-2.5-flash-native-audio-preview-12-2025 (2026-09-03) odrzucona natychmiast
-# przez samo Gemini: "1007 None. Unsupported language code 'pl' for model
-# models/gemini-2.5-flash-native-audio-preview-12-2025" — ten wariant w ogóle nie obsługuje
-# polskiego, więc nie nadaje się jako zamiennik niezależnie od TTFB. Zostajemy przy 3.1 preview
-# (jedyny Live API model ze wsparciem 'pl' jaki mamy) i traktujemy jego epizody podwyższonego
-# TTFB (3-11s, potwierdzone A/B testem) jako coś po stronie Google — patrz OpenAI Realtime
-# jako sprawdzony fallback (realtime_engine='openai' w panelu, zakładka "Realtime GPT").
+from app.engines.common import (
+    IDLE_HANGUP_SECONDS,
+    IDLE_WARNING_SECONDS,
+    MAX_CALL_DURATION,
+    schedule_idle_reset_release,
+)
 
-# Progi idle/max-duration — WARTOŚCI MUSZĄ być takie same jak w bot_openai_realtime.py
-# (obie ścieżki tuningowane razem na żywych telefonach, patrz historia tego pliku).
-# Duplikacja świadoma: to proste stałe int, nie logika — import z drugiego modułu
-# tylko po te 3 liczby dokładałby sztuczną zależność bez żadnej korzyści.
-IDLE_WARNING_SECONDS = 6
-
-
-IDLE_HANGUP_SECONDS = 14
-
-
-MAX_CALL_DURATION = 4 * 60
-
-
-# SILENT_HANG_TIMEOUT — TYLKO Gemini Live (patrz docstring GeminiUserMonitor/
-# monitor_gemini_call_health niżej), OpenAI Realtime nie ma tego trybu awarii.
+# Tyle sekund bez żadnej reakcji modelu na wypowiedź klienta = sesja Gemini Live ucichła
+# (znany problem: websocket żyje, ale odpowiedzi przestają przychodzić).
 SILENT_HANG_TIMEOUT = 5
 
 
@@ -54,11 +40,7 @@ async def speak_directly(task: PipelineTask, call_state: dict, text: str):
     call_state["suppress_idle_reset"] = True
     await task.queue_frame(TTSSpeakFrame(text=text))
 
-    async def _clear_suppress_after_timeout():
-        await asyncio.sleep(8.0)
-        call_state["suppress_idle_reset"] = False
-
-    asyncio.create_task(_clear_suppress_after_timeout())
+    schedule_idle_reset_release(call_state)
 
 
 async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=None):

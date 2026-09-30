@@ -6,6 +6,7 @@ import uuid
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext
 
+from app.billing import apply_call_charge
 from app.db import db, saas_db
 from app.post_call.summary import _parse_summary_fields
 
@@ -141,3 +142,35 @@ async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, c
         logger.info(f"📝 [REALTIME TEST] Transcript saved: {saved_count} messages")
     except Exception as e:
         logger.error(f"[REALTIME TEST] Transcript save error: {e}")
+
+
+async def record_call_status(
+    tenant: dict, call_sid: str, caller_phone: str, duration: int, status: str, log_tag: str,
+) -> None:
+    """Zapisuje czas trwania i status zakończonej rozmowy (webhook statusu operatora) i ją rozlicza.
+
+    Webhook statusu i save_call_transcript() (koniec websocketu) przychodzą w dowolnej
+    kolejności — kto pierwszy, ten tworzy wiersz call_logs, drugi go tylko uzupełnia.
+    Dlatego tu zapisujemy prawdziwy numer dzwoniącego, a nie zaślepkę.
+    """
+    tenant_id = tenant["id"]
+    is_saas_tenant = tenant.get("source") == "saas"
+    target_db = saas_db if is_saas_tenant else db
+
+    existing = await target_db.execute("SELECT id FROM call_logs WHERE call_sid = ?", [call_sid])
+    if existing:
+        await target_db.execute(
+            "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?",
+            [duration, status, call_sid],
+        )
+        logger.info(f"📊 [{log_tag}] Updated call log: {call_sid} → {duration}s")
+    else:
+        await target_db.execute(
+            """INSERT INTO call_logs
+               (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+            [f"call_{int(time.time())}", tenant_id, call_sid, caller_phone, duration, status],
+        )
+        logger.info(f"📊 [{log_tag}] Created call log: {call_sid} → {duration}s")
+
+    await apply_call_charge(tenant_id, is_saas_tenant, call_sid, status, duration)

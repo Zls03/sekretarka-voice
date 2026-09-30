@@ -9,17 +9,12 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.services.openai.realtime.events import ResponseCreateEvent, ResponseProperties
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
-IDLE_WARNING_SECONDS = 6    # tyle ciszy -> "Halo, czy mnie słyszysz?" (skrócone z 10s
-
-
-                            # 16.08.2026 — żywy telefon pokazał, że przy cichym zawieszeniu
-                            # sesji Gemini Live klient siedział w martwej ciszy do ~29s zanim
-                            # padło JAKIEKOLWIEK pytanie/rozłączenie; krótsze progi nie naprawiają
-                            # przyczyny, ale skracają czas oczekiwania klienta w ciszy)
-IDLE_HANGUP_SECONDS = 14    # tyle ciszy (8s po dopytaniu) -> kończymy połączenie
-
-
-MAX_CALL_DURATION = 4 * 60  # ta sama wartość co w produkcyjnym bot.py
+from app.engines.common import (
+    IDLE_HANGUP_SECONDS,
+    IDLE_WARNING_SECONDS,
+    MAX_CALL_DURATION,
+    schedule_idle_reset_release,
+)
 
 
 async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
@@ -58,11 +53,7 @@ async def say_now(llm: OpenAIRealtimeLLMService, call_state: dict, text: str):
         )
     )
 
-    async def _clear_suppress_after_timeout():
-        await asyncio.sleep(8.0)
-        call_state["suppress_idle_reset"] = False
-
-    asyncio.create_task(_clear_suppress_after_timeout())
+    schedule_idle_reset_release(call_state)
 
 
 async def monitor_call_health(task: PipelineTask, llm: OpenAIRealtimeLLMService, call_state: dict):
