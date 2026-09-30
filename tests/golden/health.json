@@ -1,0 +1,11 @@
+{
+  "gemini": {
+    "model": "gemini-3.1-flash-live-preview",
+    "provider": "gemini-live",
+    "status": "ok"
+  },
+  "openai": {
+    "provider": "openai-realtime",
+    "status": "ok"
+  }
+}

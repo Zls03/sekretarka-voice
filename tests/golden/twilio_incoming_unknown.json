@@ -1,0 +1,5 @@
+{
+  "body": "<?xml version=\"1.0\"?><Response><Say language=\"pl-PL\">Numer testowy nieaktywny.</Say></Response>",
+  "content_type": "application/xml",
+  "status": 200
+}

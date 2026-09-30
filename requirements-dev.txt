@@ -1,0 +1,6 @@
+# Narzędzia deweloperskie (NIE instalowane na Railway).
+-r requirements-gemini-test.txt
+pytest
+freezegun
+httpx
+ruff

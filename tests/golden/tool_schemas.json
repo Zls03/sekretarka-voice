@@ -1,0 +1,156 @@
+{
+  "book_appointment": {
+    "description": "Umów NOWĄ wizytę. Użyj gdy klient: chce umówić/zarezerwować wizytę, pyta o wolne\nterminy/dostępność, albo chce coś zmienić W TRAKCIE TEJ ROZMOWY zanim rezerwacja została zapisana\n(np. poprawia datę/godzinę/usługę przed potwierdzeniem).\n⛔ NIE używaj do odwołania/przełożenia wizyty którą klient umówił WCZEŚNIEJ (inna rozmowa/inny dzień)\n— do tego jest osobne narzędzie manage_booking. Ten tool zna tylko rezerwację w toku TEJ rozmowy;\njeśli jeszcze nic nie zaczęto (confirmation=\"no\" bez wcześniejszych danych), NIE potwierdzi żadnego\nanulowania, bo nie ma czego anulować.\nWywołuj przy KAŻDEJ kolejnej\nodpowiedzi klienta dotyczącej tej rezerwacji (aż do \"done\": true) — przekazuj DOKŁADNIE co klient\npowiedział (nie interpretuj, nie zgaduj brakujących pól).\n\n⛔ KRYTYCZNE — WYNIK ZAWIERA POLE \"say_exactly\": Twoja odpowiedź klientowi MUSI być TĄ\nTREŚCIĄ, SŁOWO W SŁOWO — bez zmiany choćby jednego słowa, bez dodawania własnych zdań przed\nani po, bez skracania. To dotyczy dat, godzin, cen i potwierdzeń — nie improwizuj przy nich\npod żadnym pozorem, nawet jeśli treść wydaje Ci się sztywna. Jeśli wynik ma \"done\": true,\ntemat rezerwacji jest zamknięty (zapisana/anulowana/nieudana) — po powiedzeniu say_exactly\nNIE kontynuuj tematu rezerwacji.\n\nData: przekaż w formacie YYYY-MM-DD, tłumacząc co klient powiedział na podstawie dzisiejszej\ndaty z instrukcji systemowych (np. \"jutro\" → jutrzejsza data ISO, \"w piątek\" → data najbliższego\npiątku, \"dwudziestego maja\" → \"2026-05-20\"). Jeśli nie jesteś pewien/pewna dokładnej daty,\nmożesz też przekazać naturalny tekst klienta (\"jutro\", \"w piątek\") — jest też parsowany.\nGodzina: format HH:MM, zamień słowa klienta na cyfry (\"na trzynastą\" → \"13:00\", \"wpół do\ndwunastej\" → \"11:30\", \"czternasta zero\" → \"14:00\"). Null jeśli klient nie podał.\nPotwierdzenie: klient wyraża zgodę (\"tak\", \"oczywiście\", \"pasuje\") → confirmation=\"yes\";\nrezygnuje → confirmation=\"no\".\n⚠️ confirmation=\"change\" jest TYLKO do POPRAWIANIA pola które klient JUŻ WCZEŚNIEJ ustalił/\npotwierdził w tej rozmowie (np. po podsumowaniu mówi \"nie, zmieńmy jednak godzinę\"). Gdy\nklient po prostu ODPOWIADA na propozycję terminu własną datą/godziną (np. na pytanie\n\"zapisać, czy wolisz inny termin?\" mówi \"wolę we wtorek o dziesiątej\") — to jest ZWYKŁA\nkontynuacja: confirmation=\"none\" (albo \"yes\" jeśli dosłownie akceptuje), wypełnij date_text/\ntime_text nową wartością, NIE ustawiaj \"change\". Błędne użycie \"change\" tutaj resetuje całą\nrezerwację (usługę, pracownika) do zera, co jest widoczne dla klienta i frustrujące.\nWypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu, nie tylko jedno.",
+    "name": "book_appointment",
+    "properties": {
+      "change_field": {
+        "description": "Co klient chce zmienić gdy confirmation='change'",
+        "enum": [
+          "service",
+          "staff",
+          "date",
+          "time",
+          "name"
+        ],
+        "type": "string"
+      },
+      "confirmation": {
+        "description": "yes=potwierdza, no=anuluje, change=chce zmienić coś, none=nic z tych",
+        "enum": [
+          "yes",
+          "no",
+          "change",
+          "none"
+        ],
+        "type": "string"
+      },
+      "customer_name": {
+        "description": "Imię klienta lub null",
+        "type": "string"
+      },
+      "date_text": {
+        "description": "Data w formacie YYYY-MM-DD (patrz opis narzędzia) lub naturalny tekst klienta. Null jeśli klient nie podał daty.",
+        "type": "string"
+      },
+      "notes": {
+        "description": "Uwagi klienta do wizyty. Null jeśli brak uwag lub powiedział 'nie'.",
+        "type": "string"
+      },
+      "question": {
+        "description": "Jeśli klient pyta o coś poza samą rezerwacją — wpisz pytanie. Null jeśli kontynuuje rezerwację.",
+        "type": "string"
+      },
+      "service": {
+        "description": "Wybierz usługę z listy która najbardziej pasuje do słów klienta",
+        "enum": [
+          "Strzyżenie damskie",
+          "Koloryzacja"
+        ],
+        "type": "string"
+      },
+      "staff": {
+        "description": "Wybierz pracownika z listy lub 'dowolny'",
+        "enum": [
+          "Kasia Nowak",
+          "dowolny"
+        ],
+        "type": "string"
+      },
+      "time_text": {
+        "description": "Godzina w formacie HH:MM (patrz opis narzędzia). Null jeśli klient nie podał godziny.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "confirmation"
+    ]
+  },
+  "contact_owner": {
+    "description": "Klient chce kontaktu z właścicielem/firmą — zostawić wiadomość. Użyj gdy:\n- \"chcę porozmawiać z właścicielem\", \"proszę o kontakt\", \"czy mogę zostawić wiadomość\"\n- \"połącz mnie\", \"przekieruj mnie\", \"chcę rozmawiać z człowiekiem\"\n- klient jest sfrustrowany i potrzebuje pomocy człowieka\n- nie możesz pomóc i klient potrzebuje właściciela\nWywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości). Jeśli czegoś brakuje, zapytaj\nklienta JEDNO krótkie pytanie wprost (np. \"Czego dokładnie dotyczy sprawa?\" / \"Na jakie imię\nmam zapisać?\") — NIE zapowiadaj że o to zapytasz, po prostu zapytaj.\nJeśli wynik wywołania to status=\"error\", reason=\"message_too_vague\" — wiadomość była za ogólna\n(np. samo \"chce kontaktu\" bez konkretu). Krótko przeproś i zadaj TO SAMO pytanie ponownie,\nbez tłumaczenia dlaczego pytasz drugi raz.\n⚠️ Jeśli wynik to status=\"ok\" — połączenie zaraz automatycznie się rozłączy (kilka sekund po\nTwojej odpowiedzi), więc Twoja odpowiedź MUSI być zamkniętym pożegnaniem, NIE pytaniem\notwartym. NIE pytaj \"Czy mogę jeszcze w czymś pomóc?\" — nikt nie zdąży odpowiedzieć.\n⛔ Jeśli wynik zawiera pole \"say_exactly\" (niepuste) — Twoja odpowiedź MUSI być TĄ TREŚCIĄ\nSŁOWO W SŁOWO, bez zmiany, dodania czy skrócenia — ma pierwszeństwo przed przykładem niżej.\nJeśli \"say_exactly\" NIE występuje w wyniku — sformułuj pożegnanie sam, np.:\n✅ \"Dobrze, przekazuję wiadomość właścicielowi. Dziękuję za telefon, do usłyszenia!\"\n❌ \"Wiadomość została przekazana. Czy mogę jeszcze w czymś pomóc?\"",
+    "name": "contact_owner",
+    "properties": {
+      "customer_name": {
+        "description": "Imię klienta",
+        "type": "string"
+      },
+      "message": {
+        "description": "DOKŁADNA treść tego czego klient chce/potrzebuje, jego słowami lub krótkim rzeczowym streszczeniem KONKRETU sprawy (np. 'Chce przełożyć wizytę z piątku na sobotę', 'Pyta o możliwość zniżki grupowej dla 5 osób'). ⛔ NIE formułuj tego jako opis o kliencie w trzeciej osobie i NIE jako meta-opis sytuacji (np. NIE 'Klient prosi o kontakt', NIE 'Proszę o kontakt z klientem') — to pole ma zawierać SAMĄ TREŚĆ sprawy, nie opis że wiadomość istnieje. ⚠️ To jest wewnętrzny opis PARAMETRU dla Ciebie — klient dzwoni, MÓWI, nie pisze. NIGDY nie używaj słów 'napisz'/'pisz' w rozmowie z klientem (np. 'napisz proszę ile minut potrzebujesz') — zamiast tego zapytaj głosowo, np. 'powiedz proszę' / 'ile minut mniej więcej potrzebujesz?'.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "customer_name",
+      "message"
+    ]
+  },
+  "contact_owner_with_transfer": {
+    "description": "Klient chce KONTAKTU z właścicielem/firmą. Masz DWA sposoby: ta funkcja\n(zostaw wiadomość, właściciel oddzwoni) ORAZ transfer_to_owner (żywe połączenie TERAZ).\n- Jeśli klient WYRAŹNIE mówi że chce wiadomość/oddzwonienie (\"zostawić wiadomość\", \"niech\n  oddzwoni\", \"proszę o kontakt zwrotny\") → użyj TEJ funkcji wprost, bez dopytywania.\n- Jeśli klient WYRAŹNIE chce żywej rozmowy TERAZ (\"połącz mnie\", \"chcę z kimś porozmawiać\n  natychmiast\") → NIE używaj tej funkcji, użyj transfer_to_owner.\n- Jeśli NIE JEST JASNE które z dwóch klient ma na myśli (np. samo \"czy mogę porozmawiać z\n  właścicielem?\") → ZAPYTAJ wprost, jednym zdaniem, BEZ formy \"ty\" (np. \"Mogę połączyć od razu,\n  albo zostawić wiadomość, żeby ktoś oddzwonił — co będzie wygodniejsze?\") — i dopiero na\n  podstawie odpowiedzi wybierz właściwą funkcję. NIE zgaduj.\n- klient jest sfrustrowany i potrzebuje pomocy człowieka, a nie jest jasne który wariant → też dopytaj jak wyżej\nWywołaj DOPIERO gdy masz OBA pola (imię i treść wiadomości). Jeśli czegoś brakuje, zapytaj\nklienta JEDNO krótkie pytanie wprost (np. \"Czego dokładnie dotyczy sprawa?\" / \"Na jakie imię\nmam zapisać?\") — NIE zapowiadaj że o to zapytasz, po prostu zapytaj.\nJeśli wynik wywołania to status=\"error\", reason=\"message_too_vague\" — wiadomość była za ogólna\n(np. samo \"chce kontaktu\" bez konkretu). Krótko przeproś i zadaj TO SAMO pytanie ponownie,\nbez tłumaczenia dlaczego pytasz drugi raz.\n⚠️ Jeśli wynik to status=\"ok\" — połączenie zaraz automatycznie się rozłączy (kilka sekund po\nTwojej odpowiedzi), więc Twoja odpowiedź MUSI być zamkniętym pożegnaniem, NIE pytaniem\notwartym. NIE pytaj \"Czy mogę jeszcze w czymś pomóc?\" — nikt nie zdąży odpowiedzieć.\n⛔ Jeśli wynik zawiera pole \"say_exactly\" (niepuste) — Twoja odpowiedź MUSI być TĄ TREŚCIĄ\nSŁOWO W SŁOWO, bez zmiany, dodania czy skrócenia — ma pierwszeństwo przed przykładem niżej.\nJeśli \"say_exactly\" NIE występuje w wyniku — sformułuj pożegnanie sam, np.:\n✅ \"Dobrze, przekazuję wiadomość właścicielowi. Dziękuję za telefon, do usłyszenia!\"\n❌ \"Wiadomość została przekazana. Czy mogę jeszcze w czymś pomóc?\"",
+    "name": "contact_owner",
+    "properties": {
+      "customer_name": {
+        "description": "Imię klienta",
+        "type": "string"
+      },
+      "message": {
+        "description": "DOKŁADNA treść tego czego klient chce/potrzebuje, jego słowami lub krótkim rzeczowym streszczeniem KONKRETU sprawy (np. 'Chce przełożyć wizytę z piątku na sobotę', 'Pyta o możliwość zniżki grupowej dla 5 osób'). ⛔ NIE formułuj tego jako opis o kliencie w trzeciej osobie i NIE jako meta-opis sytuacji (np. NIE 'Klient prosi o kontakt', NIE 'Proszę o kontakt z klientem') — to pole ma zawierać SAMĄ TREŚĆ sprawy, nie opis że wiadomość istnieje. ⚠️ To jest wewnętrzny opis PARAMETRU dla Ciebie — klient dzwoni, MÓWI, nie pisze. NIGDY nie używaj słów 'napisz'/'pisz' w rozmowie z klientem (np. 'napisz proszę ile minut potrzebujesz') — zamiast tego zapytaj głosowo, np. 'powiedz proszę' / 'ile minut mniej więcej potrzebujesz?'.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "customer_name",
+      "message"
+    ]
+  },
+  "end_conversation": {
+    "description": "Klient KOŃCZY rozmowę — żegna się, dziękuje, mówi że to wszystko. Użyj gdy:\n- \"dziękuję, to wszystko\", \"do widzenia\", \"dzięki, pa\", \"nic więcej\", \"to na razie wszystko\", \"koniec\"\n⚠️ WAŻNA KOLEJNOŚĆ: wywołaj tę funkcję OD RAZU, NIC nie mówiąc przed nią — żadnego pożegnania,\nżadnej zapowiedzi typu \"już kończymy\". Twoja odpowiedź po wyniku tej funkcji (przyjdzie\nautomatycznie) to jest to miejsce na krótkie, naturalne pożegnanie (np. \"Dziękuję za telefon,\ndo usłyszenia!\", \"Miłego dnia!\") — RÓŻNE za każdym razem. Jedno pożegnanie, nie dwa.",
+    "name": "end_conversation",
+    "properties": {},
+    "required": []
+  },
+  "manage_booking": {
+    "description": "Klient chce ODWOŁAĆ lub PRZEŁOŻYĆ wizytę którą umówił WCZEŚNIEJ (nie w trakcie\ntej rozmowy — do nowej rezerwacji lub zmiany PRZED zapisaniem służy book_appointment). Użyj gdy klient\nmówi: \"chcę odwołać wizytę\", \"muszę przełożyć termin\", \"nie mogę przyjść\", \"zmiana terminu wizyty\".\n⛔ NIE wywołuj tego narzędzia gdy klient TYLKO pyta \"czy mam jakąś wizytę\" / \"kiedy mam wizytę\" bez\nchęci czegokolwiek zmieniać — na to odpowiadasz OD RAZU z danych w sekcji INFO O KLIENCIE (CRM) w\npromptcie systemowym, bez żadnego wywołania narzędzia. Wywołaj manage_booking dopiero gdy klient\nwyraźnie chce ODWOŁAĆ lub PRZEŁOŻYĆ.\n⛔ Wizytę znajdujemy PO NUMERZE TELEFONU dzwoniącego automatycznie — NIE pytaj klienta o kod\nrezerwacji, żadne ID, ani na jakie IMIĘ jest rezerwacja (to też niepotrzebne, samo \"na jakie imię\nwizyta?\" brzmi jak typowy odruch recepcjonistki, ale tu numer w zupełności wystarczy) — po prostu\nwywołaj to narzędzie od razu z tym co klient powiedział, bez żadnego dopytywania na wstępie.\n⛔ KRYTYCZNE: wynik niesie pole \"say_exactly\" — Twoja odpowiedź MUSI być tą treścią słowo w słowo,\nbez zmian i dodatków — dotyczy to dat, godzin i potwierdzeń tak samo jak w book_appointment.\nJeśli status=\"not_found\" lub \"error\" — po powiedzeniu say_exactly, jeśli klient odpowie z treścią\nsprawy, wywołaj contact_owner żeby przekazać wiadomość właścicielowi.\nWywołuj przy KAŻDEJ kolejnej odpowiedzi klienta dotyczącej tej sprawy, aż wynik będzie miał \"done\": true.",
+    "name": "manage_booking",
+    "properties": {
+      "action": {
+        "description": "cancel=odwołanie wizyty, reschedule=przełożenie na inny termin, none=jeszcze nie wiadomo",
+        "enum": [
+          "cancel",
+          "reschedule",
+          "none"
+        ],
+        "type": "string"
+      },
+      "confirmation": {
+        "description": "yes=klient potwierdza ostatnio zaproponowaną akcję, no=rezygnuje, none=jeszcze nic",
+        "enum": [
+          "yes",
+          "no",
+          "none"
+        ],
+        "type": "string"
+      },
+      "date_text": {
+        "description": "Nowa data (tylko dla reschedule) w formacie YYYY-MM-DD lub naturalny tekst klienta. Null jeśli nie dotyczy.",
+        "type": "string"
+      },
+      "time_text": {
+        "description": "Nowa godzina (tylko dla reschedule) w formacie HH:MM. Null jeśli nie dotyczy.",
+        "type": "string"
+      },
+      "which_visit": {
+        "description": "Jeśli klient ma kilka nadchodzących wizyt i wskazał, o którą chodzi (np. wspomniał dzień) — przekaż to tutaj. Null w innym wypadku.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action",
+      "confirmation"
+    ]
+  },
+  "transfer_to_owner": {
+    "description": "Klient WYRAŹNIE żąda połączenia NA ŻYWO z człowiekiem/właścicielem\n(nie samej wiadomości) — np. \"połącz mnie z kimś\", \"chcę porozmawiać z człowiekiem TERAZ\",\n\"przełącz mnie\". Użyj TYLKO gdy klient chce żywej rozmowy w TEJ chwili — jeśli chce\nzostawić wiadomość/kontakt zwrotny, użyj zamiast tego contact_owner.\nWywołaj OD RAZU, NIC nie mówiąc przed nią (żadnej zapowiedzi typu \"już przełączam\") —\nzapowiedź o przekierowaniu leci automatycznie z systemu telefonii, nie od Ciebie.\nJeśli wynik to status=\"error\" — przekierowanie się nie udało (brak numeru/błąd), krótko\nprzeproś i zaproponuj zamiast tego zostawienie wiadomości przez contact_owner.",
+    "name": "transfer_to_owner",
+    "properties": {},
+    "required": []
+  }
+}

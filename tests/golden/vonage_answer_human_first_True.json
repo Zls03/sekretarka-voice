@@ -1,0 +1,29 @@
+{
+  "body": [
+    {
+      "action": "record",
+      "eventUrl": [
+        "https://bot.test/vonage/human-first-recording?to=48111222333&from=48600700800&uuid=uuid-1"
+      ],
+      "format": "wav",
+      "split": "conversation"
+    },
+    {
+      "action": "connect",
+      "endpoint": [
+        {
+          "type": "sip",
+          "uri": "sip:siperb-firma@eu-west-1-sbc-1.siperb.com;transport=udp"
+        }
+      ],
+      "eventType": "synchronous",
+      "eventUrl": [
+        "https://bot.test/vonage/human-first-fallback?to=48111222333&from=48600700800&uuid=uuid-1&regionUrl=https%3A%2F%2Fapi-eu-3.vonage.com"
+      ],
+      "from": "48600700800",
+      "timeout": 20
+    }
+  ],
+  "content_type": "application/json",
+  "status": 200
+}

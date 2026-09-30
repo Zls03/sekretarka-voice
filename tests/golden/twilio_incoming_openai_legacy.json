@@ -1,0 +1,5 @@
+{
+  "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n    <Connect>\n        <Stream url=\"wss://bot.test/ws-gemini-test\">\n            <Parameter name=\"callSid\" value=\"CA123\" />\n            <Parameter name=\"phone\" value=\"+48111222333\" />\n            <Parameter name=\"callerPhone\" value=\"+48600700800\" />\n        </Stream>\n    </Connect>\n</Response>",
+  "content_type": "application/xml",
+  "status": 200
+}

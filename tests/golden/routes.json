@@ -1,0 +1,181 @@
+[
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/docs"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/docs/oauth2-redirect"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/elevenlabs/personalization"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/elevenlabs/post-call"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/elevenlabs/tools/book_appointment"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/elevenlabs/tools/contact_owner"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/elevenlabs/tools/manage_booking"
+  },
+  {
+    "methods": [
+      "GET"
+    ],
+    "path": "/health-gemini-live-test"
+  },
+  {
+    "methods": [
+      "GET"
+    ],
+    "path": "/health-gemini-test"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/openapi.json"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/redoc"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/twilio/incoming-gemini-live-test"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/twilio/incoming-gemini-test"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/twilio/status"
+  },
+  {
+    "methods": [
+      "GET"
+    ],
+    "path": "/vonage/answer"
+  },
+  {
+    "methods": [
+      "GET"
+    ],
+    "path": "/vonage/answer-gemini-live"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/events"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/human-first-fallback"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/human-first-recording"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/sip-fallback-elevenlabs"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/test-siperb"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/test-siperb-event"
+  },
+  {
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "path": "/vonage/transfer-fallback"
+  },
+  {
+    "methods": [
+      "WEBSOCKET"
+    ],
+    "path": "/ws-elevenlabs-vonage"
+  },
+  {
+    "methods": [
+      "WEBSOCKET"
+    ],
+    "path": "/ws-gemini-live-test"
+  },
+  {
+    "methods": [
+      "WEBSOCKET"
+    ],
+    "path": "/ws-gemini-live-test-vonage"
+  },
+  {
+    "methods": [
+      "WEBSOCKET"
+    ],
+    "path": "/ws-gemini-test"
+  },
+  {
+    "methods": [
+      "WEBSOCKET"
+    ],
+    "path": "/ws-gemini-test-vonage"
+  }
+]

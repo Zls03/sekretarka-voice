@@ -1,0 +1,21 @@
+{
+  "args": {
+    "change_field": null,
+    "confirmation": "none",
+    "customer_name": null,
+    "date_text": null,
+    "notes": null,
+    "question": null,
+    "service": "strzyżenie",
+    "staff": null,
+    "time_text": null
+  },
+  "caller": "+48600700800",
+  "kwargs": {
+    "channel": "vonage"
+  },
+  "response": {
+    "say": "Na jaką usługę?",
+    "status": "ask"
+  }
+}

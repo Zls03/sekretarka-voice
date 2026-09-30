@@ -1,0 +1,24 @@
+{
+  "blocked": {
+    "body": [
+      {
+        "action": "talk",
+        "language": "pl-PL",
+        "text": "Przepraszamy, linia jest chwilowo niedostępna."
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  },
+  "unknown": {
+    "body": [
+      {
+        "action": "talk",
+        "language": "pl-PL",
+        "text": "Numer testowy nieaktywny."
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  }
+}

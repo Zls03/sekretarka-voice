@@ -1,0 +1,6 @@
+{
+  "default": "Dzień dobry, tu Salon Testowy. W czym mogę pomóc?",
+  "greeting_already_has_name": "Dzień dobry Anna kowalsko. Anno, w czym pomóc?",
+  "no_first_message": "Dzień dobry, tu Salon Testowy. W czym mogę pomóc?",
+  "returning_client": "Dzień dobry Anna kowalsko. Tu Salon Testowy. W czym mogę pomóc?"
+}

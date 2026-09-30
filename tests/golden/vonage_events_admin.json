@@ -1,0 +1,43 @@
+{
+  "db": [
+    {
+      "args": [
+        "uuid-2"
+      ],
+      "db": "admin",
+      "sql": "SELECT id FROM call_logs WHERE call_sid = ?"
+    },
+    {
+      "args": [
+        "call_1790763300",
+        "tenant_admin",
+        "uuid-2",
+        "nieznany",
+        30,
+        "completed"
+      ],
+      "db": "admin",
+      "sql": "INSERT INTO call_logs (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
+    },
+    {
+      "args": [
+        0.5,
+        "tenant_admin"
+      ],
+      "db": "admin",
+      "sql": "UPDATE tenants SET minutes_used = minutes_used + ? WHERE id = ?"
+    },
+    {
+      "args": [
+        "tenant_admin"
+      ],
+      "db": "admin",
+      "sql": "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?"
+    }
+  ],
+  "response": {
+    "body": "",
+    "content_type": "",
+    "status": 200
+  }
+}

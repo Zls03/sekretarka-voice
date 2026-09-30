@@ -1,0 +1,29 @@
+{
+  "with_uri": {
+    "body": [
+      {
+        "action": "connect",
+        "endpoint": [
+          {
+            "content-type": "audio/l16;rate=16000",
+            "type": "websocket",
+            "uri": "wss://bot.test/ws-elevenlabs-vonage?phone=48111222333"
+          }
+        ]
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  },
+  "without_uri": {
+    "body": [
+      {
+        "action": "talk",
+        "language": "pl-PL",
+        "text": "Przepraszamy, wystąpił błąd połączenia."
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  }
+}

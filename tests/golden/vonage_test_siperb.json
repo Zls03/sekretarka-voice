@@ -1,0 +1,43 @@
+{
+  "bizvoice": {
+    "body": [
+      {
+        "action": "connect",
+        "endpoint": [
+          {
+            "type": "sip",
+            "uri": "sip:siperb-bizvoice@eu-west-1-sbc-1.siperb.com;transport=udp"
+          }
+        ],
+        "eventType": "synchronous",
+        "eventUrl": [
+          "https://bot.test/vonage/test-siperb-event"
+        ],
+        "timeout": 20
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  },
+  "event": {
+    "body": [],
+    "content_type": "application/json",
+    "status": 200
+  },
+  "other": {
+    "body": [
+      {
+        "action": "connect",
+        "endpoint": [
+          {
+            "content-type": "audio/l16;rate=16000",
+            "type": "websocket",
+            "uri": "wss://bot.test/ws-gemini-live-test-vonage?phone=+48111222333&callerPhone=+48600700800&callSid=u5&regionUrl="
+          }
+        ]
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  }
+}

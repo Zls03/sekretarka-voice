@@ -1,0 +1,34 @@
+{
+  "ensure_sip_calls": [
+    {
+      "args": [
+        "+48111222333",
+        "agent_tenant"
+      ],
+      "kwargs": {}
+    }
+  ],
+  "response": {
+    "body": [
+      {
+        "action": "connect",
+        "endpoint": [
+          {
+            "headers": {
+              "CALL-ID": "uuid-1"
+            },
+            "type": "sip",
+            "uri": "sip:+48111222333@sip.rtc.elevenlabs.io:5060;transport=tcp"
+          }
+        ],
+        "eventType": "synchronous",
+        "eventUrl": [
+          "https://bot.test/vonage/sip-fallback-elevenlabs?wsUri=wss%3A%2F%2Fbot.test%2Fws-elevenlabs-vonage%3Fphone%3D%2B48111222333%26callerPhone%3D48600700800%26callSid%3Duuid-1"
+        ],
+        "from": "48600700800"
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  }
+}

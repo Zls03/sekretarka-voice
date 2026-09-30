@@ -1,0 +1,16 @@
+{
+  "body": [
+    {
+      "action": "connect",
+      "endpoint": [
+        {
+          "content-type": "audio/l16;rate=16000",
+          "type": "websocket",
+          "uri": "wss://bot.test/ws-gemini-live-test-vonage?phone=+48111222333&callerPhone=48600700800&callSid=uuid-1&regionUrl=https%3A%2F%2Fapi-eu-3.vonage.com"
+        }
+      ]
+    }
+  ],
+  "content_type": "application/json",
+  "status": 200
+}

@@ -1,0 +1,15 @@
+{
+  "args": {
+    "action": "cancel",
+    "confirmation": "none",
+    "date_text": null,
+    "time_text": null,
+    "which_visit": null
+  },
+  "caller": "+48600700800",
+  "kwargs": {},
+  "response": {
+    "say": "Na jaką usługę?",
+    "status": "ask"
+  }
+}

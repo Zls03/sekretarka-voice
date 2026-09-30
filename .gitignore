@@ -14,3 +14,5 @@ CLAUDE.md
 MIGRACJA_ELEVENLABS_NOTATKI.txt
 wiadomosc_bartosz.txt
 odpowiedz_vonage.txt
+# Lokalne środowiska
+.venv*/

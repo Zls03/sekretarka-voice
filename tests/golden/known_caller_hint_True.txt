@@ -1,0 +1,14 @@
+PROMPT
+
+⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
+Ten numer telefonu jest zapisany w bazie klientów pod imieniem "Jan". To NIE jest
+zgadywanie — to zweryfikowane dane, więc zakaz zmyślania imienia/zgadywania płci wyżej TU NIE
+OBOWIĄZUJE. Stan rozmówcy jest od razu MĘSKA (nie NIEZNANA) — możesz zwracać się po imieniu
+od pierwszego zdania, np. "Panie Janie". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
+inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad.
+
+Jeśli klient chce zostawić wiadomość dla właściciela (contact_owner) — NIE pytaj "na jakie imię
+mam zapisać". Zamiast tego POTWIERDŹ krótko, np. "Zapisuję jako Jan, dobrze?" albo
+"Czy to nadal Jan?". Jeśli potwierdzi → użyj "Jan" jako customer_name, bez
+dodatkowych pytań. Jeśli zaprzeczy lub sam poda inne imię → użyj TEGO nowego imienia zamiast
+"Jan" — to znaczy że akurat dzwoni ktoś inny z tego numeru.

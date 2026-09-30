@@ -1,0 +1,13 @@
+{
+  "db": [],
+  "outbound": {
+    "body": "",
+    "content_type": "",
+    "status": 200
+  },
+  "ringing": {
+    "body": "",
+    "content_type": "",
+    "status": 200
+  }
+}

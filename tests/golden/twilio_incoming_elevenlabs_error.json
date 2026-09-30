@@ -1,0 +1,5 @@
+{
+  "body": "<?xml version=\"1.0\"?><Response><Say language=\"pl-PL\">Przepraszamy, wystąpił błąd. Spróbuj ponownie później.</Say><Hangup/></Response>",
+  "content_type": "application/xml",
+  "status": 200
+}

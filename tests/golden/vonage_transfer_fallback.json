@@ -1,0 +1,23 @@
+{
+  "email": [
+    {
+      "args": [
+        "Salon Testowy",
+        "+48600700800",
+        "owner@example.com"
+      ],
+      "kwargs": {}
+    }
+  ],
+  "response": {
+    "body": [
+      {
+        "action": "talk",
+        "language": "pl-PL",
+        "text": "Niestety nie udało się połączyć. Przekażę wiadomość, żeby ktoś oddzwonił."
+      }
+    ],
+    "content_type": "application/json",
+    "status": 200
+  }
+}

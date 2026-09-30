@@ -1,0 +1,76 @@
+{
+  "db": [
+    {
+      "args": [
+        "CA999"
+      ],
+      "db": "saas",
+      "sql": "SELECT id FROM call_logs WHERE call_sid = ?"
+    },
+    {
+      "args": [
+        "call_1790763300",
+        "firm_test_1",
+        "CA999",
+        "+48600700800",
+        95,
+        "completed"
+      ],
+      "db": "saas",
+      "sql": "INSERT INTO call_logs (id, tenant_id, call_sid, caller_phone, duration_seconds, status, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT user_id FROM firms WHERE id = ?"
+    },
+    {
+      "args": [
+        1.5833333333333333,
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?"
+    },
+    {
+      "args": [
+        0.6175,
+        0.6175,
+        "user_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE credits SET balance = balance - ?, total_spent = total_spent + ? WHERE user_id = ?"
+    },
+    {
+      "args": [
+        "user_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT balance FROM credits WHERE user_id = ?"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?"
+    },
+    {
+      "args": [
+        "tx_CA999",
+        "user_1",
+        -0.6175,
+        "Rozmowa 95s (1.58 min) [Realtime test]"
+      ],
+      "db": "saas",
+      "sql": "INSERT INTO transactions (id, user_id, type, amount, description, created_at) VALUES (?, ?, 'usage', ?, ?, datetime('now'))"
+    }
+  ],
+  "response": {
+    "body": "OK",
+    "content_type": "text/plain; charset=utf-8",
+    "status": 200
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "db": [
+    {
+      "args": [
+        "uuid-1"
+      ],
+      "db": "saas",
+      "sql": "SELECT id FROM call_logs WHERE call_sid = ?"
+    },
+    {
+      "args": [
+        61,
+        "completed",
+        "uuid-1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE call_logs SET duration_seconds = ?, status = ? WHERE call_sid = ?"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT user_id FROM firms WHERE id = ?"
+    },
+    {
+      "args": [
+        1.0166666666666666,
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE firms SET minutes_used = minutes_used + ? WHERE id = ?"
+    },
+    {
+      "args": [
+        0.3965,
+        0.3965,
+        "user_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE credits SET balance = balance - ?, total_spent = total_spent + ? WHERE user_id = ?"
+    },
+    {
+      "args": [
+        "user_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT balance FROM credits WHERE user_id = ?"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE firms SET is_blocked = 1 WHERE id = ?"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?"
+    },
+    {
+      "args": [
+        "firm_test_1"
+      ],
+      "db": "saas",
+      "sql": "UPDATE firms SET is_blocked = 1 WHERE id = ?"
+    },
+    {
+      "args": [
+        "tx_uuid-1",
+        "user_1",
+        -0.3965,
+        "Rozmowa 61s (1.02 min) [Realtime test]"
+      ],
+      "db": "saas",
+      "sql": "INSERT INTO transactions (id, user_id, type, amount, description, created_at) VALUES (?, ?, 'usage', ?, ?, datetime('now'))"
+    }
+  ],
+  "response": {
+    "body": "",
+    "content_type": "",
+    "status": 200
+  }
+}

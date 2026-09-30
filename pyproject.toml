@@ -1,0 +1,23 @@
+[project]
+name = "bizvoice-voice"
+description = "BizVoice — backend głosowej sekretarki AI (Twilio/Vonage × Gemini Live / OpenAI Realtime / ElevenLabs)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv*", "tests/golden"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",    # długie linie w tekstach promptów/komunikatach są świadome
+    "RUF001",  # polskie znaki i typografia w stringach
+    "RUF002",
+    "RUF003",
+]

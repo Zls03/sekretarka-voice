@@ -1,0 +1,38 @@
+{
+  "finalize": [],
+  "llm_builds": [],
+  "tasks": [
+    {
+      "params": {
+        "audio_in_sample_rate": 16000,
+        "audio_out_sample_rate": 16000,
+        "enable_metrics": true
+      },
+      "processors": [
+        {
+          "FastAPIWebsocketInputTransport": {
+            "add_wav_header": false,
+            "serializer": "VonageFrameSerializer"
+          }
+        },
+        {
+          "VADProcessor": {
+            "vad": {
+              "confidence": 0.6,
+              "min_volume": 0.4,
+              "start_secs": 0.2,
+              "stop_secs": 0.2
+            }
+          }
+        },
+        "ElevenLabsRealtimeService",
+        {
+          "FastAPIWebsocketOutputTransport": {
+            "add_wav_header": false,
+            "serializer": "VonageFrameSerializer"
+          }
+        }
+      ]
+    }
+  ]
+}
