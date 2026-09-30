@@ -67,6 +67,9 @@ class Settings:
     # Testy na żywo: wymuszona firma dla starej trasy /vonage/answer
     test_tenant_id: str
 
+    # Dokumentacja API (/docs, /openapi.json) — tylko lokalnie
+    enable_api_docs: bool
+
     @classmethod
     def from_env(cls) -> Settings:
         panel_api_url = _env("PANEL_API_URL", "http://localhost:3000")
@@ -104,6 +107,7 @@ class Settings:
             azure_speech_region=_env("AZURE_SPEECH_REGION", "westeurope"),
             google_application_credentials_json=_env("GOOGLE_APPLICATION_CREDENTIALS_JSON"),
             test_tenant_id=_env("TEST_TENANT_ID", ""),
+            enable_api_docs=_env("ENABLE_API_DOCS", "") == "1",
         )
 
 

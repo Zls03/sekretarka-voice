@@ -222,7 +222,7 @@ async def vonage_sip_fallback_elevenlabs(request: Request):
     benign = status in BENIGN_SIP_STATUSES
     (logger.info if benign else logger.warning)(
         f"{'ℹ️' if benign else '⚠️'} [ELEVENLABS/VONAGE SIP] "
-        f"eventUrl odpytany, status={status!r} (spoza {BENIGN_SIP_STATUSES} = warto sprawdzić) "
+        f"eventUrl odpytany, status={status!r}{'' if benign else ' — nietypowy status, warto sprawdzić'} "
         f"| query={dict(request.query_params)} | body={body}"
     )
     if not ws_uri:

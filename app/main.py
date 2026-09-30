@@ -9,6 +9,7 @@ import sys
 from fastapi import FastAPI
 from loguru import logger
 
+from app.config import settings
 from app.engines.elevenlabs import vonage_bridge as elevenlabs_vonage_bridge
 from app.engines.elevenlabs import webhooks as elevenlabs_webhooks
 from app.engines.gemini_live import routes as gemini_live_routes
@@ -20,7 +21,15 @@ logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {messa
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="BizVoice Voice")
+    # Backend obsługuje wyłącznie webhooki operatorów — publiczna dokumentacja API
+    # niepotrzebnie ujawniałaby listę adresów. Lokalnie: ENABLE_API_DOCS=1.
+    docs = settings.enable_api_docs
+    application = FastAPI(
+        title="BizVoice Voice",
+        openapi_url="/openapi.json" if docs else None,
+        docs_url="/docs" if docs else None,
+        redoc_url=None,
+    )
     for module in (
         openai_realtime_routes,
         elevenlabs_webhooks,
