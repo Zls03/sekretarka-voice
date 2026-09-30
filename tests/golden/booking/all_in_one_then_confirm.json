@@ -243,7 +243,7 @@
       },
       "result": {
         "done": true,
-        "say_exactly": "Gotowe. Koloryzacja u Kasi Nowak, jutro o trzynastej. Uwagi zapisane. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
+        "say_exactly": "Gotowe. Koloryzacja u Kasi Nowak, jutro o trzynastej. Uwagi zapisane. Potwierdzenie wysłaliśmy esemesem. Czy mogę jeszcze w czymś pomóc?",
         "status": "booked"
       }
     }

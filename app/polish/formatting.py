@@ -132,4 +132,5 @@ def format_date_polish(date: datetime) -> str:
 
         month_name = POLISH_MONTHS.get(target.month, str(target.month))
 
-        return f"w {day_name}, {target.day} {month_name}"
+        preposition = "we" if target.weekday() == 1 else "w"  # we wtorek, w środę
+        return f"{preposition} {day_name}, {target.day} {month_name}"

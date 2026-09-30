@@ -265,7 +265,7 @@
       },
       "result": {
         "done": true,
-        "say_exactly": "Gotowe. Strzyżenie damskie u Tomka, jutro o piętnastej trzydzieści. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
+        "say_exactly": "Gotowe. Strzyżenie damskie u Tomka, jutro o piętnastej trzydzieści. Potwierdzenie wysłaliśmy esemesem. Czy mogę jeszcze w czymś pomóc?",
         "status": "booked"
       }
     },

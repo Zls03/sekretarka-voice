@@ -8,7 +8,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?",
+        "say_exactly": "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chodzi o umówienie nowej wizyty czy odwołanie wcześniej umówionej?",
         "status": "ask"
       }
     },

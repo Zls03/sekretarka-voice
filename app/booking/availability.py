@@ -281,7 +281,7 @@ def format_availability_message(available_days: list[dict]) -> str:
     first = available_days[0]
     date_str = format_date_polish(first["date"])
     first_slot = format_hour_polish(first["slots"][0])
-    return f"Najbliższy wolny termin to {date_str} o {first_slot}. Zapisać, czy wolisz inny termin?"
+    return f"Najbliższy wolny termin to {date_str} o {first_slot}. Zapisać na ten termin, czy szukamy innego?"
 
 
 async def validate_slot_available(

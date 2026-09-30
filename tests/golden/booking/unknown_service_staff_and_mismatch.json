@@ -20,7 +20,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Nie rozpoznałam usługi. Dostępne: Strzyżenie damskie, Koloryzacja.",
+        "say_exactly": "Nie rozpoznaję tej usługi. Dostępne: Strzyżenie damskie, Koloryzacja.",
         "status": "ask"
       }
     },
@@ -32,7 +32,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Nie rozpoznałam pracownika. Dostępni: Kasia Nowak, Tomek.",
+        "say_exactly": "Nie rozpoznaję tego pracownika. Dostępni: Kasia Nowak, Tomek.",
         "status": "ask"
       }
     },
@@ -43,7 +43,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Tomek nie wykonuje Koloryzacja. Tę usługę wykonują: Kasia Nowak.",
+        "say_exactly": "Tomek nie wykonuje usługi Koloryzacja. Tę usługę wykonują: Kasia Nowak.",
         "status": "ask"
       }
     },

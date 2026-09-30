@@ -167,10 +167,12 @@ async def manage_booking_step(args: dict, tenant: dict, caller_phone: str, call_
 
     if not parsed_date:
         return _ask_mgmt(
-            call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'."
+            call_state, state, "Nie rozumiem daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'."
         )
     if parsed_date.date() < datetime.now().date():
-        return _ask_mgmt(call_state, state, f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.")
+        return _ask_mgmt(
+            call_state, state, f"Ten termin już minął ({format_date_polish(parsed_date)}). Proszę podać przyszłą datę."
+        )
 
     slots = await get_available_slots_from_api(tenant, staff_obj, service_obj, parsed_date)
     if not slots:
@@ -221,7 +223,7 @@ async def manage_booking_step(args: dict, tenant: dict, caller_phone: str, call_
         )
     return _finish_mgmt(
         call_state,
-        "Nie udało się automatycznie przełożyć wizyty — przekażę to właścicielowi. Proszę powiedzieć, na kiedy chce Pan/Pani przełożyć.",
+        "Nie udało się automatycznie przełożyć wizyty — przekażę to właścicielowi. Proszę powiedzieć, na kiedy przełożyć wizytę.",
         "error",
     )
 

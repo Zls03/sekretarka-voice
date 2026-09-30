@@ -249,7 +249,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "U Kasi Nowak najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "say_exactly": "U Kasi Nowak najbliższy wolny termin to dziś o szesnastej. Zapisać na ten termin, czy szukamy innego?",
         "status": "ask"
       }
     },
@@ -292,7 +292,7 @@
       },
       "result": {
         "done": true,
-        "say_exactly": "Gotowe. Strzyżenie damskie u Kasi Nowak, jutro o dziesiątej. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
+        "say_exactly": "Gotowe. Strzyżenie damskie u Kasi Nowak, jutro o dziesiątej. Potwierdzenie wysłaliśmy esemesem. Czy mogę jeszcze w czymś pomóc?",
         "status": "booked"
       }
     }

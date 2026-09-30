@@ -20,7 +20,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Data w wtorek, 1 września już minęła. Podaj przyszłą datę.",
+        "say_exactly": "Ten termin już minął (we wtorek, 1 września). Proszę podać przyszłą datę.",
         "status": "ask"
       }
     },
@@ -31,7 +31,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "W niedzielę, 4 października to niedziela — jesteśmy zamknięci. Na kiedy?",
+        "say_exactly": "W niedzielę, 4 października jesteśmy zamknięci. Na jaki inny dzień?",
         "status": "ask"
       }
     },
@@ -53,7 +53,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Pojutrze u Kasi Nowak nie ma wolnych terminów. Najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "say_exactly": "Pojutrze u Kasi Nowak nie ma wolnych terminów. Najbliższy wolny termin to dziś o szesnastej. Zapisać na ten termin, czy szukamy innego?",
         "status": "ask"
       }
     },
@@ -64,7 +64,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
+        "say_exactly": "Nie rozumiem daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
         "status": "ask"
       }
     },
@@ -75,7 +75,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
+        "say_exactly": "Nie rozumiem daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
         "status": "ask"
       }
     },

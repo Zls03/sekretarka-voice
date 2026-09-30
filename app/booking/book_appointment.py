@@ -31,7 +31,7 @@ from app.booking.parsing import DATEPARSER_SETTINGS, normalize_time, parse_time,
 from app.booking.replies import closing_question
 from app.booking.sms import increment_sms_count, send_booking_sms, send_booking_sms_vonage
 from app.panel_client import save_client_visit
-from app.polish.formatting import POLISH_DAYS, format_date_polish, format_hour_polish, natural_list
+from app.polish.formatting import format_date_polish, format_hour_polish, natural_list
 from app.polish.grammar import detect_gender, odmien_imie
 from app.prompt.business_context import assistant_gender_forms, build_business_context
 
@@ -263,7 +263,7 @@ async def _handle_cancel(turn: _Turn) -> dict | None:
         # Nic nie jest w toku w TEJ rozmowie — potwierdzenie anulowania byłoby fałszywe.
         # Odwołanie wizyty z wcześniejszej rozmowy obsługuje narzędzie manage_booking.
         return turn.ask(
-            "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?",
+            "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chodzi o umówienie nowej wizyty czy odwołanie wcześniej umówionej?",
             state={},
         )
     return _finish(turn.call_state, "Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?", "cancelled")
@@ -363,7 +363,7 @@ async def _resolve_service(turn: _Turn) -> dict | None:
         found = next((s for s in turn.services if s["name"].strip().lower() == requested.strip().lower()), None)
         if not found:
             names = ", ".join(s["name"] for s in turn.services)
-            return turn.ask(f"Nie rozpoznałam usługi. Dostępne: {names}.")
+            return turn.ask(f"Nie rozpoznaję tej usługi. Dostępne: {names}.")
         if changed:
             turn.drop("staff", *_SLOT_KEYS, "_last_date_text")
         turn.state["service"] = found
@@ -391,11 +391,11 @@ async def _resolve_staff(turn: _Turn) -> dict | None:
             found = next((s for s in turn.staff_list if s["name"] == requested), None)
             if not found:
                 names = ", ".join(s["name"] for s in turn.staff_list)
-                return turn.ask(f"Nie rozpoznałam pracownika. Dostępni: {names}.")
+                return turn.ask(f"Nie rozpoznaję tego pracownika. Dostępni: {names}.")
             if not staff_can_do_service(found, turn.state["service"]):
                 names = ", ".join(s["name"] for s in turn.staff_for_service())
                 return turn.ask(
-                    f"{found['name']} nie wykonuje {turn.state['service']['name']}. Tę usługę wykonują: {names}."
+                    f"{found['name']} nie wykonuje usługi {turn.state['service']['name']}. Tę usługę wykonują: {names}."
                 )
             turn.state["staff"] = found
 
@@ -451,19 +451,19 @@ def _date_not_understood(turn: _Turn) -> dict:
         return turn.ask(
             "Przepraszam za kłopot. Na jaki dzień szukamy terminu? Proszę powiedzieć np. 'jutro' lub '15 maja'."
         )
-    return turn.ask("Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.")
+    return turn.ask("Nie rozumiem daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.")
 
 
 async def _check_date(turn: _Turn, parsed_date: datetime, date_from_system: bool) -> dict | None:
     """Waliduje datę i pobiera jej wolne godziny; zwraca pytanie, gdy data nie pasuje."""
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     if parsed_date.date() < today.date():
-        return turn.ask(f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.")
+        return turn.ask(f"Ten termin już minął ({format_date_polish(parsed_date)}). Proszę podać przyszłą datę.")
 
     weekday = parsed_date.weekday()
     if get_opening_hours(turn.tenant, weekday) is None:
         date_label = format_date_polish(parsed_date).capitalize()
-        return turn.ask(f"{date_label} to {POLISH_DAYS[weekday]} — jesteśmy zamknięci. Na kiedy?")
+        return turn.ask(f"{date_label} jesteśmy zamknięci. Na jaki inny dzień?")
 
     if not date_from_system:
         is_valid, constraint_msg = validate_max_days_ahead(parsed_date, turn.tenant, turn.state["staff"])
@@ -523,7 +523,7 @@ async def _propose_first_free_slot(turn: _Turn) -> dict:
     _offer_slot(turn, first_day)
     return turn.ask(
         f"U {staff_name} najbliższy wolny termin to {format_date_polish(first_day['date'])} "
-        f"o {format_hour_polish(first_day['slots'][0])}. Zapisać, czy wolisz inny termin?"
+        f"o {format_hour_polish(first_day['slots'][0])}. Zapisać na ten termin, czy szukamy innego?"
     )
 
 
@@ -772,7 +772,7 @@ async def _send_confirmation_sms(state: dict, tenant: dict, caller_phone: str, b
         )
         if sms_sent:
             await increment_sms_count(tenant.get("id"))
-            return " Wysłałam esemes z potwierdzeniem."
+            return " Potwierdzenie wysłaliśmy esemesem."
     except Exception as e:
         logger.error(f"📱 [BOOKING] SMS error: {e}")
     return " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
@@ -848,7 +848,7 @@ rezygnuje → confirmation="no".
 ⚠️ confirmation="change" jest TYLKO do POPRAWIANIA pola które klient JUŻ WCZEŚNIEJ ustalił/
 potwierdził w tej rozmowie (np. po podsumowaniu mówi "nie, zmieńmy jednak godzinę"). Gdy
 klient po prostu ODPOWIADA na propozycję terminu własną datą/godziną (np. na pytanie
-"zapisać, czy wolisz inny termin?" mówi "wolę we wtorek o dziesiątej") — to jest ZWYKŁA
+"zapisać na ten termin, czy szukamy innego?" mówi "wolę we wtorek o dziesiątej") — to jest ZWYKŁA
 kontynuacja: confirmation="none" (albo "yes" jeśli dosłownie akceptuje), wypełnij date_text/
 time_text nową wartością, NIE ustawiaj "change". Błędne użycie "change" tutaj resetuje całą
 rezerwację (usługę, pracownika) do zera, co jest widoczne dla klienta i frustrujące.
