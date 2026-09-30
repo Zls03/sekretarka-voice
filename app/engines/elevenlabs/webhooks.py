@@ -1,7 +1,10 @@
 """Webhooki wołane przez ElevenLabs: personalizacja, narzędzia w trakcie rozmowy, post-call."""
 
+from __future__ import annotations
+
 import json
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Request
 from loguru import logger
@@ -288,174 +291,186 @@ async def save_elevenlabs_transcript(tenant: dict, call_sid: str, transcript: li
     return saved
 
 
+NO_CONTENT_SUMMARY = "Brak treści rozmowy."
+FAILED_SUMMARY = "Nie udało się wygenerować streszczenia."
+
+
+@dataclass(frozen=True)
+class PostCallPayload:
+    """Dane rozmowy z webhooka post-call.
+
+    Numer firmy i id połączenia wracają w dynamic_variables, które sami wysłaliśmy na
+    starcie rozmowy (ElevenLabs odsyła je bez zmian). system__call_sid ma pierwszeństwo:
+    przy SIP direct nadpisujemy go uuid Vonage (nagłówek X-CALL-ID), pod którym jest
+    wpis w call_logs. phone_call.* to zapasowe źródło dla innych typów połączeń.
+    """
+
+    conversation_id: str
+    called_number: str
+    caller_phone: str
+    call_sid: str
+    duration: int
+    status: str | None
+    transcript: list
+    analysis: dict
+    dynamic_variables: dict
+    keys: list
+
+    @classmethod
+    def from_body(cls, body: dict) -> PostCallPayload:
+        data = body.get("data") or {}
+        dyn_vars = (data.get("conversation_initiation_client_data") or {}).get("dynamic_variables") or {}
+        phone_call = data.get("phone_call") or {}
+        return cls(
+            conversation_id=data.get("conversation_id") or "",
+            called_number=dyn_vars.get("called_number") or phone_call.get("agent_number") or "",
+            caller_phone=dyn_vars.get("caller_phone") or phone_call.get("external_number") or "",
+            call_sid=(
+                dyn_vars.get("system__call_sid")
+                or dyn_vars.get("call_sid")
+                or dyn_vars.get("twilio_call_sid")
+                or phone_call.get("call_sid")
+                or ""
+            ),
+            duration=int((data.get("metadata") or {}).get("call_duration_secs") or 0),
+            status=data.get("status"),
+            transcript=data.get("transcript") or [],
+            analysis=data.get("analysis") or {},
+            dynamic_variables=dyn_vars,
+            keys=list(data.keys()),
+        )
+
+
+def _caller_display(caller_phone: str) -> str:
+    if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", ""):
+        return caller_phone
+    return "numer zastrzeżony"
+
+
+def _conversation_lines(transcript: list) -> list[str]:
+    """Transkrypt ElevenLabs w formacie linii wspólnym dla podsumowań wszystkich silników."""
+    lines = []
+    for turn in transcript:
+        content = (turn.get("message") or "").strip()
+        if len(content) > 2:
+            label = "Asystent" if turn.get("role") == "agent" else "Klient"
+            lines.append(f"{label}: {content[:200]}")
+    return lines
+
+
+async def _already_processed_elsewhere(tenant: dict, call_sid: str) -> bool:
+    """Retry webhooka potrafi trafić na inną replikę/proces — pamięć procesu nie wystarcza,
+    więc sprawdzamy, czy transkrypt tej rozmowy jest już w bazie."""
+    target_db = saas_db if tenant.get("id", "").startswith("firm_") else db
+    try:
+        return bool(await target_db.execute("SELECT id FROM call_transcripts WHERE call_sid = ? LIMIT 1", [call_sid]))
+    except Exception as e:
+        logger.error(f"⚠️ [ELEVENLABS AGENT] Post-call: DB dedup check error: {e}")
+        return False
+
+
+def _choose_summary(
+    summary: str, payload: PostCallPayload, tenant: dict, pending_contact_owner: dict | None
+) -> tuple[str, bool]:
+    """(tekst raportu, czy rozmowa miała realną treść — od tego zależy push)."""
+    has_real_content = summary != NO_CONTENT_SUMMARY
+    if summary in (NO_CONTENT_SUMMARY, FAILED_SUMMARY):
+        # Wbudowane streszczenie ElevenLabs jest lepsze niż nic.
+        summary = payload.analysis.get("transcript_summary") or ""
+        if summary:
+            has_real_content = True
+    if not summary and pending_contact_owner:
+        # Klient zostawił wiadomość — to prawdziwe zgłoszenie, nawet bez streszczenia.
+        return "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej.", True
+    if not summary and int(tenant.get("report_empty_calls") or 0):
+        summary = (
+            f"Połączenie odebrane od: {_caller_display(payload.caller_phone)}. Rozmowa się nie odbyła — "
+            "rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
+        )
+    return summary, has_real_content
+
+
 @router.post("/elevenlabs/post-call")
 async def elevenlabs_post_call(request: Request):
-    """⚠️ NIE nalicza minut/kredytów — to już robi /twilio/status (bot_gemini_test.py),
-    dokładnie tym samym mechanizmem co dla Gemini Live/OpenAI Realtime, bo Twilio wysyła
-    swój własny "completed" callback niezależnie od tego, który silnik obsłużył audio
-    (potwierdzone na żywo 2026-09-02: call_sid się zgadza, oba webhooki widzą tę samą
-    rozmowę). Druga próba naliczania tu = podwójne obciążenie klienta.
+    """Po rozmowie ElevenLabs: transkrypt, podsumowanie, raport e-mail, CRM i push.
 
-    Ten handler robi WYŁĄCZNIE to, czego /twilio/status nie ma: transkrypt rozmowy
-    (call_transcripts) + mail z podsumowaniem (jeśli tenant ma włączone raporty) — bez
-    tego panel nie ma czego pokazać po "rozwinięciu" logu rozmowy dla połączeń przez
-    ElevenLabs.
-
-    ⚠️ 2026-09-02: na żywym payloadzie z register_call() (bring-your-own-Twilio) okazało
-    się, że body["data"] NIE zawiera klucza "phone_call" w ogóle (zaobserwowane klucze:
-    agent_id, metadata, analysis, conversation_initiation_client_data, conversation_id,
-    transcript, ...) — inaczej niż wcześniej zakładano na podstawie dokumentacji. Powód:
-    register_call() nie przekazuje Twilio CallSid do ElevenLabs (nie ma takiego pola w
-    ich API), więc ich webhook nie ma skąd go znać. Naprawione przez ECHO: CallSid i
-    called_number są teraz wysyłane w dynamic_variables przy register_call()
-    (build_register_call_twiml) i odczytywane z powrotem tutaj z
-    data.conversation_initiation_client_data.dynamic_variables — ElevenLabs oddaje ten
-    obiekt bez zmian w każdym post-call webhooku. data.metadata.call_duration_secs i
-    data.transcript[].{role,message} pozostają bez zmian (potwierdzone działające)."""
+    Minut NIE naliczamy — robi to webhook statusu operatora (/twilio/status,
+    /vonage/events) jak dla pozostałych silników; tutaj oznaczałoby to podwójne obciążenie.
+    Webhook bywa ponawiany, więc duplikaty są odrzucane.
+    """
     raw_body = await request.body()
-    signature_header = request.headers.get("elevenlabs-signature", "")
-
     try:
         body = json.loads(raw_body)
     except Exception:
         logger.error(f"❌ [ELEVENLABS AGENT] Post-call: nie mogę sparsować JSON: {raw_body[:500]!r}")
         return {"status": "ignored"}
 
-    data = body.get("data") or {}
-    metadata = data.get("metadata") or {}
-    analysis = data.get("analysis") or {}
-    init_data = data.get("conversation_initiation_client_data") or {}
-    dyn_vars = init_data.get("dynamic_variables") or {}
-    # Fallback na starą ścieżkę (phone_call.*) na wypadek gdyby inny typ połączenia
-    # (np. przyszły import numeru zamiast register_call) jednak ją wypełniał.
-    phone_call = data.get("phone_call") or {}
-
-    called_number = dyn_vars.get("called_number") or phone_call.get("agent_number") or ""
-    caller_phone = dyn_vars.get("caller_phone") or phone_call.get("external_number") or ""
-    # call_sid ogólne (dopisane 2026-09-03 razem z mostem Vonage — patrz
-    # _build_conversation_config_override) sprawdzane PRZED starym twilio_call_sid,
-    # oba klucze i tak niosą tę samą wartość dla nowych połączeń.
-    # 2026-09-10 — system__call_sid sprawdzane NAJPIERW: dla SIP direct (vonage_answer_
-    # gemini_live) wstrzykujemy UUID Vonage jako nagłówek SIP X-CALL-ID (zarezerwowany przez
-    # ElevenLabs, nadpisuje ich własny system__call_sid), żeby ID rozmowy w tym webhooku
-    # zgadzało się z UUID pod którym /vonage/events zakłada wpis w call_logs — bez tego
-    # transkrypt zapisywał się pod WEWNĘTRZNYM call_sid ElevenLabs (SCL_xxx), którego panel
-    # nigdy nie znajdował przy wyświetlaniu historii rozmowy dla danego wpisu w logu połączeń.
-    call_sid = (
-        dyn_vars.get("system__call_sid")
-        or dyn_vars.get("call_sid")
-        or dyn_vars.get("twilio_call_sid")
-        or phone_call.get("call_sid")
-        or ""
-    )
-    duration = int(metadata.get("call_duration_secs") or 0)
-    transcript = data.get("transcript") or []
-
+    payload = PostCallPayload.from_body(body)
     logger.info(
-        f"📊 [ELEVENLABS AGENT] Post-call: {called_number} ({call_sid}, {duration}s, "
-        f"status={data.get('status')}, {len(transcript)} tur) | signature={signature_header!r}"
+        f"📊 [ELEVENLABS AGENT] Post-call: {payload.called_number} ({payload.call_sid}, {payload.duration}s, "
+        f"status={payload.status}, {len(payload.transcript)} tur) "
+        f"| signature={request.headers.get('elevenlabs-signature', '')!r}"
     )
 
-    # Sprzątanie stanu rezerwacji "w toku" (patrz _elevenlabs_call_states wyżej) — rozmowa
-    # się skończyła, ewentualny niedokończony booking i tak trzeba by zaczynać od nowa.
-    # Zanim posprzątamy: wyciągamy ewentualną odłożoną wiadomość z contact_owner (patrz
-    # 2026-09-09 w elevenlabs_tool_contact_owner) — doklejamy ją do raportu niżej zamiast
-    # wysyłać osobny mail.
-    _pending_call_state = _elevenlabs_call_states.pop(data.get("conversation_id") or "", None)
-    pending_contact_owner = (_pending_call_state or {}).get("pending_contact_owner")
+    # Rozmowa skończona — sprzątamy jej stan; odłożona wiadomość contact_owner trafi do raportu.
+    pending_contact_owner = (_elevenlabs_call_states.pop(payload.conversation_id, None) or {}).get(
+        "pending_contact_owner"
+    )
 
-    if not call_sid or not called_number:
+    if not payload.call_sid or not payload.called_number:
         logger.warning(
             f"⚠️ [ELEVENLABS AGENT] Post-call: brak call_sid/called_number w payloadzie, pomijam. "
-            f"data.keys()={list(data.keys())} dynamic_variables={dyn_vars}"
+            f"data.keys()={payload.keys} dynamic_variables={payload.dynamic_variables}"
         )
         return {"status": "ignored"}
-
-    if call_sid in _processed_post_call_sids:
-        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} już przetworzony, pomijam duplikat webhooka")
-        return {"status": "duplicate_ignored"}
-    _processed_post_call_sids.add(call_sid)
-
-    tenant = await get_tenant_by_phone(called_number)
-    if not tenant:
-        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: nie znaleziono tenanta dla {called_number}")
-        return {"status": "ignored"}
-
-    # 2026-09-18 — powyższy _processed_post_call_sids (in-memory) NIE wystarczał: potwierdzone
-    # na żywo (3 realne testy, zawsze dokładnie 2 identyczne notatki w CRM) że retry webhooka
-    # z ElevenLabs potrafi trafić na INNY proces/replikę Railway niż ten, który obsłużył
-    # pierwsze wywołanie — założenie "to jeden długo działający proces" (patrz komentarz przy
-    # _elevenlabs_call_states wyżej) okazało się fałszywe dla post-call, mimo że bezpieczne dla
-    # stanu W TRAKCIE jednej rozmowy (tam most WebSocket faktycznie trzyma jeden proces).
-    # Sprawdzamy więc DODATKOWO trwały stan w DB (call_transcripts przeżywa restart/inną
-    # replikę) — jeśli transkrypt dla tego call_sid już istnieje, ktoś (inny proces) już to
-    # przetworzył. Nieidealne (race dwóch request'ów w tej samej milisekundzie wciąż możliwy),
-    # ale naprawia realny, powtarzalny przypadek z testów zamiast tylko teoretyczny.
-    is_saas = tenant.get("id", "").startswith("firm_")
-    target_db = saas_db if is_saas else db
-    try:
-        already_saved = await target_db.execute(
-            "SELECT id FROM call_transcripts WHERE call_sid = ? LIMIT 1", [call_sid]
-        )
-    except Exception as e:
-        logger.error(f"⚠️ [ELEVENLABS AGENT] Post-call: DB dedup check error: {e}")
-        already_saved = None
-    if already_saved:
+    if payload.call_sid in _processed_post_call_sids:
         logger.warning(
-            f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} ma już transkrypt w DB, pomijam duplikat webhooka (inna replika/restart)"
+            f"⚠️ [ELEVENLABS AGENT] Post-call: {payload.call_sid} już przetworzony, pomijam duplikat webhooka"
+        )
+        return {"status": "duplicate_ignored"}
+    _processed_post_call_sids.add(payload.call_sid)
+
+    tenant = await get_tenant_by_phone(payload.called_number)
+    if not tenant:
+        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: nie znaleziono tenanta dla {payload.called_number}")
+        return {"status": "ignored"}
+    if await _already_processed_elsewhere(tenant, payload.call_sid):
+        logger.warning(
+            f"⚠️ [ELEVENLABS AGENT] Post-call: {payload.call_sid} ma już transkrypt w DB, "
+            "pomijam duplikat webhooka (inna replika/restart)"
         )
         return {"status": "duplicate_ignored"}
 
-    saved = await save_elevenlabs_transcript(tenant, call_sid, transcript, analysis)
-    logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({call_sid})")
+    saved = await save_elevenlabs_transcript(tenant, payload.call_sid, payload.transcript, payload.analysis)
+    logger.info(f"📝 [ELEVENLABS AGENT] Transcript saved: {saved} wiadomości ({payload.call_sid})")
 
-    # Mail z podsumowaniem po KAŻDEJ rozmowie — 1:1 z realtime_tools.py::maybe_send_call_summary
-    # (Gemini Live/OpenAI Realtime). ZMIANA 2026-09-04: wcześniej brało gotowe streszczenie
-    # z ElevenLabs (data.analysis.transcript_summary) — generyczne, bez kontekstu firmy i bez
-    # strukturalnej ekstrakcji (kto/powód/szczegóły/wynik). Teraz konwertujemy transcript[]
-    # (role "agent"/"user", pole "message") do TEGO SAMEGO formatu list stringów co
-    # generate_conversation_summary() używa dla Gemini Live/OpenAI Realtime, i wołamy
-    # DOKŁADNIE tę samą funkcję (summarize_conversation_lines) z kontekstem firmy
-    # (tenant["additional_info"]) — spójne, per-firmowe podsumowania na wszystkich 3 silnikach.
+    conversation_lines = _conversation_lines(payload.transcript)
+    summary, has_real_content = _choose_summary(
+        await summarize_conversation_lines(conversation_lines, tenant), payload, tenant, pending_contact_owner
+    )
+    await _deliver_report(tenant, payload, summary, has_real_content, conversation_lines, pending_contact_owner)
+    return {"status": "ok"}
+
+
+async def _deliver_report(
+    tenant: dict,
+    payload: PostCallPayload,
+    summary: str,
+    has_real_content: bool,
+    conversation_lines: list[str],
+    pending_contact_owner: dict | None,
+) -> None:
+    caller = payload.caller_phone or "nieznany"
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
-    conversation_lines = []
-    for turn in transcript:
-        role = "assistant" if turn.get("role") == "agent" else "user"
-        content = (turn.get("message") or "").strip()
-        if len(content) > 2:
-            label = "Klient" if role == "user" else "Asystent"
-            conversation_lines.append(f"{label}: {content[:200]}")
-    summary = await summarize_conversation_lines(conversation_lines, tenant)
-    # 2026-09-25 — patrz identyczny komentarz/flaga w realtime_tools.py::maybe_send_call_summary
-    # (push leci TYLKO dla rozmów z realną treścią, nie za każde ciche połączenie). Zapamiętane
-    # PRZED podmianami niżej, bo "Brak treści rozmowy." zaraz zostanie nadpisane fallbackiem.
-    has_real_content = summary != "Brak treści rozmowy."
-    if summary == "Brak treści rozmowy." or summary == "Nie udało się wygenerować streszczenia.":
-        # Zapasowo — wbudowane streszczenie ElevenLabs lepsze niż nic, gdyby nasze zawiodło.
-        summary = analysis.get("transcript_summary") or ""
-        if summary:
-            has_real_content = True
-    if not summary and pending_contact_owner:
-        # 2026-09-09 — odłożona wiadomość z contact_owner to NIE pusta rozmowa, transkrypt po
-        # prostu nie dał GPT wystarczająco treści — realny lead istnieje, musi trafić do maila.
-        summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
-        has_real_content = True
-    elif not summary and int(tenant.get("report_empty_calls") or 0):
-        # 2026-09-09 — patrz identyczny komentarz w realtime_tools.py::maybe_send_call_summary
-        # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
-        caller_display = (
-            caller_phone
-            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
-            else "numer zastrzeżony"
-        )
-        summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
+    report_sent = bool(lead_email_enabled and to_email and summary)
+
     if summary:
-        await persist_call_summary(tenant, call_sid, summary)
-    if lead_email_enabled and to_email and summary:
+        await persist_call_summary(tenant, payload.call_sid, summary)
+    if report_sent:
         ok = await send_call_summary_email(
             tenant,
-            caller_phone or "nieznany",
+            caller,
             summary,
             to_email,
             pending_message=pending_contact_owner,
@@ -463,35 +478,20 @@ async def elevenlabs_post_call(request: Request):
         )
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
     if summary and is_crm_test_tenant(tenant):
-        # Patrz CLAUDE.md "CRM Integration" i identyczny hook w
-        # realtime_tools.py::maybe_send_call_summary — POC ograniczony do numeru
-        # demo BizVoice, niezależny od lead_email_enabled.
-        await maybe_send_to_crm(tenant, caller_phone or "nieznany", summary)
-    if not (lead_email_enabled and to_email and summary) and pending_contact_owner:
-        # Awaryjny fallback — odłożyliśmy wiadomość zakładając że poleci tu razem z raportem,
-        # ale coś się zmieniło (np. lead_email_enabled wyłączone w trakcie rozmowy) — wyślij
-        # ją osobno, żeby zgłoszenie nie przepadło.
+        await maybe_send_to_crm(tenant, caller, summary)
+    if not report_sent and pending_contact_owner:
+        # Wiadomość odłożyliśmy do raportu, który jednak nie poszedł — wysyłamy ją osobno.
         fallback_to = tenant.get("notification_email") or tenant.get("email")
         if fallback_to:
             await send_message_email(
                 tenant,
                 pending_contact_owner.get("customer_name") or "Nieznany",
                 pending_contact_owner.get("message") or "",
-                caller_phone or "nieznany",
+                caller,
                 fallback_to,
             )
             logger.warning("📧 [ELEVENLABS AGENT] pending_contact_owner: raport nie poleciał, wysłano awaryjnie osobno")
-
     if has_real_content and summary:
-        caller_display = (
-            caller_phone
-            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
-            else "numer zastrzeżony"
-        )
         await send_push_notifications(
-            tenant,
-            title="📞 Nowe zgłoszenie",
-            body=f"{caller_display}: {summary}",
+            tenant, title="📞 Nowe zgłoszenie", body=f"{_caller_display(payload.caller_phone)}: {summary}"
         )
-
-    return {"status": "ok"}
