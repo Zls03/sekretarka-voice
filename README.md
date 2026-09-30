@@ -102,5 +102,12 @@ firmę w jednym, stałym kształcie. Nową kolumnę tabeli `firms` trzeba tam ja
 
 ## Wdrożenie
 
-Railway, jedna usługa. `Procfile`: `uvicorn app.main:app`. Stara komenda
-`uvicorn bot_gemini_test:app` nadal działa dzięki shimowi.
+Railway, projekt `humorous-analysis`, usługa `gemini-test` (`web-production-fb477`),
+auto-deploy z gałęzi `main`. Ustawienia usługi (stan 2026-09-30):
+
+- Build: Railpack (Python 3.12) + custom build command
+  `pip install -r requirements-gemini-test.txt` (podbija pipecat do 1.4.0 ponad
+  zależności z `requirements.txt`, m.in. Azure TTS — oba pliki są potrzebne).
+- Start: custom start command `uvicorn bot_gemini_test:app --host 0.0.0.0 --port $PORT`
+  — dlatego `bot_gemini_test.py` (shim) musi zostać. `Procfile` jest przez Railway
+  ignorowany, dopóki ustawiona jest custom start command.

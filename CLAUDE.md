@@ -47,6 +47,9 @@ UPDATE_GOLDEN=1 pytest                    # odśwież wzorce po ŚWIADOMEJ zmian
 ruff check . && ruff format --check .     # lint + format
 ```
 
+Railway (usługa `gemini-test`): start `uvicorn bot_gemini_test:app` (custom start command — shim
+musi zostać), build `pip install -r requirements-gemini-test.txt` na bazie `requirements.txt`.
+
 Runtime: Python 3.12, pipecat-ai 1.4.0. Lokalne środowisko jak na Railway: `.venv-railway`
 (`requirements-dev.txt` + extras pipecat azure/cartesia/elevenlabs/openai/google/silero —
 samo `requirements-gemini-test.txt` NIE wystarcza, `app/tts.py` importuje Azure).
