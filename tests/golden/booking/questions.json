@@ -42,7 +42,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "U Kasia Nowaka najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "say_exactly": "U Kasi Nowak najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
         "status": "ask"
       }
     },

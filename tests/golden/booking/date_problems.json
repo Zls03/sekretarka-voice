@@ -42,7 +42,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Rezerwacje można składać maksymalnie 30 dni w przód. W czwartek, 24 grudnia to za daleko. Najbliższy wolny termin u Kasia Nowaka to dziś o szesnastej. Czy zapisać na ten termin?",
+        "say_exactly": "Rezerwacje można składać maksymalnie 30 dni w przód. W czwartek, 24 grudnia to za daleko. Najbliższy wolny termin u Kasi Nowak to dziś o szesnastej. Czy zapisać na ten termin?",
         "status": "ask"
       }
     },
@@ -53,7 +53,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Pojutrze u Kasia Nowaka nie ma wolnych terminów. Najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "say_exactly": "Pojutrze u Kasi Nowak nie ma wolnych terminów. Najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
         "status": "ask"
       }
     },

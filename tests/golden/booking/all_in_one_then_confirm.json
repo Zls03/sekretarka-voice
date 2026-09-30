@@ -233,7 +233,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Koloryzacja u Kasia Nowaka, jutro o trzynastej — na Pana Jana. Uwagi: Proszę o kawę. Zgadza się?",
+        "say_exactly": "Koloryzacja u Kasi Nowak, jutro o trzynastej — na Pana Jana. Uwagi: Proszę o kawę. Zgadza się?",
         "status": "ask"
       }
     },
@@ -243,7 +243,7 @@
       },
       "result": {
         "done": true,
-        "say_exactly": "Gotowe. Koloryzacja u Kasia Nowaka, jutro o trzynastej. Uwagi zapisane. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
+        "say_exactly": "Gotowe. Koloryzacja u Kasi Nowak, jutro o trzynastej. Uwagi zapisane. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
         "status": "booked"
       }
     }

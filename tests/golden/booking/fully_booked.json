@@ -14,7 +14,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "U Kasia Nowaka w najbliższych 14 dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
+        "say_exactly": "U Kasi Nowak w najbliższych 14 dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
         "status": "ask"
       }
     },
@@ -36,7 +36,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Jutro u Kasia Nowaka nie ma wolnych terminów i w najbliższych 14 dniach grafik jest pełny. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
+        "say_exactly": "Jutro u Kasi Nowak nie ma wolnych terminów i w najbliższych 14 dniach grafik jest pełny. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
         "status": "ask"
       }
     }

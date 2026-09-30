@@ -243,7 +243,7 @@ IMIE_DOPELNIACZ = {
     "iza": "izy",
     "ewa": "ewy",
     "monia": "moni",
-    "daria": "dari",
+    "daria": "darii",
     "darka": "darki",
     "natka": "natki",
     "kinga": "kingi",
@@ -456,6 +456,11 @@ def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
     if not imie:
         return imie
 
+    first, _, surname = imie.strip().partition(" ")
+    if surname:
+        female = detect_gender(first) == "Pani"
+        return f"{odmien_imie(first, przypadek)} {_odmien_nazwisko(surname.strip(), female=female)}"
+
     imie_clean = imie.strip()
     imie_lower = imie_clean.lower()
     original_case = imie_clean[0].isupper() if imie_clean else False
@@ -479,12 +484,35 @@ def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
     return result.title() if original_case else result
 
 
+def _odmien_nazwisko(nazwisko: str, *, female: bool) -> str:
+    """Dopełniacz nazwiska dla najczęstszych wzorców; nietypowe zostają bez zmian.
+
+    Nazwiska kobiet zakończone spółgłoską się nie odmieniają (u Kasi Nowak).
+    """
+    lower = nazwisko.lower()
+    if female:
+        if lower.endswith(("ska", "cka", "dzka")):
+            return nazwisko[:-1] + "iej"
+        if lower.endswith("owa"):
+            return nazwisko[:-1] + "ej"
+        return nazwisko
+    if lower.endswith(("ski", "cki", "dzki")):
+        return nazwisko + "ego"
+    if lower[-1:] in "aeiouyąęó":
+        return nazwisko
+    return nazwisko + "a"
+
+
 def _odmien_reguly(imie: str) -> str:
     """Automatyczne reguły odmiany przez dopełniacz."""
 
     # Żeńskie kończące się na -ia → -i
     if imie.endswith("ia"):
-        return imie[:-1]  # Ania → Ani, Maria → Mari, Kasia → Kasi
+        # Po s/z/c/n "i" tylko zmiękcza (Kasia → Kasi, Ania → Ani); po innych
+        # spółgłoskach jest osobną głoską (Maria → Marii, Julia → Julii).
+        if len(imie) > 2 and imie[-3] in "szcn":
+            return imie[:-1]
+        return imie[:-1] + "ii"
 
     # Żeńskie kończące się na -ja → -i (Maja → Mai)
     if imie.endswith("ja"):
@@ -552,7 +580,7 @@ def detect_gender(imie: str) -> str:
     if not imie:
         return "Pana"  # default męski
 
-    imie_lower = imie.lower().strip()
+    imie_lower = imie.lower().strip().split()[0]
 
     # Wyjątki - męskie kończące się na 'a'
     if imie_lower in MESKIE_NA_A:
