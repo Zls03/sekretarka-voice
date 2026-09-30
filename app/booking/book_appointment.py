@@ -685,26 +685,19 @@ def _confirm(turn: _Turn) -> dict | None:
 async def _save_booking(
     state: dict, tenant: dict, caller_phone: str, call_state: dict, channel: str = "twilio"
 ) -> dict:
-    """Zapisuje rezerwację do API — z PODWÓJNĄ walidacją. 1:1 z _save_booking() w cascade,
-    plus obsługa 409 slot_taken (patrz save_booking_in_panel)."""
-    logger.info("💾 [BOOKING] SAVING BOOKING...")
+    """Zapisuje potwierdzoną wizytę w panelu, wysyła SMS i dopisuje wizytę do CRM.
 
+    Termin sprawdzamy jeszcze raz tuż przed zapisem, a panel dodatkowo odrzuca zajęty
+    slot (409) — dwie równoległe rozmowy nie zarezerwują tej samej godziny.
+    """
+    logger.info("💾 [BOOKING] SAVING BOOKING...")
     try:
         is_available, current_slots = await validate_slot_available(
             tenant, state["staff"], state["service"], state["date"], state["time"]
         )
-
         if not is_available:
             logger.warning("❌ [BOOKING] Slot was taken between confirmation and save (re-check)")
-            if current_slots:
-                state.pop("time", None)
-                state["available_slots"] = current_slots
-                slots_text = slots_summary(current_slots)
-                return _ask(call_state, state, f"Ta godzina właśnie zniknęła. Zostały: {slots_text}. Którą?")
-            else:
-                state.pop("date", None)
-                state.pop("time", None)
-                return _ask(call_state, state, "Ten dzień właśnie się zapełnił. Który inny?")
+            return _slot_lost(call_state, state, current_slots, "Ta godzina właśnie zniknęła.")
 
         outcome, result = await save_booking_in_panel(
             tenant,
@@ -716,84 +709,82 @@ async def _save_booking(
             caller_phone,
             notes=state.get("notes", ""),
         )
-
         if outcome == "slot_taken":
-            # Baza złapała race condition którego nasza re-walidacja wyżej nie złapała
-            # (dwie równoległe rozmowy trafiły w ten sam termin między naszym sprawdzeniem
-            # a zapisem) — dokładnie ta sama ścieżka co nieudana re-walidacja powyżej.
             logger.warning("❌ [BOOKING] 409 z API mimo udanej re-walidacji — prawdziwy race condition")
             fresh_slots = await get_available_slots_from_api(tenant, state["staff"], state["service"], state["date"])
-            if fresh_slots:
-                state.pop("time", None)
-                state["available_slots"] = fresh_slots
-                slots_text = slots_summary(fresh_slots)
-                return _ask(call_state, state, f"Ta godzina właśnie została zajęta. Zostały: {slots_text}. Którą?")
-            else:
-                state.pop("date", None)
-                state.pop("time", None)
-                return _ask(call_state, state, "Ten dzień właśnie się zapełnił. Który inny?")
-
+            return _slot_lost(call_state, state, fresh_slots, "Ta godzina właśnie została zajęta.")
         if outcome == "error" or not result:
             return _ask(call_state, state, "Coś poszło nie tak z zapisem. Przekazać wiadomość do właściciela?")
 
-        # Sukces
-        booking_code = result.get("booking_code", "")
-        sms_info = ""
-        if booking_code and caller_phone:
-            try:
-                # tenant.get("phone_number") jest numerem VONAGE dla tras vonage, a Twilio wysyłkę
-                # SMS przyjmuje TYLKO z numerów które sam obsługuje ("From" musi być numerem Twilio,
-                # patrz błąd 21659 złapany na żywym telefonie: numer Vonage odrzucony) — stąd wybór
-                # providera po kanale połączenia, nie jeden zaszyty na sztywno jak w cascade
-                # (cascade zawsze ma Twilio, więc tam ten problem nie istnieje).
-                sms_func = send_booking_sms_vonage if channel == "vonage" else send_booking_sms
-                sms_sent = await sms_func(
-                    tenant=tenant,
-                    customer_phone=caller_phone,
-                    service_name=state["service"]["name"],
-                    staff_name=state["staff"]["name"],
-                    date_str=state["date"].strftime("%d.%m"),
-                    time_str=state["time"],
-                    booking_code=booking_code,
-                )
-                if sms_sent:
-                    await increment_sms_count(tenant.get("id"))
-                    sms_info = " Wysłałam esemes z potwierdzeniem."
-                else:
-                    sms_info = " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
-            except Exception as e:
-                logger.error(f"📱 [BOOKING] SMS error: {e}")
-                sms_info = " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
+        sms_info = await _send_confirmation_sms(state, tenant, caller_phone, result.get("booking_code", ""), channel)
+        _record_visit_in_crm(state, tenant, caller_phone)
 
-        try:
-            time_padded = state["time"].zfill(5)
-            scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{time_padded}:00"
-            spawn(
-                save_client_visit(
-                    firm_id=tenant.get("id", ""),
-                    phone=caller_phone,
-                    name=state.get("name", ""),
-                    service=state["service"]["name"],
-                    staff=state["staff"]["name"],
-                    scheduled_at=scheduled_at,
-                    notes=state.get("notes", ""),
-                )
-            )
-        except Exception as e:
-            logger.warning(f"[BOOKING] CRM save_client_visit error: {e}")
-
-        staff_name = odmien_imie(state["staff"]["name"])
         notes_confirm = " Uwagi zapisane." if state.get("notes") else ""
         final_text = (
-            f"Gotowe. {state['service']['name']} u {staff_name}, "
+            f"Gotowe. {state['service']['name']} u {odmien_imie(state['staff']['name'])}, "
             f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
             f"{notes_confirm}{sms_info} {closing_question()}"
         )
         return _finish(call_state, final_text, "booked")
-
     except Exception as e:
         logger.error(f"💾 [BOOKING] SAVE error: {e}")
         return _ask(call_state, state, "Coś poszło nie tak. Przekazać wiadomość?")
+
+
+def _slot_lost(call_state: dict, state: dict, remaining_slots: list[str], intro: str) -> dict:
+    """Wybrana godzina przepadła w międzyczasie — proponujemy pozostałe albo inny dzień."""
+    if remaining_slots:
+        state.pop("time", None)
+        state["available_slots"] = remaining_slots
+        return _ask(call_state, state, f"{intro} Zostały: {slots_summary(remaining_slots)}. Którą?")
+    state.pop("date", None)
+    state.pop("time", None)
+    return _ask(call_state, state, "Ten dzień właśnie się zapełnił. Który inny?")
+
+
+async def _send_confirmation_sms(state: dict, tenant: dict, caller_phone: str, booking_code: str, channel: str) -> str:
+    """Wysyła SMS z kodem wizyty; zwraca zdanie do dopowiedzenia klientowi.
+
+    Operator SMS musi być ten sam co połączenia: Twilio wysyła tylko ze swoich numerów
+    (błąd 21659 dla numeru Vonage).
+    """
+    if not (booking_code and caller_phone):
+        return ""
+    try:
+        sms_func = send_booking_sms_vonage if channel == "vonage" else send_booking_sms
+        sms_sent = await sms_func(
+            tenant=tenant,
+            customer_phone=caller_phone,
+            service_name=state["service"]["name"],
+            staff_name=state["staff"]["name"],
+            date_str=state["date"].strftime("%d.%m"),
+            time_str=state["time"],
+            booking_code=booking_code,
+        )
+        if sms_sent:
+            await increment_sms_count(tenant.get("id"))
+            return " Wysłałam esemes z potwierdzeniem."
+    except Exception as e:
+        logger.error(f"📱 [BOOKING] SMS error: {e}")
+    return " Niestety esemes nie dotarł, ale rezerwacja jest zapisana."
+
+
+def _record_visit_in_crm(state: dict, tenant: dict, caller_phone: str) -> None:
+    try:
+        scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{state['time'].zfill(5)}:00"
+        spawn(
+            save_client_visit(
+                firm_id=tenant.get("id", ""),
+                phone=caller_phone,
+                name=state.get("name", ""),
+                service=state["service"]["name"],
+                staff=state["staff"]["name"],
+                scheduled_at=scheduled_at,
+                notes=state.get("notes", ""),
+            )
+        )
+    except Exception as e:
+        logger.warning(f"[BOOKING] CRM save_client_visit error: {e}")
 
 
 def build_book_appointment_tool(
