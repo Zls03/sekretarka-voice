@@ -1,0 +1,44 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "2026-10-01",
+    "service": "Strzyżenie damskie",
+    "staff": "Kasia Nowak"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "U Kasia Nowaka w najbliższych 14 dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "question": "kiedy wolne terminy?"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Niestety, w najbliższych 14 dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-10-01"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Jutro u Kasia Nowaka nie ma wolnych terminów i w najbliższych 14 dniach grafik jest pełny. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
+        "status": "ask"
+      }
+    }
+  ]
+}

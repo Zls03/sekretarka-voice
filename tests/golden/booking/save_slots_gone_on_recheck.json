@@ -1,0 +1,43 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "2026-10-01",
+    "available_slots": [
+      "09:00",
+      "10:00",
+      "13:00",
+      "15:30"
+    ],
+    "confirmed": true,
+    "name": "Ewa",
+    "service": "Strzyżenie damskie",
+    "staff": "Tomek"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "customer_name": "Ewa",
+        "date_text": "2026-10-01",
+        "service": "Strzyżenie damskie",
+        "staff": "Tomek",
+        "time_text": "10:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Strzyżenie damskie u Tomka, jutro o dziesiątej — na Pani Ewy. Zgadza się?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "yes"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Ten dzień właśnie się zapełnił. Który inny?",
+        "status": "ask"
+      }
+    }
+  ]
+}

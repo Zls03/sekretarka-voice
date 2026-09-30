@@ -1,0 +1,55 @@
+{
+  "edge_calls": [
+    [
+      "save_booking_in_panel",
+      "Tomek",
+      "Strzyżenie damskie",
+      "2026-10-01 00:00:00",
+      "10:00",
+      "Ewa",
+      ""
+    ]
+  ],
+  "final_state": {
+    "_last_date_text": "2026-10-01",
+    "available_slots": [
+      "09:00",
+      "10:00",
+      "13:00",
+      "15:30"
+    ],
+    "confirmed": true,
+    "date": "2026-10-01 00:00:00",
+    "name": "Ewa",
+    "service": "Strzyżenie damskie",
+    "staff": "Tomek",
+    "time": "10:00"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "customer_name": "Ewa",
+        "date_text": "2026-10-01",
+        "service": "Strzyżenie damskie",
+        "staff": "Tomek",
+        "time_text": "10:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Strzyżenie damskie u Tomka, jutro o dziesiątej — na Pani Ewy. Zgadza się?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "yes"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Coś poszło nie tak z zapisem. Przekazać wiadomość do właściciela?",
+        "status": "ask"
+      }
+    }
+  ]
+}

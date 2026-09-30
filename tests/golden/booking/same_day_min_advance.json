@@ -1,0 +1,40 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "dzisiaj",
+    "available_slots": [
+      "16:00"
+    ],
+    "date": "2026-09-30 12:15:00",
+    "service": "Strzyżenie damskie",
+    "staff": "Kasia Nowak",
+    "time": "16:00"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "dzisiaj",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak",
+        "time_text": "11:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Rezerwacje przyjmujemy z minimum 2 godzinnym wyprzedzeniem. Wolne są: szesnastej.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "16:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Świetnie, dziś o szesnastej. Na jakie imię zapisać wizytę?",
+        "status": "ask"
+      }
+    }
+  ]
+}

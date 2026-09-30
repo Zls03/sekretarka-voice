@@ -1,0 +1,37 @@
+{
+  "edge_calls": [],
+  "final_state": {},
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "no"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Strzyżenie damskie"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Świetnie. Do kogo? Dostępni: Kasia Nowak i Tomek.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "no"
+      },
+      "result": {
+        "done": true,
+        "say_exactly": "Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?",
+        "status": "cancelled"
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "edge_calls": [
+    [
+      "answer_general_question",
+      "Gdzie można zaparkować?"
+    ]
+  ],
+  "final_state": {
+    "_pending_date": "2026-09-30",
+    "_pending_time": "16:00",
+    "service": "Strzyżenie damskie",
+    "staff": "Kasia Nowak"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "question": "kiedy wolne terminy?"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Żeby sprawdzić dostępne terminy, muszę wiedzieć na jaką usługę. Mamy: Strzyżenie damskie i Koloryzacja. Która usługa?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "question": "Gdzie można zaparkować?"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Parking jest za budynkiem. Na jaką usługę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "U Kasia Nowaka najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "question": "jakie terminy są wolne?"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "status": "ask"
+      }
+    }
+  ]
+}

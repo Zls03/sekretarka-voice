@@ -1,0 +1,105 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "w sobotę",
+    "available_slots": [
+      "10:00",
+      "11:00"
+    ],
+    "date": "2026-10-03 00:00:00",
+    "service": "Strzyżenie damskie",
+    "staff": "Kasia Nowak"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-09-01",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Data w wtorek, 1 września już minęła. Podaj przyszłą datę.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-10-04"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "W niedzielę, 4 października to niedziela — jesteśmy zamknięci. Na kiedy?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-12-24"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Rezerwacje można składać maksymalnie 30 dni w przód. W czwartek, 24 grudnia to za daleko. Najbliższy wolny termin u Kasia Nowaka to dziś o szesnastej. Czy zapisać na ten termin?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-10-02"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Pojutrze u Kasia Nowaka nie ma wolnych terminów. Najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "blabla"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "coś"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "hmm"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Przepraszam za kłopot. Na jaki dzień szukamy terminu? Proszę powiedzieć np. 'jutro' lub '15 maja'.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "w sobotę"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "W sobotę, 3 października wolne są: dziesiątej lub jedenastej. Którą godzinę?",
+        "status": "ask"
+      }
+    }
+  ]
+}

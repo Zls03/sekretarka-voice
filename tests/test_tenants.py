@@ -38,17 +38,32 @@ SAAS_TTS_VARIANTS = {
     "azure_voice_in_provider": {"tts_provider": "pl-PL-ZofiaNeural"},
     "cartesia": {"tts_provider": "cartesia", "azure_voice_id": "cartesia-voice"},
     "elevenlabs_ignores_shared_voice": {
-        "tts_provider": "elevenlabs", "voice_id": "pl-PL-Chirp3-HD-Leda", "elevenlabs_voice_id": "el_voice",
+        "tts_provider": "elevenlabs",
+        "voice_id": "pl-PL-Chirp3-HD-Leda",
+        "elevenlabs_voice_id": "el_voice",
     },
     "legacy_voice_only": {"voice_id": "pl-PL-Chirp3-HD-Leda"},
     "explicit_openai": {"tts_provider": "openai"},
     "full_settings": {
-        "contact_owner_enabled": "0", "transfer_enabled": "1", "transfer_number": "+48500",
-        "human_first_enabled": "1", "human_first_timeout_seconds": "25", "siperb_sip_username": "sip-user",
-        "lead_email_enabled": "1", "lead_email": "leads@example.com", "custom_report_format": "1",
-        "report_empty_calls": "1", "transcript_email_enabled": "1", "crm_enabled": "1",
-        "crm_provider": "pipedrive", "crm_domain": "firma", "gemini_voice": "Aoede", "realtime_engine": "openai",
-        "elevenlabs_tts_stability": "0.7", "speaking_rate": "1.2", "booking_enabled": None,
+        "contact_owner_enabled": "0",
+        "transfer_enabled": "1",
+        "transfer_number": "+48500",
+        "human_first_enabled": "1",
+        "human_first_timeout_seconds": "25",
+        "siperb_sip_username": "sip-user",
+        "lead_email_enabled": "1",
+        "lead_email": "leads@example.com",
+        "custom_report_format": "1",
+        "report_empty_calls": "1",
+        "transcript_email_enabled": "1",
+        "crm_enabled": "1",
+        "crm_provider": "pipedrive",
+        "crm_domain": "firma",
+        "gemini_voice": "Aoede",
+        "realtime_engine": "openai",
+        "elevenlabs_tts_stability": "0.7",
+        "speaking_rate": "1.2",
+        "booking_enabled": None,
     },
 }
 
@@ -56,14 +71,29 @@ SAAS_TTS_VARIANTS = {
 def _saas_rules(fake_db, firm):
     fake_db.on("FROM tenants", [], label="admin")
     fake_db.on("FROM firms WHERE", [firm], label="saas")
-    fake_db.on("FROM services WHERE firm_id", [
-        {"id": "svc_1", "name": "Strzyżenie", "duration_minutes": "60", "price": "100",
-         "description": "", "price_text": "", "duration_text": ""},
-    ], label="saas")
-    fake_db.on("FROM working_hours", [
-        {"day_of_week": "1", "open_time": "09:00", "close_time": "17:00"},
-        {"day_of_week": "0", "open_time": None, "close_time": None},
-    ], label="saas")
+    fake_db.on(
+        "FROM services WHERE firm_id",
+        [
+            {
+                "id": "svc_1",
+                "name": "Strzyżenie",
+                "duration_minutes": "60",
+                "price": "100",
+                "description": "",
+                "price_text": "",
+                "duration_text": "",
+            },
+        ],
+        label="saas",
+    )
+    fake_db.on(
+        "FROM working_hours",
+        [
+            {"day_of_week": "1", "open_time": "09:00", "close_time": "17:00"},
+            {"day_of_week": "0", "open_time": None, "close_time": None},
+        ],
+        label="saas",
+    )
     fake_db.on("FROM faqs", [{"question": "Parking?", "answer": "Tak"}], label="saas")
     fake_db.on("FROM staff WHERE", [{"id": "staff_1", "name": "Kasia", "description": None}], label="saas")
     fake_db.on("JOIN staff_services", [{"id": "svc_1", "name": "Strzyżenie", "duration_minutes": "60", "price": "100"}])
@@ -78,10 +108,16 @@ def test_saas_tenant_mapping(fake_db, variant):
 
 
 def test_admin_tenant_mapping(fake_db):
-    fake_db.on("FROM tenants WHERE", [{"id": "t_1", "name": "Gabinet", "phone_number": "+48111222333",
-                                       "is_active": "1", "minutes_limit": "200"}], label="admin")
-    fake_db.on("FROM services", [{"id": "s1", "name": "Wizyta", "duration_minutes": "30", "price": "150",
-                                  "description": ""}], label="admin")
+    fake_db.on(
+        "FROM tenants WHERE",
+        [{"id": "t_1", "name": "Gabinet", "phone_number": "+48111222333", "is_active": "1", "minutes_limit": "200"}],
+        label="admin",
+    )
+    fake_db.on(
+        "FROM services",
+        [{"id": "s1", "name": "Wizyta", "duration_minutes": "30", "price": "150", "description": ""}],
+        label="admin",
+    )
     fake_db.on("FROM working_hours", [{"day_of_week": "2", "open_time": "08:00", "close_time": "16:00"}], label="admin")
     fake_db.on("FROM tenant_faq", [], label="admin")
     fake_db.on("FROM info_services", [], label="admin")

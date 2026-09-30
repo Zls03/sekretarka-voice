@@ -1,0 +1,97 @@
+{
+  "edge_calls": [],
+  "final_state": {},
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-10-01",
+        "service": "Strzyżenie damskie",
+        "staff": "Tomek",
+        "time_text": "09:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Świetnie, jutro o dziewiątej. Na jakie imię zapisać wizytę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "change_field": "time",
+        "confirmation": "change",
+        "time_text": "13:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Świetnie, jutro o trzynastej. Na jakie imię zapisać wizytę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "change_field": "date",
+        "confirmation": "change"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, zmieniam datę. Na jaki dzień do Tomka?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "change",
+        "date_text": "2026-10-03"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "W sobotę, 3 października wolne są: dziesiątej lub jedenastej. Którą godzinę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "change_field": "staff",
+        "confirmation": "change"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, zmieniam pracownika. Do kogo? Dostępni: Kasia Nowak i Tomek.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "change_field": "service",
+        "confirmation": "change"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, na jaką usługę? Mamy Strzyżenie damskie i Koloryzacja.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "change_field": "name",
+        "confirmation": "change"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, zmieniam imię. Na jaką usługę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "change"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, zaczynamy od nowa. Na jaką usługę?",
+        "status": "ask"
+      }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "jutro",
+    "available_slots": [
+      "09:00",
+      "10:00",
+      "13:00",
+      "15:30"
+    ],
+    "date": "2026-10-01 12:15:00",
+    "service": "Koloryzacja",
+    "staff": "Kasia Nowak"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Masaż"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie rozpoznałam usługi. Dostępne: Strzyżenie damskie, Koloryzacja.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Koloryzacja",
+        "staff": "Zbyszek"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie rozpoznałam pracownika. Dostępni: Kasia Nowak, Tomek.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "staff": "Tomek"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Tomek nie wykonuje Koloryzacja. Tę usługę wykonują: Kasia Nowak.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "jutro",
+        "staff": "dowolny"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Jutro wolne są: dziewiątej, trzynastej i inne. Którą godzinę?",
+        "status": "ask"
+      }
+    }
+  ]
+}

@@ -1,0 +1,268 @@
+{
+  "edge_calls": [
+    [
+      "save_booking_in_panel",
+      "Kasia Nowak",
+      "Strzyżenie damskie",
+      "2026-09-30 00:00:00",
+      "16:00",
+      "Ola",
+      ""
+    ],
+    [
+      "send_booking_sms",
+      {
+        "booking_code": "4321",
+        "customer_phone": "+48600700800",
+        "date_str": "30.09",
+        "service_name": "Strzyżenie damskie",
+        "staff_name": "Kasia Nowak",
+        "tenant": {
+          "additional_info": "Parking za budynkiem.",
+          "address": "ul. Testowa 1, Kraków",
+          "assistant_name": "Ania",
+          "azure_voice_id": "pl-PL-Chirp3-HD-Aoede",
+          "booking_enabled": 1,
+          "business_name": "Salon Testowy",
+          "contact_owner_closing_line": "",
+          "contact_owner_enabled": 1,
+          "crm_api_key": "",
+          "crm_domain": "",
+          "crm_enabled": 0,
+          "crm_provider": "",
+          "custom_report_format": 0,
+          "elevenlabs_agent_voice_id": "",
+          "elevenlabs_tts_similarity_boost": null,
+          "elevenlabs_tts_speed": null,
+          "elevenlabs_tts_stability": null,
+          "elevenlabs_voice_id": null,
+          "email": "owner@example.com",
+          "faq": [
+            {
+              "answer": "Tak, akceptujemy karty.",
+              "question": "Czy mogę zapłacić kartą?"
+            }
+          ],
+          "first_message": "Dzień dobry, tu Salon Testowy. W czym mogę pomóc?",
+          "gemini_native_voice_enabled": 0,
+          "gemini_voice": "",
+          "human_first_enabled": 0,
+          "human_first_timeout_seconds": 15,
+          "id": "firm_test_1",
+          "industry": "salon fryzjerski",
+          "info_services": [
+            {
+              "description": "Mycie, strzyżenie, modelowanie",
+              "duration_minutes": 60,
+              "duration_text": "",
+              "id": "svc_1",
+              "name": "Strzyżenie damskie",
+              "price": 120,
+              "price_text": ""
+            },
+            {
+              "description": "",
+              "duration_minutes": 120,
+              "duration_text": "ok. 2h",
+              "id": "svc_2",
+              "name": "Koloryzacja",
+              "price": 250,
+              "price_text": "od 250 zł"
+            }
+          ],
+          "is_active": 1,
+          "is_blocked": 0,
+          "lead_collection": "",
+          "lead_email": "",
+          "lead_email_enabled": 0,
+          "lead_mode": 0,
+          "lead_triggers": "",
+          "lead_urgency_mode": 0,
+          "lead_urgency_text": "",
+          "llm_model": "",
+          "llm_provider": "groq",
+          "minutes_limit": 100,
+          "minutes_used": 0.0,
+          "name": "Salon Testowy",
+          "notification_email": "owner@example.com",
+          "phone_number": "+48111222333",
+          "realtime_engine": "gemini",
+          "realtime_voice": "",
+          "recording_enabled": 0,
+          "report_empty_calls": 0,
+          "services": [
+            {
+              "description": "Mycie, strzyżenie, modelowanie",
+              "duration_minutes": 60,
+              "duration_text": "",
+              "id": "svc_1",
+              "name": "Strzyżenie damskie",
+              "price": 120,
+              "price_text": ""
+            },
+            {
+              "description": "",
+              "duration_minutes": 120,
+              "duration_text": "ok. 2h",
+              "id": "svc_2",
+              "name": "Koloryzacja",
+              "price": 250,
+              "price_text": "od 250 zł"
+            }
+          ],
+          "siperb_sip_username": "",
+          "slug": "firm_test_1",
+          "source": "saas",
+          "speaking_rate": 1.06,
+          "staff": [
+            {
+              "description": "",
+              "firm_id": "firm_test_1",
+              "google_calendar_id": "cal_1",
+              "google_connected": 1,
+              "id": "staff_1",
+              "max_days_ahead": 30,
+              "min_advance_hours": 2,
+              "name": "Kasia Nowak",
+              "position": "Fryzjerka",
+              "services": [
+                {
+                  "duration_minutes": 60,
+                  "id": "svc_1",
+                  "name": "Strzyżenie damskie",
+                  "price": 120
+                },
+                {
+                  "duration_minutes": 120,
+                  "id": "svc_2",
+                  "name": "Koloryzacja",
+                  "price": 250
+                }
+              ],
+              "working_hours_json": "{\"1\": {\"start\": \"09:00\", \"end\": \"17:00\"}}"
+            },
+            {
+              "description": "",
+              "firm_id": "firm_test_1",
+              "google_connected": 1,
+              "id": "staff_2",
+              "max_days_ahead": 30,
+              "min_advance_hours": 2,
+              "name": "Tomek",
+              "position": "",
+              "services": [
+                {
+                  "duration_minutes": 60,
+                  "id": "svc_1",
+                  "name": "Strzyżenie damskie",
+                  "price": 120
+                }
+              ],
+              "working_hours_json": ""
+            }
+          ],
+          "transcript_email_enabled": 0,
+          "transfer_enabled": 0,
+          "transfer_number": "",
+          "tts_provider": "google",
+          "user_id": "user_1",
+          "working_hours": [
+            {
+              "close_time": "18:00",
+              "day_of_week": 0,
+              "open_time": "09:00"
+            },
+            {
+              "close_time": "18:00",
+              "day_of_week": 1,
+              "open_time": "09:00"
+            },
+            {
+              "close_time": "18:00",
+              "day_of_week": 2,
+              "open_time": "09:00"
+            },
+            {
+              "close_time": "18:00",
+              "day_of_week": 3,
+              "open_time": "09:00"
+            },
+            {
+              "close_time": "18:00",
+              "day_of_week": 4,
+              "open_time": "09:00"
+            },
+            {
+              "close_time": "14:00",
+              "day_of_week": 5,
+              "open_time": "10:00"
+            }
+          ]
+        },
+        "time_str": "16:00"
+      }
+    ],
+    [
+      "increment_sms_count",
+      []
+    ],
+    [
+      "save_client_visit",
+      {
+        "firm_id": "firm_test_1",
+        "name": "Ola",
+        "notes": "",
+        "phone": "+48600700800",
+        "scheduled_at": "2026-09-30T16:00:00",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak"
+      }
+    ]
+  ],
+  "final_state": {},
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "service": "Strzyżenie damskie",
+        "staff": "dowolny"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Dobrze, zapiszę do Kasia Nowaka. Na jaki dzień?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "yes"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "U Kasia Nowaka najbliższy wolny termin to dziś o szesnastej. Zapisać, czy wolisz inny termin?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "customer_name": "Ola"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Strzyżenie damskie u Kasia Nowaka, dziś o szesnastej — na Pani Oli. Zgadza się?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "yes"
+      },
+      "result": {
+        "done": true,
+        "say_exactly": "Gotowe. Strzyżenie damskie u Kasia Nowaka, dziś o szesnastej. Wysłałam esemes z potwierdzeniem. Czy mogę jeszcze w czymś pomóc?",
+        "status": "booked"
+      }
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "edge_calls": [],
+  "final_state": {
+    "_last_date_text": "2026-10-01",
+    "available_slots": [
+      "09:00",
+      "10:00",
+      "13:00",
+      "15:30"
+    ],
+    "date": "2026-10-01 00:00:00",
+    "service": "Strzyżenie damskie",
+    "staff": "Kasia Nowak"
+  },
+  "transcript": [
+    {
+      "args": {
+        "confirmation": "none",
+        "date_text": "2026-10-01",
+        "service": "Strzyżenie damskie",
+        "staff": "Kasia Nowak"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Jutro wolne są: dziewiątej, trzynastej i inne. Którą godzinę?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "po południu"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Tak, po południu wolne są: trzynastej lub piętnastej trzydzieści. Którą godzinę wybrać?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "rano"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Tak, rano wolne są: dziewiątej lub dziesiątej. Którą godzinę wybrać?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "07:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "W tym dniu pracujemy od dziewiątej. Wolne są: dziewiątej, trzynastej i inne.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "20:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "W tym dniu pracujemy do osiemnastej. Wolne są: dziewiątej, trzynastej i inne.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "11:00"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Godzina jedenastej zajęta. Wolne: dziewiątej, trzynastej i inne.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "xyz"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie rozumiem godziny. Dostępne są: dziewiątej, dziesiątej, trzynastej i piętnastej trzydzieści.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "abc"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Nie rozumiem godziny. Dostępne są: dziewiątej, dziesiątej, trzynastej i piętnastej trzydzieści.",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "qwe"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Przepraszam za kłopot. Dostępne godziny: dziewiątej, trzynastej i inne. Którą wybrać?",
+        "status": "ask"
+      }
+    },
+    {
+      "args": {
+        "confirmation": "none",
+        "time_text": "wpół do dziesiątej"
+      },
+      "result": {
+        "done": false,
+        "say_exactly": "Godzina dziewiątej trzydzieści zajęta. Wolne: dziewiątej, trzynastej i inne.",
+        "status": "ask"
+      }
+    }
+  ]
+}
