@@ -7,21 +7,16 @@ Zawiera:
 - Integracja z API panelu (kalendarz, rezerwacje)
 - Walidacje
 """
-import random
 import os
 import asyncio
 import httpx
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import List
 from loguru import logger
 
 from polish_mappings import (
-    HOUR_TO_NUMBER, NUMBER_TO_HOUR_WORD,
-    NAME_ALIASES, FULL_NAME_TO_ALIASES,
-    DAY_TO_NUMBER, NUMBER_TO_DAY,
-    POLISH_DAYS, POLISH_DAYS_REVERSE,
-    parse_hour_from_text, match_staff_name,
-    apply_stt_corrections, normalize_polish_text
+    NUMBER_TO_HOUR_WORD,
+    POLISH_DAYS
 )
 
 
@@ -74,140 +69,6 @@ def format_time_for_tts(time_str: str) -> str:
     if time_str.startswith("0") and len(time_str) >= 2 and time_str[1].isdigit():
         return time_str[1:]
     return time_str
-
-def parse_polish_date(date_str: str) -> Optional[datetime]:
-    """Parsuj polską datę (dziś, jutro, pojutrze, dzień tygodnia, data)
-    
-    Obsługuje:
-    - "dziś", "dzisiaj", "teraz"
-    - "jutro", "pojutrze"
-    - "sobota", "w sobotę", "sobotę" (wszystkie formy gramatyczne)
-    - "15.02", "15 lutego", "2024-02-15"
-    """
-    import re
-    
-    if not date_str:
-        return None
-    
-    date_str = date_str.lower().strip()
-    date_str = apply_stt_corrections(date_str)
-    today = datetime.now()
-    
-    # 1. Dziś/jutro/pojutrze
-    if date_str in ["dziś", "dzis", "dzisiaj", "teraz", "na dziś", "na dzis", "na dzisiaj"]:
-        return today
-    elif date_str in ["jutro", "na jutro"]:
-        return today + timedelta(days=1)
-    elif date_str in ["pojutrze", "na pojutrze"]:
-        return today + timedelta(days=2)
-    
-    # 2. Dzień tygodnia - użyj DAY_TO_NUMBER (ma wszystkie formy!)
-    if date_str in DAY_TO_NUMBER:
-        target_weekday = DAY_TO_NUMBER[date_str]
-        days_ahead = target_weekday - today.weekday()
-        if days_ahead <= 0:
-            days_ahead += 7
-        return today + timedelta(days=days_ahead)
-    
-    # 2b. Sprawdź czy dzień tygodnia jest CZĘŚCIĄ tekstu (np. "na sobotę rano")
-    for day_text, weekday_num in sorted(DAY_TO_NUMBER.items(), key=lambda x: -len(x[0])):
-        if day_text in date_str:
-            days_ahead = weekday_num - today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            return today + timedelta(days=days_ahead)
-    
-    # 3. Data z numerem dnia i miesiącem słownie (np. "15 lutego", "piętnastego marca")
-    from polish_mappings import MONTH_TO_NUMBER
-    
-    for month_name, month_num in MONTH_TO_NUMBER.items():
-        if month_name in date_str:
-            # Wyciągnij dzień (liczbę)
-            numbers = re.findall(r'\d+', date_str)
-            if numbers:
-                day = int(numbers[0])
-                if 1 <= day <= 31:
-                    year = today.year
-                    try:
-                        result = datetime(year, month_num, day)
-                        # Jeśli data w przeszłości - następny rok
-                        if result.date() < today.date():
-                            result = datetime(year + 1, month_num, day)
-                        return result
-                    except ValueError:
-                        pass  # Nieprawidłowy dzień dla miesiąca
-    
-    # 4. Standardowe formaty daty
-    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d.%m", "%d-%m-%Y", "%d/%m/%Y", "%d/%m"]:
-        try:
-            parsed = datetime.strptime(date_str, fmt)
-            if parsed.year == 1900:
-                parsed = parsed.replace(year=today.year)
-            # Jeśli data w przeszłości - następny rok
-            if parsed.date() < today.date():
-                parsed = parsed.replace(year=today.year + 1)
-            return parsed
-        except:
-            pass
-    
-    # 5. Tylko numer dnia (np. "15", "piętnastego") - zakładamy bieżący/następny miesiąc
-    numbers = re.findall(r'\d+', date_str)
-    if numbers:
-        day = int(numbers[0])
-        if 1 <= day <= 31:
-            try:
-                # Spróbuj bieżący miesiąc
-                result = datetime(today.year, today.month, day)
-                if result.date() < today.date():
-                    # Następny miesiąc
-                    if today.month == 12:
-                        result = datetime(today.year + 1, 1, day)
-                    else:
-                        result = datetime(today.year, today.month + 1, day)
-                return result
-            except ValueError:
-                pass
-    
-    logger.warning(f"⚠️ Could not parse date: '{date_str}'")
-    return None
-
-
-def parse_time(time_str: str) -> Optional[str]:
-    """Parsuj godzinę - zwraca format H:MM (obsługuje półgodziny)"""
-    import re
-    
-    if not time_str:
-        return None
-    
-    time_str = time_str.lower().strip()
-    time_str = apply_stt_corrections(time_str)
-    
-    # 1. Już jest w formacie HH:MM lub H:MM
-    match = re.search(r'(\d{1,2}):(\d{2})', time_str)
-    if match:
-        h, m = int(match.group(1)), int(match.group(2))
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return f"{h}:{m:02d}"
-    
-    # 2. Sprawdź czy ma półgodzinę
-    has_half = any(phrase in time_str for phrase in ["trzydzieści", "pół", "wpół", ":30"])
-    
-    # 3. Parsuj godzinę bazową
-    hour = parse_hour_from_text(time_str)
-    
-    if hour is not None:
-        if has_half:
-            return f"{hour}:30"
-        return f"{hour}:00"
-    
-    # 4. Sama liczba (np. "14", "15")
-    match = re.search(r'\b(\d{1,2})\b', time_str)
-    if match:
-        h = int(match.group(1))
-        if 0 <= h <= 23:
-            return f"{h}:00"
-    
-    return None
 
 
 # ==========================================
@@ -292,34 +153,6 @@ def get_opening_hours(tenant: dict, weekday: int) -> tuple[int, int] | None:
             return None
     
     return default_hours.get(weekday)
-
-
-def validate_date_constraints(date: datetime, tenant: dict, staff: dict) -> tuple[bool, str]:
-    """Sprawdza ograniczenia daty (min wyprzedzenie, max dni w przód)"""
-    now = datetime.now()
-    
-    # Konwertuj na int (mogą być stringi z bazy lub None)
-    try:
-        min_advance_hours = int(staff.get("min_advance_hours") or staff.get("min_booking_hours") or 12)
-    except (ValueError, TypeError):
-        min_advance_hours = 12
-    
-    min_booking_time = now + timedelta(hours=min_advance_hours)
-    
-    if date < min_booking_time:
-        return (False, f"Rezerwacje przyjmujemy z minimum {min_advance_hours} godzinnym wyprzedzeniem.")
-    
-    try:
-        max_days_ahead = int(staff.get("max_days_ahead") or staff.get("max_booking_days") or 14)
-    except (ValueError, TypeError):
-        max_days_ahead = 14
-    
-    max_date = now + timedelta(days=max_days_ahead)
-    
-    if date > max_date:
-        return (False, f"Rezerwacje można składać maksymalnie {max_days_ahead} dni w przód.")
-    
-    return (True, "")
 
 
 def validate_max_days_ahead(date: datetime, tenant: dict, staff: dict) -> tuple[bool, str]:
@@ -556,70 +389,6 @@ async def get_available_slots(
 # ==========================================
 # API - REZERWACJE
 # ==========================================
-
-async def save_booking_to_api(
-    tenant: dict, staff: dict, service: dict,
-    date: datetime, hour: int, customer_name: str, customer_phone: str = "", notes: str = ""
-) -> dict:
-    """Zapisuje rezerwację przez API panelu - z retry i kodem wizyty"""
-    
-    slug = tenant.get("slug") or PANEL_SLUG
-    
-    if not slug:
-        logger.warning("⚠️ No panel slug configured")
-        return {}
-    
-    # POPRAWKA: Użyj tylko daty (bez czasu) - czysta data YYYY-MM-DD
-    date_only = date.date() if date else None
-    date_str = date_only.strftime("%Y-%m-%d") if date_only else None
-    if hour is not None:
-        if isinstance(hour, str) and ":" in hour:
-            time_str = hour  # Już jest "14:30"
-        else:
-            time_str = f"{int(hour)}:00"
-    else:
-        time_str = None
-    
-    logger.info(f"📅 Booking request: {date_str} at {time_str} for {customer_name}")
-    
-    # Retry logic - 3 próby
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                payload = {
-                    "staff_id": staff.get("id"),
-                    "service_id": service.get("id"),
-                    "date": date_str,
-                    "time": time_str,
-                    "client_name": customer_name,
-                    "client_phone": customer_phone,
-                }
-                if notes:
-                    payload["notes"] = notes
-                base_url = ADMIN_PANEL_API_URL if tenant.get("source") == "admin" else PANEL_API_URL
-                response = await client.post(
-                    f"{base_url}/api/panel/{slug}/bookings",
-                    json=payload
-                )
-                
-                if response.status_code in [200, 201]:
-                    data = response.json()
-                    # Użyj kodu z API (jeśli jest), albo wygeneruj fallback
-                    booking_code = data.get("visitCode") or data.get("booking_code") or str(random.randint(1000, 9999))
-                    data["booking_code"] = booking_code
-                    logger.info(f"✅ Booking saved: {data.get('bookingId')} (code: {booking_code})")
-                    return data
-                else:
-                    logger.warning(f"⚠️ Booking API error: {response.status_code} (attempt {attempt + 1}/3)")
-                    
-        except Exception as e:
-            logger.error(f"❌ Booking API error (attempt {attempt + 1}/3): {e}")
-        
-        if attempt < 2:
-            await asyncio.sleep(0.5)
-    
-    logger.error(f"❌ Booking API failed after 3 attempts")
-    return {}
 
 
 async def send_booking_sms(
@@ -943,67 +712,6 @@ def build_business_context(tenant: dict) -> str:
 # FUZZY MATCHING - Tolerancja na literówki
 # ==========================================
 
-from difflib import SequenceMatcher
-
-def fuzzy_match_service(query: str, services: list, threshold: float = 0.6) -> dict | None:
-    if not query or not services:
-        return None
-    
-    query = query.lower().strip()
-    query = apply_stt_corrections(query)
-    
-    best_match = None
-    best_score = 0
-    
-    for service in services:
-        name = service["name"].lower().strip()
-        
-        # 1. Exact match
-        if query == name:
-            return service
-        
-        # 2. Query jest prawie całą nazwą usługi (lub odwrotnie) - min 80% pokrycia
-        if query in name and len(query) >= len(name) * 0.8:
-            return service
-        if name in query and len(name) >= len(query) * 0.8:
-            return service
-        
-        # 3. Fuzzy score
-        score = SequenceMatcher(None, query, name).ratio()
-        
-        if score > best_score and score >= threshold:
-            best_score = score
-            best_match = service
-    
-    return best_match
-
-
-def fuzzy_match_staff(query: str, staff_list: list, threshold: float = 0.85) -> dict | None:
-    """
-    Dopasuj pracownika - używa polish_mappings dla zdrobnień i błędów STT.
-    Zwraca None jeśli nie ma pewności (bot dopyta).
-    """
-    # Użyj funkcji z polish_mappings
-    result = match_staff_name(query, staff_list)
-    
-    if result:
-        return result
-    
-    # Fallback - stara logika dla edge cases
-    if not query or not staff_list:
-        return None
-    
-    query = query.lower().strip()
-    query = apply_stt_corrections(query)
-    
-    # Exact match
-    for staff in staff_list:
-        name = staff["name"].lower().strip()
-        if query == name or query == name.split()[0]:
-            return staff
-    
-    logger.warning(f"⚠️ Staff not found: '{query}'. Bot will ask.")
-    return None
 
 
 def staff_can_do_service(staff: dict, service: dict) -> bool:

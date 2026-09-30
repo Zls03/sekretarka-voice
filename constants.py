@@ -6,12 +6,6 @@ Stałe używane w całym projekcie. Zastępuje magic strings
 """
 
 
-class Urgency:
-    """Priorytety zgłoszeń serwisowych (lead/contact flow)."""
-    HIGH = "high"
-    NORMAL = "normal"
-
-
 class TTSProvider:
     """Identyfikatory dostawców syntezy mowy (TTS)."""
     ELEVENLABS = "elevenlabs"
@@ -21,11 +15,3 @@ class TTSProvider:
     GOOGLE = "google"
 
 
-class BookingField:
-    """Klucze stanu w trakcie rezerwacji (flows_booking_simple.py)."""
-    SERVICE = "service"
-    STAFF = "staff"
-    DATE = "date"
-    TIME = "time"
-    NAME = "name"
-    PHONE = "phone"
