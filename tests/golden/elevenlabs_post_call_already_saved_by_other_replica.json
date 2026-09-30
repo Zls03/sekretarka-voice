@@ -1,0 +1,25 @@
+{
+  "calls": {
+    "maybe_send_to_crm": [],
+    "persist_call_summary": [],
+    "send_call_summary_email": [],
+    "send_message_email": [],
+    "send_push_notifications": [],
+    "summarize_conversation_lines": []
+  },
+  "db": [
+    {
+      "args": [
+        "uuid-x"
+      ],
+      "db": "saas",
+      "sql": "SELECT id FROM call_transcripts WHERE call_sid = ? LIMIT 1"
+    }
+  ],
+  "missing_ids": {
+    "status": "ignored"
+  },
+  "response": {
+    "status": "duplicate_ignored"
+  }
+}

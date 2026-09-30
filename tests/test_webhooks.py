@@ -473,3 +473,77 @@ def test_elevenlabs_booking_tools_delegate(client, tenants, monkeypatch, tool):
             "kwargs": call["kwargs"],
         },
     )
+
+
+POST_CALL_VARIANTS = {
+    # (ustawienia firmy, wynik podsumowania GPT, oczekująca wiadomość contact_owner, transkrypt już w bazie)
+    "empty_summary_uses_elevenlabs_fallback": ({"lead_email_enabled": 1}, "Brak treści rozmowy.", None, False),
+    "no_summary_but_pending_message": (
+        {"lead_email_enabled": 1},
+        "Nie udało się wygenerować streszczenia.",
+        {"customer_name": "Ala", "message": "Pilne"},
+        False,
+    ),
+    "report_empty_calls": ({"report_empty_calls": 1, "lead_email_enabled": 1}, "Brak treści rozmowy.", None, False),
+    "reports_disabled_pending_sent_separately": (
+        {"lead_email_enabled": 0},
+        "Priorytet: —",
+        {"customer_name": "", "message": "Oddzwonić"},
+        False,
+    ),
+    "crm_test_tenant": ({"phone_number": "+48459050542"}, "Priorytet: 🔥 GORĄCY LEAD", None, False),
+    "already_saved_by_other_replica": ({"lead_email_enabled": 1}, "Priorytet: —", None, True),
+}
+
+
+NO_ELEVENLABS_SUMMARY = {"no_summary_but_pending_message", "report_empty_calls"}
+
+
+@pytest.mark.parametrize("variant", sorted(POST_CALL_VARIANTS))
+def test_elevenlabs_post_call_variants(client, tenants, fake_db, monkeypatch, variant):
+    settings, summary, pending, already_saved = POST_CALL_VARIANTS[variant]
+    tenant = make_tenant(**settings)
+    phone = tenant["phone_number"]
+    tenants[phone] = tenant
+    if already_saved:
+        fake_db.on("FROM call_transcripts WHERE call_sid", [{"id": "tr_1"}])
+    recorders = {
+        "summarize_conversation_lines": Recorder(result=summary),
+        "send_call_summary_email": Recorder(result=True),
+        "persist_call_summary": Recorder(),
+        "maybe_send_to_crm": Recorder(),
+        "send_push_notifications": Recorder(),
+        "send_message_email": Recorder(result=True),
+    }
+    for name, recorder in recorders.items():
+        patch_everywhere(monkeypatch, name, recorder)
+    patch_everywhere(monkeypatch, "_processed_post_call_sids", set())
+    patch_everywhere(
+        monkeypatch, "_elevenlabs_call_states", {"conv_x": {"pending_contact_owner": pending}} if pending else {}
+    )
+    payload = {
+        "data": {
+            "conversation_id": "conv_x",
+            "metadata": {"call_duration_secs": 5},
+            "analysis": {} if variant in NO_ELEVENLABS_SUMMARY else {"transcript_summary": "Streszczenie ElevenLabs"},
+            "conversation_initiation_client_data": {
+                "dynamic_variables": {
+                    "called_number": phone,
+                    "caller_phone": "unknown",
+                    "system__call_sid": "uuid-x",
+                }
+            },
+            "transcript": [{"role": "user", "message": "Halo?"}],
+        }
+    }
+    response = client.post("/elevenlabs/post-call", content=json.dumps(payload)).json()
+    missing = client.post("/elevenlabs/post-call", content=json.dumps({"data": {}})).json()
+    assert_golden(
+        f"elevenlabs_post_call_{variant}.json",
+        {
+            "response": response,
+            "missing_ids": missing,
+            "db": fake_db.calls,
+            "calls": {name: r.calls for name, r in recorders.items()},
+        },
+    )
