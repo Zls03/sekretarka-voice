@@ -33,7 +33,6 @@ SIPERB_TEST_NUMBER = "48459050542"
 
 # Statusy nogi SIP obserwowane przy poprawnych rozmowach; inne warto sprawdzić w logach.
 BENIGN_SIP_STATUSES = {"started", "ringing", "answered", "completed"}
-
 VONAGE_RECORDING_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 

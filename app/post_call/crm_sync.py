@@ -1,9 +1,9 @@
 """Wysyłka podsumowania rozmowy do zewnętrznego CRM przez webhook n8n (POC: Pipedrive)."""
 
-import os
 
 from loguru import logger
 
+from app.config import settings
 from app.post_call.summary import _parse_summary_fields
 
 # CRM Integration (n8n + dowolny CRM klienta) — patrz CLAUDE.md, sekcja "CRM Integration".
@@ -15,11 +15,7 @@ from app.post_call.summary import _parse_summary_fields
 # _CRM_TEST_PHONE_NUMBERS zostaje jako fallback WYŁĄCZNIE na wypadek starych tenantów
 # sprzed migracji których ktoś zapomniał przełączyć w panelu — docelowo martwy kod.
 _CRM_TEST_PHONE_NUMBERS = {"+48459050542"}
-
-
-N8N_CRM_WEBHOOK_URL = os.getenv(
-    "N8N_CRM_WEBHOOK_URL", "https://magnus1503.app.n8n.cloud/webhook/call-summary"
-)
+N8N_CRM_WEBHOOK_URL = settings.n8n_crm_webhook_url
 
 
 def _is_crm_test_tenant(tenant: dict) -> bool:
@@ -50,7 +46,7 @@ async def estimate_deal_value(summary: str, tenant: dict) -> int | None:
             f"Cennik/kontekst firmy: {additional_info}"
         )
         import openai
-        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[

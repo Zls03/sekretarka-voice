@@ -4,7 +4,7 @@ import asyncio
 
 from loguru import logger
 
-from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, _resolve_agent_id
+from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, resolve_agent_id
 from app.engines.elevenlabs.conversation import build_conversation_config_override
 
 _elevenlabs_client = None
@@ -28,7 +28,7 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
     Rzuca wyjątek przy braku ELEVENLABS_API_KEY/agent_id lub błędzie API — wołający
     (bot_gemini_test.py) łapie to i zwraca bezpieczny TwiML fallback, żeby błąd
     konfiguracji ElevenLabs nie zostawiał klienta w ciszy bez żadnego komunikatu."""
-    agent_id = _resolve_agent_id(tenant)
+    agent_id = resolve_agent_id(tenant)
     if not ELEVENLABS_API_KEY or not agent_id:
         raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
 

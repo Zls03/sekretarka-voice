@@ -1,10 +1,11 @@
 """Klient Vonage Voice REST API: JWT aplikacji, transfer rozmowy, pobieranie nagrań."""
 
-import os
 import time
 import uuid
 
 from loguru import logger
+
+from app.config import settings
 
 #
 # Twilio ma OSOBNY, już istniejący mechanizm (transfer_requests table + TwiML <Dial>
@@ -40,8 +41,8 @@ def _generate_vonage_jwt() -> str | None:
     """JWT krótkożyjący (60s) do jednego wywołania REST API — Vonage wymaga nowego
     tokenu per-request (albo bardzo krótkiego TTL), nie długożyjącego API key jak
     część innych dostawców."""
-    app_id = os.getenv("VONAGE_APPLICATION_ID")
-    private_key = os.getenv("VONAGE_PRIVATE_KEY")
+    app_id = settings.vonage_application_id
+    private_key = settings.vonage_private_key
     if not app_id or not private_key:
         logger.warning("📞 [TRANSFER] Brak VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY — transfer niedostępny")
         return None

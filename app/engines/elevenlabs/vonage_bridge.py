@@ -25,7 +25,7 @@ from pipecat.processors.frame_processor import FrameProcessor
 
 from app.background import spawn
 from app.engines.common import accept_vonage_stream, call_pipeline_params, create_local_vad, create_transport
-from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, _resolve_agent_id
+from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, resolve_agent_id
 from app.engines.elevenlabs.conversation import build_conversation_config_override
 
 router = APIRouter()
@@ -299,7 +299,7 @@ async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_p
     Rozliczenie minut robi /vonage/events, a transkrypt i raport — webhook
     /elevenlabs/post-call (oba niezależne od tego, który silnik obsłużył audio).
     """
-    agent_id = _resolve_agent_id(tenant)
+    agent_id = resolve_agent_id(tenant)
     if not ELEVENLABS_API_KEY or not agent_id:
         logger.error(f"❌ [ELEVENLABS/VONAGE] ELEVENLABS_API_KEY lub agent_id nieskonfigurowane dla {tenant.get('name')} — zamykam")
         await websocket.close()

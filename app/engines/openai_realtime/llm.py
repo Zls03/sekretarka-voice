@@ -1,7 +1,6 @@
 """Konfiguracja usługi OpenAI Realtime i dosyłanie promptu po spóźnionym odczycie CRM."""
 
 import asyncio
-import os
 
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -16,15 +15,16 @@ from pipecat.services.openai.realtime.events import (
 )
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
+from app.config import settings
 from app.engines.common import CallFeatures, build_call_prompt
 
-OPENAI_REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
+OPENAI_REALTIME_MODEL = settings.openai_realtime_model
 
 
 # OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
 # uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
 # obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
-OPENAI_REALTIME_VOICE = os.getenv("OPENAI_REALTIME_VOICE", "cedar")
+OPENAI_REALTIME_VOICE = settings.openai_realtime_voice
 
 
 def build_realtime_llm(
@@ -46,7 +46,7 @@ def build_realtime_llm(
     resolved_voice = voice or OPENAI_REALTIME_VOICE
     logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={resolved_voice}, speed={speed or 'domyślne API'}")
     llm = OpenAIRealtimeLLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=settings.openai_api_key,
         settings=OpenAIRealtimeLLMService.Settings(
             model=OPENAI_REALTIME_MODEL,
             system_instruction=system_prompt,

@@ -5,7 +5,7 @@ from urllib.parse import quote
 from loguru import logger
 
 from app.engines.elevenlabs.config import ELEVENLABS_SIP_DOMAIN
-from app.engines.elevenlabs.config import _resolve_agent_id as resolve_elevenlabs_agent_id
+from app.engines.elevenlabs.config import resolve_agent_id as resolve_elevenlabs_agent_id
 from app.engines.elevenlabs.sip import ensure_elevenlabs_sip_number
 from app.telephony.responses import ncco_connect_websocket
 

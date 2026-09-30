@@ -1,14 +1,13 @@
 """Wewnętrzne API panelu: profil klienta (historia wizyt) i zapis wizyty."""
 
-import os
 
 import httpx
 from loguru import logger
 
-PANEL_URL = os.getenv("PANEL_URL", "")
+from app.config import settings
 
-
-INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+PANEL_URL = settings.panel_url
+INTERNAL_API_SECRET = settings.internal_api_secret
 
 
 async def get_client_profile(firm_id: str, phone: str) -> dict | None:

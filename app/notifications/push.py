@@ -1,10 +1,10 @@
 """Powiadomienia web push do portalu /crm (PWA) o nowych zgłoszeniach."""
 
 import json
-import os
 
 from loguru import logger
 
+from app.config import settings
 from app.db import saas_db
 
 
@@ -21,7 +21,7 @@ async def _send_push_notifications(tenant: dict, title: str, body: str, url: str
     CRM muszą polecieć niezależnie). Wygasłe subskrypcje (404/410 — użytkownik
     odinstalował PWA albo wyczyścił dane przeglądarki) są od razu kasowane z bazy, żeby
     nie próbować ich bez końca przy każdej kolejnej rozmowie."""
-    vapid_private_key = os.getenv("VAPID_PRIVATE_KEY")
+    vapid_private_key = settings.vapid_private_key
     firm_id = tenant.get("id")
     if not vapid_private_key or not firm_id:
         logger.warning(f"📲 [PUSH] Pomijam — brak VAPID_PRIVATE_KEY lub firm_id (tenant={tenant.get('id')})")

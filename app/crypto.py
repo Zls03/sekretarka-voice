@@ -1,10 +1,11 @@
 """Odszyfrowywanie sekretów zapisanych przez panel (AES-GCM, klucz ENCRYPTION_KEY)."""
 
-import os
 
 from loguru import logger
 
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+from app.config import settings
+
+ENCRYPTION_KEY = settings.encryption_key
 
 
 def decrypt_token(encrypted: str) -> str:

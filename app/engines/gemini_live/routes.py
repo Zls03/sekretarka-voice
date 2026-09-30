@@ -13,7 +13,6 @@ from app.engines.gemini_live.llm import GEMINI_LIVE_MODEL
 from app.engines.gemini_live.session import run_gemini_live_call
 
 router = APIRouter()
-
 TWILIO_LOG_TAG = "GEMINI LIVE TEST"
 VONAGE_LOG_TAG = "GEMINI LIVE TEST/VONAGE"
 

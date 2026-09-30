@@ -6,12 +6,12 @@ starsze, bezpośrednie wejścia tej ścieżki — zostają, bo mogą być wpisan
 numerów. Nazwy ścieżek są historyczne ("gemini-test" mimo OpenAI).
 """
 
-import os
 
 from fastapi import APIRouter, Request, WebSocket
 from loguru import logger
 
 from app.billing import is_call_allowed
+from app.config import settings
 from app.db import db
 from app.engines.common import accept_vonage_stream, read_twilio_stream_start
 from app.engines.openai_realtime.session import run_openai_realtime_call
@@ -27,7 +27,6 @@ from app.telephony.responses import (
 from app.tenants import get_tenant_by_phone
 
 router = APIRouter()
-
 TWILIO_LOG_TAG = "REALTIME TEST"
 VONAGE_LOG_TAG = "REALTIME TEST/VONAGE"
 
@@ -79,7 +78,7 @@ async def openai_realtime_vonage_answer(request: Request):
     logger.info(f"📞 [{VONAGE_LOG_TAG}] Answer: {from_number} → {to_number}")
 
     # TEST_TENANT_ID: numer testowy spoza bazy firm obsługiwany jako wskazana firma.
-    forced_tenant_id = os.getenv("TEST_TENANT_ID", "")
+    forced_tenant_id = settings.test_tenant_id
     if forced_tenant_id:
         rows = await db.execute("SELECT phone_number FROM tenants WHERE id = ?", [forced_tenant_id])
         tenant = await get_tenant_by_phone(rows[0]["phone_number"]) if rows else None

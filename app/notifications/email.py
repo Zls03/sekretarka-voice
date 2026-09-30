@@ -1,16 +1,16 @@
 """E-maile do właściciela firmy (Resend): wiadomość od klienta, raport z rozmowy, nieodebrany transfer."""
 
-import os
 
 from loguru import logger
 
+from app.config import settings
 from app.telephony.vonage_api import TRANSFER_RING_TIMEOUT
 
 
 async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str) -> bool:
     """Wyślij email z wiadomością do właściciela. Uproszczona kopia flows.py::send_message_email
     (bez GPT-streszczenia kontekstu rozmowy — bonus, nie rdzeń funkcji)."""
-    resend_api_key = os.getenv("RESEND_API_KEY")
+    resend_api_key = settings.resend_api_key
     if not resend_api_key:
         logger.warning("📧 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam")
         return False
@@ -80,7 +80,7 @@ async def send_call_summary_email(
     i tak widać w zakładce "Logi" w panelu). ŚWIADOMIE bez <details>/zwijania — sprawdzone na
     żywo (Gmail web) że klienci poczty ignorują ten tag i renderują zawartość zawsze rozwiniętą,
     więc lepiej postawić na czytelne, zawsze widoczne dymki niż pozorne zwijanie."""
-    resend_api_key = os.getenv("RESEND_API_KEY")
+    resend_api_key = settings.resend_api_key
     if not resend_api_key:
         logger.warning("📋 [REALTIME TEST] RESEND_API_KEY nieskonfigurowany — nie wysyłam raportu")
         return False
@@ -176,7 +176,7 @@ async def send_missed_transfer_email(business_name: str, caller_phone: str, to_e
     webhooka) że wiadomość zostanie przekazana — to jest ta wiadomość, więc właściciel i tak
     się dowiaduje mimo nieodebrania. Przyjmuje same stringi (nie tenant dict) — webhook nie ma
     dostępu do obiektu tenanta, tylko do tego co sami wpisaliśmy w query string eventUrl."""
-    resend_api_key = os.getenv("RESEND_API_KEY")
+    resend_api_key = settings.resend_api_key
     if not resend_api_key:
         logger.warning("📧 [TRANSFER] RESEND_API_KEY nieskonfigurowany — nie wysyłam")
         return False

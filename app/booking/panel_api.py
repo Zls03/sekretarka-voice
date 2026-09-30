@@ -1,20 +1,17 @@
 """API panelu dla rezerwacji: wolne terminy, zapis, odwołanie i przełożenie wizyty."""
 
 import asyncio
-import os
 from datetime import datetime
 
 import httpx
 from loguru import logger
 
+from app.config import settings
+
 # URL do panelu Next.js
-PANEL_API_URL = os.getenv("PANEL_API_URL", "http://localhost:3000")
-
-
-ADMIN_PANEL_API_URL = os.getenv("ADMIN_PANEL_API_URL", PANEL_API_URL)
-
-
-PANEL_SLUG = os.getenv("PANEL_SLUG", "")
+PANEL_API_URL = settings.panel_api_url
+ADMIN_PANEL_API_URL = settings.admin_panel_api_url
+PANEL_SLUG = settings.panel_slug
 
 
 async def get_available_slots_from_api(

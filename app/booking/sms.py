@@ -1,10 +1,10 @@
 """SMS z potwierdzeniem wizyty (Twilio lub Vonage) i licznik wysłanych SMS."""
 
-import os
 
 import httpx
 from loguru import logger
 
+from app.config import settings
 from app.db import db
 
 
@@ -13,10 +13,9 @@ async def send_booking_sms(
     staff_name: str, date_str: str, time_str: str, booking_code: str
 ) -> bool:
     """Wysyła SMS z potwierdzeniem wizyty przez Twilio"""
-    import os
 
-    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_sid = settings.twilio_account_sid
+    twilio_token = settings.twilio_auth_token
 
     # Użyj numeru firmy z bazy (tenant), nie globalnego!
     twilio_number = tenant.get("phone_number")
@@ -81,8 +80,8 @@ async def send_booking_sms_vonage(
     VONAGE_API_KEY/VONAGE_API_SECRET (klasyczny klucz/sekret, INNE poświadczenie niż
     VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY używane do transferu połączeń w realtime_tools.py —
     to osobny produkt Vonage, trzeba go włączyć/skonfigurować osobno w panelu Vonage)."""
-    vonage_key = os.getenv("VONAGE_API_KEY")
-    vonage_secret = os.getenv("VONAGE_API_SECRET")
+    vonage_key = settings.vonage_api_key
+    vonage_secret = settings.vonage_api_secret
 
     if not vonage_key or not vonage_secret:
         logger.warning("⚠️ VONAGE_API_KEY/VONAGE_API_SECRET not configured — SMS pominięty")

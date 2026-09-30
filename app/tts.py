@@ -11,6 +11,8 @@ from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transcriptions.language import Language
 
+from app.config import settings
+
 
 class TTSProvider:
     """Identyfikatory dostawców syntezy mowy (TTS)."""
@@ -117,7 +119,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         cartesia_voice = tenant.get('azure_voice_id') or '575a5d29-1fdc-4d4e-9afa-5a9a71759864'
         logger.info(f"🎙️ Using Cartesia TTS | voice: {cartesia_voice}")
         tts = CartesiaTTSService(
-            api_key=os.getenv("CARTESIA_API_KEY"),
+            api_key=settings.cartesia_api_key,
             voice_id=cartesia_voice,
             model_id="sonic-3.5",
             language="pl",
@@ -131,7 +133,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
     if tts_provider == TTSProvider.OPENAI:
         logger.info("🎙️ Using OpenAI TTS | voice: alloy")
         tts = OpenAITTSService(
-            api_key=os.getenv("OPENAI_API_KEY"),
+            api_key=settings.openai_api_key,
             model="tts-1",
             voice="alloy",
             sample_rate=sample_rate or 24000,
@@ -143,8 +145,8 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         azure_voice = tenant.get('azure_voice_id') or 'pl-PL-AgnieszkaNeural'
         logger.info(f"🎙️ Using Azure TTS | voice: {azure_voice}")
         tts = AzureTTSService(
-            api_key=os.getenv("AZURE_SPEECH_KEY"),
-            region=os.getenv("AZURE_SPEECH_REGION", "westeurope"),
+            api_key=settings.azure_speech_key,
+            region=settings.azure_speech_region,
             voice=azure_voice,
             sample_rate=sample_rate or 8000,
             params=AzureTTSService.InputParams(
@@ -162,7 +164,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
         speaking_rate = float(tenant.get('speaking_rate') or 1.06)
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice} | rate: {speaking_rate}")
-        creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        creds_json = settings.google_application_credentials_json
         creds_dict = json.loads(creds_json)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             json.dump(creds_dict, f)
@@ -187,7 +189,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
     speaking_rate = float(tenant.get('speaking_rate') or 1.1)
     logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id} | speed: {speaking_rate}")
     tts = ElevenLabsTTSService(
-        api_key=os.getenv("ELEVENLABS_API_KEY"),
+        api_key=settings.elevenlabs_api_key or None,
         voice_id=voice_id,
         model="eleven_flash_v2_5",
         sample_rate=sample_rate,

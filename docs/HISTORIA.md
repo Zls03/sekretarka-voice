@@ -586,3 +586,28 @@ gdzie import w ogóle nie był próbowany (most WebSocket to normalna, oczekiwan
 dla wszystkich poza jednym testowym numerem). Złapane na żywo przy debugowaniu QFX.
 ```
 
+
+## Narzędzia agenta ElevenLabs (`app/engines/elevenlabs/config.py`)
+
+```text
+tool_id narzędzia "contact_owner" skonfigurowanego w dashboardzie ElevenLabs (agent
+"Bizvoice Test" -> Narzędzia -> contact_owner). Do 2026-09-04 to narzędzie było
+statycznie przypięte do agenta i ZAWSZE technicznie dostępne dla modelu, niezależnie
+od tenant.get("contact_owner_enabled") — jedyną obroną była instrukcja w promptcie
+("nie masz tej funkcji, nie oferuj jej") + twardy blok wysyłki po stronie serwera
+(patrz elevenlabs_tool_contact_owner niżej), ale model czasem i tak WERBALNIE oferował
+zebranie wiadomości (złapane na żywym telefonie, tenant z contact_owner_enabled=0).
+Od teraz tool_ids jest jawnie nadpisywany per rozmowa (conversation_config_override.
+agent.prompt.tool_ids) — dokładnie ten sam poziom gwarancji co w Gemini Live/OpenAI
+Realtime, gdzie narzędzie po prostu nie istnieje w tools[] danej rozmowy. Wymaga
+włączonego przełącznika "Tools" w platform_settings.overrides.conversation_config_override.
+agent.prompt.tool_ids na agencie (włączone 2026-09-04 przez PATCH /v1/convai/agents —
+bez tego ElevenLabs po cichu ignoruje tool_ids z override i zawsze używa domyślnego
+zestawu narzędzi agenta, czyli błąd wracałby bez żadnego widocznego sygnału).
+2026-09-10 — migracja na nowe konto ElevenLabs (drugi Google, promo Creator 22$/11$,
+stare konto konczylo limity). Agent "Bizvoice Test" odtworzony 1:1 (ten sam głos
+8EWWaNTDrqObI22Gvo1q, model eleven_flash_v2_5, przełącznik tool_ids override włączony)
+i te same 3 narzędzia webhook — wszystkie ID poniżej to ID z NOWEGO konta, stare już
+nieaktualne. ELEVENLABS_API_KEY/ELEVENLABS_AGENT_ID (Railway env) podmienione razem z tym
+pushem, żeby nie było okna gdzie kod i env wskazują na różne konta.
+```

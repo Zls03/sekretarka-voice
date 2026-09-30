@@ -1,6 +1,5 @@
 """Konfiguracja usługi Gemini Live (model, głos, język, thinking)."""
 
-import os
 
 from google.genai.types import ThinkingConfig
 from loguru import logger
@@ -8,6 +7,8 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transcriptions.language import Language
+
+from app.config import settings
 
 GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"  # zweryfikowane w docs.ai.google.dev (sierpień 2026)
 # Próba użycia gemini-2.5-flash-native-audio-preview-12-2025 (2026-09-03) odrzucona natychmiast
@@ -81,7 +82,7 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     resolved_voice = voice or "Kore"
     logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, voice={resolved_voice}, tools={[t.name for t in (tools or [])]}")
     llm = GeminiLiveLLMService(
-        api_key=os.getenv("GOOGLE_API_KEY"),
+        api_key=settings.google_api_key,
         settings=GeminiLiveLLMService.Settings(
             model=GEMINI_LIVE_MODEL,
             voice=resolved_voice,

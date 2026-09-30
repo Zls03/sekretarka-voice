@@ -1,7 +1,6 @@
 """"Najpierw dzwoni do właściciela": NCCO do apki Siperb (SIP) oraz nagranie i transkrypcja
 rozmów odebranych osobiście."""
 
-import os
 import time
 import uuid
 from urllib.parse import quote
@@ -9,6 +8,7 @@ from urllib.parse import quote
 from loguru import logger
 
 from app.call_logs import _ensure_call_logs_columns
+from app.config import settings
 from app.db import saas_db
 from app.notifications.push import _send_push_notifications
 from app.post_call.summary import _parse_summary_fields, summarize_conversation_lines
@@ -85,7 +85,7 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
     transkrypty, utterances=true grupuje słowa w zdania z czasem startu — łączymy oba
     kanały w jedną chronologiczną listę "Klient: .../Właściciel: ..." pod
     summarize_conversation_lines(), dokładnie ten sam format co dla rozmów z AI."""
-    api_key = os.getenv("DEEPGRAM_API_KEY")
+    api_key = settings.deepgram_api_key
     if not api_key:
         logger.warning("📼 [HUMAN-FIRST/RECORDING] Brak DEEPGRAM_API_KEY — transkrypcja pominięta")
         return []
@@ -95,7 +95,7 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
         # live_options) używa dla polskiego na żywo od dawna, sprawdzony na produkcji.
         # DEEPGRAM_BASE_URL (opcjonalny, "api.eu.deepgram.com") — ten sam env var co
         # cascade, żeby oba tory trzymały się tego samego regionu gdy ktoś go ustawi.
-        base_url = os.getenv("DEEPGRAM_BASE_URL", "").strip() or "api.deepgram.com"
+        base_url = settings.deepgram_base_url
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"https://{base_url}/v1/listen",

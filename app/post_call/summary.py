@@ -1,10 +1,11 @@
 """Inteligentne podsumowanie rozmowy (GPT-4.1-mini) — wspólne dla wszystkich silników głosowych."""
 
-import os
 import re
 
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext
+
+from app.config import settings
 
 
 def extract_conversation_lines(context: LLMContext) -> list[str]:
@@ -176,7 +177,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
             max_tokens = 150
 
         import openai
-        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",  # ten sam model co flows.py::send_message_email w cascade
             messages=[
@@ -203,8 +204,6 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
 
 
 _PHONE_CANDIDATE_RE = re.compile(r"\+?\d[\d\s\-]{5,}\d")
-
-
 _EMAIL_CANDIDATE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 

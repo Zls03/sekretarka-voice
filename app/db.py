@@ -1,20 +1,15 @@
 """Klient HTTP bazy Turso (libSQL) i dwie instancje: baza admina oraz baza SaaS."""
 
-import os
 
 import httpx
 from loguru import logger
 
-TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
+from app.config import settings
 
-
-TURSO_AUTH_TOKEN   = os.getenv("TURSO_AUTH_TOKEN", "")
-
-
-SAAS_TURSO_URL   = os.getenv("SAAS_TURSO_DATABASE_URL", "")
-
-
-SAAS_TURSO_TOKEN = os.getenv("SAAS_TURSO_AUTH_TOKEN", "")
+TURSO_DATABASE_URL = settings.turso_database_url
+TURSO_AUTH_TOKEN   = settings.turso_auth_token
+SAAS_TURSO_URL   = settings.saas_turso_database_url
+SAAS_TURSO_TOKEN = settings.saas_turso_auth_token
 
 
 class TursoDB:
@@ -87,6 +82,4 @@ class TursoDB:
 
 
 db      = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
-
-
 saas_db = TursoDB(SAAS_TURSO_URL, SAAS_TURSO_TOKEN, label="saas")

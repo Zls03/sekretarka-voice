@@ -166,8 +166,6 @@ def _slot_to_minutes(slot: str) -> int:
 
 # Cache dla slotów (używany tylko przez get_available_slots, nie przez _from_api)
 _slots_cache = {}
-
-
 _slots_cache_lock = asyncio.Lock()
 
 
