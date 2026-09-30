@@ -1,23 +1,12 @@
-# realtime_prompt.py — budowanie system_instruction dla OpenAI Realtime (Faza 1 planu
-# migracji, patrz CLAUDE.md). Wydzielone z bot_gemini_test.py, żeby ten plik nie rósł
-# w nieskończoność (Faza 3 dopisze jeszcze rezerwacje).
-"""
-Treść promptu jest ŚWIADOMIE skopiowana z flows.py::create_initial_node /
-flows_helpers.py::build_business_context, zamiast zaimportowana stamtąd wprost —
-flows.py ciągnie `pipecat_flows`, który jest spięty z pipecat-ai==0.0.104 (stary
-kontekst OpenAILLMContext). Ten serwis (bot_gemini_test.py) siedzi na pipecat-ai==1.4.0
-(wymagany przez OpenAIRealtimeLLMService) — import wprost z flows.py byłby kruchy
-i mógłby się wywalić na starcie. flows_helpers.py i polish_mappings.py NIE mają
-żadnych zależności od pipecat, więc te importujemy bezpośrednio poniżej — to jedyne
-bezpieczne, tożsame źródło prawdy dla treści promptu.
-"""
+"""System prompt i powitanie — wspólne dla Gemini Live, OpenAI Realtime i ElevenLabs."""
 
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from flows_helpers import build_business_context, _assistant_gender, POLISH_DAYS
-from polish_mappings import normalize_polish_text, vocative_imie, odmien_imie, detect_gender
+from app.polish.formatting import POLISH_DAYS
+from app.polish.grammar import detect_gender, normalize_polish_text, odmien_imie, vocative_imie
+from app.prompt.business_context import _assistant_gender, build_business_context
 
 
 def build_greeting_message(tenant: dict, client_profile: dict = None) -> str:

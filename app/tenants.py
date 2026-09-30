@@ -1,146 +1,13 @@
-"""
-VOICE AI - HELPERS
-==================
-Obsługuje dwie bazy Turso:
-- Baza ADMINA  (TURSO_DATABASE_URL)      → tabela tenants (ręcznie dodawane firmy)
-- Baza SaaS    (SAAS_TURSO_DATABASE_URL) → tabela firms   (firmy z panelu użytkowników)
+"""Wyszukiwanie firmy (tenanta) po numerze telefonu — najpierw baza admina, potem SaaS."""
 
-Funkcja get_tenant_by_phone() sprawdza obie bazy.
-Admina ma priorytet — jeśli numer znajdzie się w obu, wygrywa admin.
-"""
-from dotenv import load_dotenv
-load_dotenv()
 
-import os
-import httpx
-from datetime import datetime
-from typing import Optional, Dict, List
 from loguru import logger
 
-# ==========================================
-# KONFIGURACJA
-# ==========================================
-
-TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
-TURSO_AUTH_TOKEN   = os.getenv("TURSO_AUTH_TOKEN", "")
-
-SAAS_TURSO_URL   = os.getenv("SAAS_TURSO_DATABASE_URL", "")
-SAAS_TURSO_TOKEN = os.getenv("SAAS_TURSO_AUTH_TOKEN", "")
-
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+from app.crypto import decrypt_token
+from app.db import db, saas_db
 
 
-# ==========================================
-# DESZYFROWANIE AUTH TOKEN (AES-GCM)
-# ==========================================
-
-def decrypt_token(encrypted: str) -> str:
-    if not encrypted or ":" not in encrypted:
-        return encrypted
-
-    if not ENCRYPTION_KEY:
-        logger.warning("⚠️ ENCRYPTION_KEY not set — cannot decrypt Twilio Auth Token")
-        return ""
-
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        import base64
-
-        key_bytes = ENCRYPTION_KEY[:32].encode("utf-8")
-        iv_b64, ct_b64 = encrypted.split(":", 1)
-        iv = base64.b64decode(iv_b64)
-        ciphertext = base64.b64decode(ct_b64)
-
-        aesgcm = AESGCM(key_bytes)
-        plaintext = aesgcm.decrypt(iv, ciphertext, None)
-        return plaintext.decode("utf-8")
-    except Exception as e:
-        logger.error(f"❌ decrypt_token failed: {e}")
-        return ""
-
-
-# ==========================================
-# TURSO DATABASE CLIENT
-# ==========================================
-
-class TursoDB:
-    def __init__(self, url: str, token: str, label: str = "db"):
-        self.url   = url.replace("libsql://", "https://") if url else ""
-        self.token = token
-        self.label = label
-        self._client: Optional[httpx.AsyncClient] = None
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(self.url and self.token)
-
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=10.0)
-        return self._client
-
-    async def execute(self, sql: str, args: List = None) -> List[Dict]:
-        if not self.is_configured:
-            logger.warning(f"[{self.label}] DB not configured")
-            return []
-
-        try:
-            client = self._get_client()
-            response = await client.post(
-                f"{self.url}/v2/pipeline",
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "requests": [
-                        {
-                            "type": "execute",
-                            "stmt": {
-                                "sql": sql,
-                                "args": [
-                                    {"type": "text", "value": str(a) if a is not None else None}
-                                    for a in (args or [])
-                                ],
-                            },
-                        },
-                        {"type": "close"},
-                    ]
-                },
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get("results", [])
-                if results and results[0].get("type") == "ok":
-                    result = results[0].get("response", {}).get("result", {})
-                    cols = [c.get("name") for c in result.get("cols", [])]
-                    rows = []
-                    for row in result.get("rows", []):
-                        row_dict = {}
-                        for i, col in enumerate(cols):
-                            val = row[i]
-                            row_dict[col] = val.get("value") if isinstance(val, dict) else val
-                        rows.append(row_dict)
-                    return rows
-            else:
-                logger.error(f"[{self.label}] HTTP {response.status_code}: {response.text[:200]}")
-
-        except Exception as e:
-            logger.error(f"[{self.label}] DB error: {e}")
-
-        return []
-
-
-db      = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
-saas_db = TursoDB(SAAS_TURSO_URL, SAAS_TURSO_TOKEN, label="saas")
-
-
-# ==========================================
-# POBIERZ TENANT Z BAZY ADMINA
-# ==========================================
-
-async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
+async def _get_tenant_from_admin(phone_suffix: str) -> dict | None:
     rows = await db.execute(
         "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
         [f"%{phone_suffix}"]
@@ -211,11 +78,7 @@ async def _get_tenant_from_admin(phone_suffix: str) -> Optional[Dict]:
     }
 
 
-# ==========================================
-# POBIERZ TENANT Z BAZY SaaS
-# ==========================================
-
-async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
+async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
     if not saas_db.is_configured:
         logger.debug("SaaS DB not configured — skipping")
         return None
@@ -361,7 +224,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
         "address":          firm.get("address") or "",
         "email":            firm.get("email") or "",
         "phone_number":     firm.get("phone_number") or "",
-        "user_id":          firm.get("user_id") or "", 
+        "user_id":          firm.get("user_id") or "",
 
         "twilio_account_sid": twilio_sid,
         "twilio_auth_token":  decrypted_token,
@@ -468,11 +331,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> Optional[Dict]:
     }
 
 
-# ==========================================
-# GŁÓWNA FUNKCJA
-# ==========================================
-
-async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
+async def get_tenant_by_phone(phone: str) -> dict | None:
     phone_clean  = phone.replace(" ", "").replace("-", "")
     phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
 
@@ -488,119 +347,3 @@ async def get_tenant_by_phone(phone: str) -> Optional[Dict]:
 
     logger.warning(f"❌ No tenant found for suffix: {phone_suffix}")
     return None
-
-
-# ==========================================
-# Portal CRM (/crm, crm_contacts) — imię znanego kontaktu
-# ==========================================
-# Świadomie NIEZALEŻNE od get_client_profile/PANEL_URL niżej — to jest booking CRM
-# (clients/visits, tylko dla firm z booking_enabled i historią wizyt przez internal API
-# panelu). crm_contacts to prostsza, uniwersalna kartoteka portalu /crm (zakładka
-# "Klienci") — działa dla KAŻDEJ firmy niezależnie od booking, i to jedyne miejsce gdzie
-# właściciel ręcznie wpisuje imię kontaktu. Zapytanie idzie wprost do SaaS DB, bez
-# pośrednictwa panelu.
-
-async def get_crm_contact_name(firm_id: str, phone: str) -> str:
-    """Imię zapisane w portalu /crm (zakładka Klienci) dla tego numeru, jeśli jest.
-    Dopasowanie po ostatnich 9 cyfrach — te same numery bywają zapisane z/bez "+48",
-    identyczny wzorzec co api/crm/leads/route.ts po stronie panelu."""
-    if not saas_db.is_configured or not firm_id or not phone:
-        return ""
-    try:
-        rows = await saas_db.execute(
-            "SELECT name FROM crm_contacts WHERE firm_id = ? AND substr(phone, -9) = substr(?, -9) LIMIT 1",
-            [firm_id, phone],
-        )
-    except Exception as e:
-        logger.error(f"[crm_contacts] get_crm_contact_name error: {e}")
-        return ""
-    if not rows:
-        return ""
-    return (rows[0].get("name") or "").strip()
-
-
-async def maybe_save_contact_name(firm_id: str, phone: str, name: str) -> None:
-    """Zapisuje imię do crm_contacts TYLKO gdy dla tego numeru jeszcze nie ma żadnego
-    imienia — nigdy nie nadpisuje tego co właściciel już ręcznie wpisał w portalu /crm.
-    Wołane po udanym contact_owner (patrz realtime_tools.py/bot_elevenlabs_agent.py) —
-    tam customer_name to coś co klient SAM wprost podał (model musiał o to zapytać, żeby
-    w ogóle wypełnić ten parametr narzędzia), nie zgadywanie z transkryptu, więc ryzyko
-    zapisania złego imienia jest niskie. Błędy połykane — to poboczny, nieblokujący zapis,
-    nie może wywrócić zakończenia rozmowy."""
-    if not saas_db.is_configured or not firm_id or not phone or not name:
-        return
-    try:
-        existing = await saas_db.execute(
-            "SELECT id, name FROM crm_contacts WHERE firm_id = ? AND substr(phone, -9) = substr(?, -9) LIMIT 1",
-            [firm_id, phone],
-        )
-        if existing:
-            if (existing[0].get("name") or "").strip():
-                return  # już jest jakieś imię — nie nadpisujemy
-            await saas_db.execute(
-                "UPDATE crm_contacts SET name = ?, updated_at = datetime('now') WHERE id = ?",
-                [name, existing[0]["id"]],
-            )
-        else:
-            contact_id = f"contact_{int(datetime.now().timestamp() * 1000)}_{os.urandom(3).hex()}"
-            await saas_db.execute(
-                "INSERT INTO crm_contacts (id, firm_id, phone, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
-                [contact_id, firm_id, phone, name],
-            )
-        logger.info(f"📇 [crm_contacts] Zapisano imię '{name}' dla {phone} (firm_id={firm_id})")
-    except Exception as e:
-        logger.error(f"[crm_contacts] maybe_save_contact_name error: {e}")
-
-
-# ==========================================
-# CRM — profil klienta i zapis wizyty
-# ==========================================
-
-PANEL_URL = os.getenv("PANEL_URL", "")
-INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
-
-
-async def get_client_profile(firm_id: str, phone: str) -> Optional[Dict]:
-    """Pobiera profil dzwoniącego klienta z panelu (CRM)."""
-    if not PANEL_URL or not INTERNAL_API_SECRET:
-        return None
-    url = f"{PANEL_URL}/api/internal/client"
-    headers = {"x-internal-secret": INTERNAL_API_SECRET}
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            res = await client.get(url, params={"firm_id": firm_id, "phone": phone}, headers=headers)
-            if res.status_code == 200:
-                return res.json()
-    except Exception as e:
-        logger.warning(f"CRM lookup failed: {e}")
-    return None
-
-
-async def save_client_visit(firm_id: str, phone: str, name: str, service: str, staff: str, scheduled_at: str, notes: str = ""):
-    """Zapisuje/aktualizuje klienta i wizytę w panelu (CRM). Nie blokuje przy błędzie."""
-    if not PANEL_URL or not INTERNAL_API_SECRET:
-        logger.warning("CRM save_client_visit: PANEL_URL lub INTERNAL_API_SECRET nie ustawione — pomijam")
-        return
-    url = f"{PANEL_URL}/api/internal/client"
-    headers = {
-        "x-internal-secret": INTERNAL_API_SECRET,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "firm_id": firm_id,
-        "phone": phone,
-        "name": name,
-        "service": service,
-        "staff": staff,
-        "scheduled_at": scheduled_at,
-    }
-    if notes:
-        payload["notes"] = notes
-    logger.info(f"📋 CRM save: {name} ({phone}) → {service} @ {scheduled_at}")
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.post(url, json=payload, headers=headers)
-            logger.info(f"📋 CRM response: {res.status_code}")
-    except Exception as e:
-        logger.warning(f"CRM save failed: {e}")

@@ -1,36 +1,4 @@
-# polish_mappings.py - Mapowania dla polskiego języka (voice AI)
-# WERSJA 2.0 - Rozszerzona o odmianę imion, wykrywanie płci, naturalne listy
-"""
-Kompleksowe mapowania dla STT/TTS w języku polskim.
-Obsługuje różne formy gramatyczne i błędy transkrypcji.
-
-NOWE W V2:
-- 150+ imion z odmianą (dopełniacz)
-- Wykrywanie płci po imieniu
-- Naturalne listy ("A, B i C")
-- Lepsze reguły automatyczne
-
-Używane przez: flows_booking_simple.py, parse_time(), fuzzy_match_staff()
-"""
-
-# ==========================================
-# GODZINY - wszystkie formy
-# ==========================================
-
-
-# Odwrotne mapowanie - liczba na słowo (do TTS)
-NUMBER_TO_HOUR_WORD = {
-    6: "szóstej", 7: "siódmej", 8: "ósmej", 9: "dziewiątej", 10: "dziesiątej",
-    11: "jedenastej", 12: "dwunastej", 13: "trzynastej", 14: "czternastej",
-    15: "piętnastej", 16: "szesnastej", 17: "siedemnastej", 18: "osiemnastej",
-    19: "dziewiętnastej", 20: "dwudziestej", 21: "dwudziestej pierwszej",
-    22: "dwudziestej drugiej",
-}
-
-
-# ==========================================
-# IMIONA - zdrobnienia i warianty (dla STT)
-# ==========================================
+"""Gramatyka polskich imion: odmiana (dopełniacz, wołacz), rodzaj, normalizacja tekstu."""
 
 NAME_ALIASES = {
     # Kobiece - zdrobnienia → pełne imię
@@ -73,7 +41,7 @@ NAME_ALIASES = {
     "patrycja": "patrycja",
     "sandra": "aleksandra",
     "ola": "aleksandra",
-    
+
     # Męskie - zdrobnienia → pełne imię
     "tomek": "tomasz", "tomcio": "tomasz",
     "bartek": "bartłomiej", "bartuś": "bartłomiej", "bartosz": "bartłomiej",
@@ -123,10 +91,6 @@ NAME_ALIASES = {
     "robert": "robert",
 }
 
-
-# ==========================================
-# ODMIANA IMION (dopełniacz) - NOWE W V2!
-# ==========================================
 
 # Słownik: mianownik → dopełniacz (150+ imion)
 IMIE_DOPELNIACZ = {
@@ -205,7 +169,7 @@ IMIE_DOPELNIACZ = {
     "klaudia": "klaudii",
     "nicole": "nicole",  # nieodmienne
     "nikola": "nikoli",
-    
+
     # ==========================================
     # ŻEŃSKIE - zdrobnienia
     # ==========================================
@@ -243,7 +207,7 @@ IMIE_DOPELNIACZ = {
     "bożenka": "bożenki",
     "werka": "werki",
     "aldonka": "aldonki",
-    
+
     # ==========================================
     # MĘSKIE - popularne (TOP 60)
     # ==========================================
@@ -334,7 +298,7 @@ IMIE_DOPELNIACZ = {
     "sylwester": "sylwestra",
     "waldemar": "waldemara",
     "witold": "witolda",
-    
+
     # ==========================================
     # MĘSKIE - zdrobnienia
     # ==========================================
@@ -373,60 +337,32 @@ IMIE_DOPELNIACZ = {
     "jacek": "jacka",
 }
 
+
 # Imiona męskie kończące się na 'a' (wyjątki)
 MESKIE_NA_A = {
-    "kuba", "barnaba", "bonawentura", "kosma", "dyzma", 
+    "kuba", "barnaba", "bonawentura", "kosma", "dyzma",
     "jarema", "saba", "boryna",  # literackie/rzadkie
 }
 
-
-# ==========================================
-# DNI TYGODNIA - wszystkie formy
-# ==========================================
-
-
-NUMBER_TO_DAY = {
-    0: "poniedziałek", 1: "wtorek", 2: "środa", 3: "czwartek",
-    4: "piątek", 5: "sobota", 6: "niedziela",
-}
-
-
-# ==========================================
-# MIESIĄCE
-# ==========================================
-
-
-# ==========================================
-# CZĘSTE BŁĘDY STT (Deepgram)
-# ==========================================
-
-
-# ==========================================
-# FUNKCJE POMOCNICZE - PODSTAWOWE
-# ==========================================
 
 def normalize_polish_text(text: str) -> str:
     """Normalizuje polski tekst - usuwa polskie znaki dla porównań."""
     if not text:
         return ""
-    
+
     replacements = {
         "ą": "a", "ć": "c", "ę": "e", "ł": "l", "ń": "n",
         "ó": "o", "ś": "s", "ź": "z", "ż": "z",
         "Ą": "A", "Ć": "C", "Ę": "E", "Ł": "L", "Ń": "N",
         "Ó": "O", "Ś": "S", "Ź": "Z", "Ż": "Z",
     }
-    
+
     result = text
     for pl_char, ascii_char in replacements.items():
         result = result.replace(pl_char, ascii_char)
-    
+
     return result
 
-
-# ==========================================
-# FUNKCJE ODMIANY - NOWE W V2!
-# ==========================================
 
 def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
     """
@@ -447,16 +383,16 @@ def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
     """
     if not imie:
         return imie
-    
+
     imie_clean = imie.strip()
     imie_lower = imie_clean.lower()
     original_case = imie_clean[0].isupper() if imie_clean else False
-    
+
     # 1. Sprawdź słownik (najdokładniejsze)
     if imie_lower in IMIE_DOPELNIACZ:
         result = IMIE_DOPELNIACZ[imie_lower]
         return result.title() if original_case else result
-    
+
     # 2. Sprawdź alias → pełne imię → słownik
     if imie_lower in NAME_ALIASES:
         full_name = NAME_ALIASES[imie_lower]
@@ -464,24 +400,24 @@ def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
             # Ale zwróć odmienione zdrobnienie, nie pełne imię
             # np. "Ania" → "Ani", nie "Anny"
             pass  # użyj reguł poniżej
-    
+
     # 3. Reguły automatyczne (dla nieznanych imion)
     result = _odmien_reguly(imie_lower)
-    
+
     return result.title() if original_case else result
 
 
 def _odmien_reguly(imie: str) -> str:
     """Automatyczne reguły odmiany przez dopełniacz."""
-    
+
     # Żeńskie kończące się na -ia → -i
     if imie.endswith("ia"):
         return imie[:-1]  # Ania → Ani, Maria → Mari, Kasia → Kasi
-    
+
     # Żeńskie kończące się na -ja → -i (Maja → Mai)
     if imie.endswith("ja"):
         return imie[:-2] + "i"  # Maja → Mai
-    
+
     # Żeńskie kończące się na -a (ale nie -ia, -ja) → -y
     if imie.endswith("a") and imie not in MESKIE_NA_A:
         # Sprawdź czy spółgłoska miękka przed 'a' → wtedy -i
@@ -494,36 +430,36 @@ def _odmien_reguly(imie: str) -> str:
             else:
                 return imie[:-1] + "y"
         return imie[:-1] + "y"
-    
+
     # Męskie na -eł → -ła (Paweł → Pawła)
     if imie.endswith("eł"):
         return imie[:-2] + "ła"
-    
+
     # Męskie na -ał → -ała (Michał → Michała)
     if imie.endswith("ał"):
         return imie[:-2] + "ała"
-    
+
     # Męskie na -ek → -ka (Tomek → Tomka, Marek → Marka)
     if imie.endswith("ek"):
         return imie[:-2] + "ka"
-    
+
     # Męskie na -ec → -ca (tylko niektóre, np. Tadeusz)
     # To rzadkie, pomijam
-    
+
     # Męskie na spółgłoskę → +a (Piotr → Piotra, Adam → Adama)
     if imie[-1] not in "aeiouyąęó":
         return imie + "a"
-    
+
     # Męskie na -y → -ego (Jerzy → Jerzego) - WAŻNE!
     if imie.endswith("y"):
         return imie[:-1] + "ego"
-    
+
     # Męskie na -i/-o → -ego/-a (rzadkie)
     if imie.endswith("i"):
         return imie + "ego"
     if imie.endswith("o"):
         return imie[:-1] + "a"  # Bruno → Bruna
-    
+
     # Fallback - zwróć bez zmian
     return imie
 
@@ -543,30 +479,26 @@ def detect_gender(imie: str) -> str:
     """
     if not imie:
         return "Pana"  # default męski
-    
+
     imie_lower = imie.lower().strip()
-    
+
     # Wyjątki - męskie kończące się na 'a'
     if imie_lower in MESKIE_NA_A:
         return "Pana"
-    
+
     # Sprawdź alias
     if imie_lower in NAME_ALIASES:
         full = NAME_ALIASES[imie_lower]
         if full.endswith("a"):
             return "Pani"
         return "Pana"
-    
+
     # Standardowa reguła
     if imie_lower.endswith("a"):
         return "Pani"
     else:
         return "Pana"
 
-
-# ==========================================
-# WOŁACZ - powitanie "Dzień dobry Wiktorze"
-# ==========================================
 
 _VOCATIVE = {
     # Męskie
@@ -607,6 +539,7 @@ _VOCATIVE = {
     "Zofia": "Zofio", "Zuzanna": "Zuzanno", "Zuzia": "Zuziu",
 }
 
+
 def vocative_imie(name: str) -> str:
     """Zwraca wołacz imienia. Fallback do mianownika gdy nieznane."""
     if not name:
@@ -635,123 +568,3 @@ def vocative_imie(name: str) -> str:
         return name_cap[:-1] + 'le'
     # Nieznane → mianownik
     return name_cap
-
-
-# ==========================================
-# FUNKCJE LISTY - NOWE W V2!
-# ==========================================
-
-def natural_list(items: list, connector: str = "i") -> str:
-    """
-    Tworzy naturalną listę po polsku.
-    
-    Args:
-        items: Lista elementów
-        connector: Łącznik (domyślnie "i", może być "lub", "albo")
-    
-    Przykłady:
-        natural_list(["Ania"]) → "Ania"
-        natural_list(["Ania", "Wiktor"]) → "Ania i Wiktor"
-        natural_list(["9:00", "10:00", "11:00"]) → "9:00, 10:00 i 11:00"
-        natural_list(["A", "B"], "lub") → "A lub B"
-    """
-    if not items:
-        return ""
-    
-    # Konwertuj wszystko na stringi
-    str_items = [str(i) for i in items]
-    
-    if len(str_items) == 1:
-        return str_items[0]
-    elif len(str_items) == 2:
-        return f"{str_items[0]} {connector} {str_items[1]}"
-    else:
-        return ", ".join(str_items[:-1]) + f" {connector} " + str_items[-1]
-
-
-def format_slots_list(slots: list, max_items: int = 5) -> str:
-    """
-    Formatuje listę godzin naturalnie.
-    
-    Args:
-        slots: Lista godzin (np. ["9:00", "10:00", "11:00"])
-        max_items: Maksymalna liczba do wyświetlenia
-    
-    Przykłady:
-        format_slots_list(["9:00", "10:00", "11:00"])
-        → "dziewiąta, dziesiąta i jedenasta"
-    """
-    if not slots:
-        return "brak wolnych terminów"
-    
-    # Importuj helper do formatowania godzin
-    try:
-        from flows_helpers import format_hour_polish
-    except ImportError:
-        # Fallback
-        def format_hour_polish(h):
-            if isinstance(h, str) and ":" in h:
-                hour = int(h.split(":")[0])
-            else:
-                hour = int(h)
-            return NUMBER_TO_HOUR_WORD.get(hour, f"{hour}:00")
-    
-    # Ogranicz i sformatuj
-    limited = slots[:max_items]
-    formatted = [format_hour_polish(s) for s in limited]
-    
-    result = natural_list(formatted)
-    
-    if len(slots) > max_items:
-        result += f" (i {len(slots) - max_items} więcej)"
-    
-    return result
-
-
-# ==========================================
-# FUNKCJE PARSOWANIA - ROZSZERZONE
-# ==========================================
-
-
-# ==========================================
-# ALIASY DLA KOMPATYBILNOŚCI
-# ==========================================
-
-POLISH_DAYS = NUMBER_TO_DAY
-
-
-# ==========================================
-# TESTY (uruchom: python polish_mappings.py)
-# ==========================================
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("TESTY POLISH_MAPPINGS V2")
-    print("=" * 60)
-    
-    # Test odmiany imion
-    print("\n📝 ODMIANA IMION (dopełniacz):")
-    test_names = [
-        "Ania", "Anna", "Kasia", "Katarzyna", "Magda", "Marta", "Kinga", "Olga",
-        "Paweł", "Wiktor", "Tomek", "Tomasz", "Jan", "Michał", "Jerzy", "Adam",
-        "Kuba", "Maja", "Julia",
-    ]
-    for name in test_names:
-        declined = odmien_imie(name)
-        gender = detect_gender(name)
-        print(f"  {name:15} → {declined:15} ({gender})")
-    
-    # Test naturalnych list
-    print("\n📋 NATURALNE LISTY:")
-    print(f"  1 element:  {natural_list(['Ania'])}")
-    print(f"  2 elementy: {natural_list(['Ania', 'Wiktor'])}")
-    print(f"  3 elementy: {natural_list(['Ania', 'Wiktor', 'Kasia'])}")
-    print(f"  z 'lub':    {natural_list(['poniedziałek', 'wtorek'], 'lub')}")
-    
-    # Test formatowania godzin
-    print("\n🕐 FORMATOWANIE GODZIN:")
-    test_slots = ["9:00", "10:00", "11:00", "12:00", "13:00", "14:00"]
-    print(f"  {format_slots_list(test_slots, 3)}")
-    print(f"  {format_slots_list(test_slots, 6)}")
-    
-    print("\n✅ Testy zakończone!")

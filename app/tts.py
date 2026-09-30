@@ -1,34 +1,28 @@
-"""
-tts_factory.py
-==============
-Factory: inicjalizacja serwisu TTS na podstawie konfiguracji tenanta.
+"""Fabryka usług TTS (zapasowy głos do komunikatów wypowiadanych dosłownie)."""
 
-Obsługiwane providery:
-  - elevenlabs (domyślny)
-  - cartesia
-  - openai
-  - azure
-  - google  (Gemini 2.5 Flash TTS)
-"""
-
-import os
 import json
+import os
 import re
 
 from loguru import logger
-from pipecat.transcriptions.language import Language
-from constants import TTSProvider
 from pipecat.services.azure.tts import AzureTTSService
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.cartesia.tts import CartesiaTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.tts import OpenAITTSService
+from pipecat.transcriptions.language import Language
+
+
+class TTSProvider:
+    """Identyfikatory dostawców syntezy mowy (TTS)."""
+    ELEVENLABS = "elevenlabs"
+    CARTESIA = "cartesia"
+    OPENAI = "openai"
+    AZURE = "azure"
+    GOOGLE = "google"
 
 
 DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
-# ---------------------------------------------------------------------------
-# Pomocnicze: konwersja liczb na tekst polski (dla TTS)
-# ---------------------------------------------------------------------------
 
 def _number_to_polish(n: int) -> str:
     if n == 0:
@@ -102,10 +96,6 @@ async def _expand_abbreviations(text: str, aggregation_type=None) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# Główna fabryka
-# ---------------------------------------------------------------------------
-
 def create_tts_service(tenant: dict, sample_rate: int | None = None):
     """
     Zwraca zainicjalizowany serwis TTS dla danego tenanta.
@@ -166,8 +156,9 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         return tts
 
     if tts_provider == TTSProvider.GOOGLE:
-        from pipecat.services.google.tts import GoogleTTSService
         import tempfile
+
+        from pipecat.services.google.tts import GoogleTTSService
         google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
         speaking_rate = float(tenant.get('speaking_rate') or 1.06)
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice} | rate: {speaking_rate}")
