@@ -179,7 +179,9 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             # zaczynająca się odpowiedź Gemini) może się zdarzyć — akceptowalne, priorytetem
             # jest żeby rozmowa się NIE URYWAŁA gdy klient jednak coś powiedział.
             if call_state["idle_since"] > goodbye_started_at:
-                logger.info("↩️ [GEMINI LIVE TEST] Klient jednak odpowiedział w trakcie pożegnania — anuluję rozłączenie")
+                logger.info(
+                    "↩️ [GEMINI LIVE TEST] Klient jednak odpowiedział w trakcie pożegnania — anuluję rozłączenie"
+                )
                 call_state["ended"] = False
                 continue
             await task.queue_frame(EndFrame())
@@ -211,7 +213,9 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         if elapsed > MAX_CALL_DURATION - 30 and not duration_warning_given:
             duration_warning_given = True
             logger.warning(f"⚠️ [GEMINI LIVE TEST] Zbliża się limit czasu: {elapsed:.0f}s/{MAX_CALL_DURATION}s")
-            await speak_directly(task, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?")
+            await speak_directly(
+                task, call_state, "Za chwilę będę kończyć rozmowę — czy mogę jeszcze w czymś szybko pomóc?"
+            )
 
         if elapsed > MAX_CALL_DURATION:
             logger.warning(f"🛑 [GEMINI LIVE TEST] Limit czasu osiągnięty ({elapsed:.0f}s) — kończę połączenie")

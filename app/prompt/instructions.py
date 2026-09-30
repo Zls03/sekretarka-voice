@@ -9,7 +9,7 @@ from app.polish.grammar import detect_gender, normalize_polish_text, odmien_imie
 from app.prompt.business_context import _assistant_gender, build_business_context
 
 
-def build_greeting_message(tenant: dict, client_profile: dict = None) -> str:
+def build_greeting_message(tenant: dict, client_profile: dict | None = None) -> str:
     """Powitanie + personalizacja dla powracającego klienta.
     1:1 logika z flows.py::create_initial_node (dedup imienia w powitaniu firmy)."""
     business_name = tenant.get("name", "salon")
@@ -22,7 +22,7 @@ def build_greeting_message(tenant: dict, client_profile: dict = None) -> str:
             first_name and normalize_polish_text(first_name).lower() in normalize_polish_text(base_greeting).lower()
         )
         if first_name and not already_personalized:
-            base_stripped = re.sub(r'^[Dd]zień dobry[,!.]?\s*', '', base_greeting).strip()
+            base_stripped = re.sub(r"^[Dd]zień dobry[,!.]?\s*", "", base_greeting).strip()
             base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
             name_voc = vocative_imie(name)
             return f"Dzień dobry {name_voc}. {base_stripped}"
@@ -35,14 +35,26 @@ def _build_crm_hint(client_profile: dict) -> str:
     if not client_profile:
         return ""
 
-    MONTHS_GEN = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
-                  "lipca", "sierpnia", "września", "października", "listopada", "grudnia"]
+    MONTHS_GEN = [
+        "stycznia",
+        "lutego",
+        "marca",
+        "kwietnia",
+        "maja",
+        "czerwca",
+        "lipca",
+        "sierpnia",
+        "września",
+        "października",
+        "listopada",
+        "grudnia",
+    ]
 
     def _fmt_dt(iso: str):
         try:
-            dt_str = re.sub(r'\.\d+Z?$', '', iso).replace('Z', '')
+            dt_str = re.sub(r"\.\d+Z?$", "", iso).replace("Z", "")
             dt = datetime.fromisoformat(dt_str)
-            return f"{dt.day} {MONTHS_GEN[dt.month-1]} o {dt.hour:02d}:{dt.minute:02d}", dt
+            return f"{dt.day} {MONTHS_GEN[dt.month - 1]} o {dt.hour:02d}:{dt.minute:02d}", dt
         except Exception:
             return iso, None
 
@@ -52,7 +64,11 @@ def _build_crm_hint(client_profile: dict) -> str:
     if upcoming:
         past_count = max(0, visit_count - len(upcoming))
         crm_hint = "\n\nINFO O KLIENCIE (CRM):"
-        crm_hint += f" Klient był u nas już {past_count} raz/razy." if past_count > 0 else " Klient jest nowy (jeszcze nie był)."
+        crm_hint += (
+            f" Klient był u nas już {past_count} raz/razy."
+            if past_count > 0
+            else " Klient jest nowy (jeszcze nie był)."
+        )
 
         lines = []
         for uv in upcoming[:3]:
@@ -89,7 +105,11 @@ Jeśli pyta "kiedy byłem ostatnio?" — odpowiedz o przeszłych wizytach, ignor
 
         if is_future:
             crm_hint = "\n\nINFO O KLIENCIE (CRM):"
-            crm_hint += f" Klient był u nas już {past_visits} raz/razy." if past_visits > 0 else " Klient jest nowy (jeszcze nie był)."
+            crm_hint += (
+                f" Klient był u nas już {past_visits} raz/razy."
+                if past_visits > 0
+                else " Klient jest nowy (jeszcze nie był)."
+            )
             crm_hint += f" MA ZAREZERWOWANĄ WIZYTĘ na: {last_seen_fmt}. Zaplanowana usługa: {last_svc}"
             if last_stf_declined:
                 crm_hint += f" u {last_stf_declined}"
@@ -99,7 +119,7 @@ Jeśli pyta "kiedy byłem ostatnio?" — odpowiedz o przeszłych wizytach, ignor
 ⚠️ WAŻNE — PRZYSZŁA WIZYTA:
 Klient ma NADCHODZĄCĄ wizytę (jeszcze się nie odbyła).
 Jeśli pyta o termin/wizytę:
-→ Powiedz: "Ma Pan wizytę na {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
+→ Powiedz: "Ma Pan wizytę na {last_seen_fmt}, na {last_svc}{f" u {last_stf_declined}" if last_stf_declined else ""}."
 → NIE mów "ostatnio był Pan u nas" — wizyta jest W PRZYSZŁOŚCI
 Jeśli pyta "kiedy byłem ostatnio?" i były poprzednie wizyty: odpowiedz o nich, ignorując przyszłą rezerwację."""
         else:
@@ -118,14 +138,14 @@ Jeśli pyta "kiedy byłem ostatnio?" i były poprzednie wizyty: odpowiedz o nich
 ⚠️ PYTANIA O HISTORIĘ WIZYT:
 Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy byłem?" itp.:
 → Odpowiedz BEZPOŚREDNIO z danych CRM powyżej, jednym zdaniem
-→ Np. "Ostatnio był Pan u nas {last_seen_fmt}, na {last_svc}{f' u {last_stf_declined}' if last_stf_declined else ''}."
+→ Np. "Ostatnio był Pan u nas {last_seen_fmt}, na {last_svc}{f" u {last_stf_declined}" if last_stf_declined else ""}."
 → NIE pytaj o więcej szczegółów — masz wszystkie dane"""
         return crm_hint
 
     return ""
 
 
-def build_role_prompt(tenant: dict, client_profile: dict = None) -> str:
+def build_role_prompt(tenant: dict, client_profile: dict | None = None) -> str:
     """Tożsamość + styl + kontekst biznesowy + CRM. 1:1 treść z flows.py::create_initial_node's
     role_messages (bez functions/task_messages — te są specyficzne dla FlowManagera)."""
     business_name = tenant.get("name", "salon")
@@ -136,7 +156,8 @@ def build_role_prompt(tenant: dict, client_profile: dict = None) -> str:
     tone_line = (
         f"- Dopasuj ton do branży ({industry}): salon urody/fryzjer → ciepło i swobodnie, "
         f"klinika/gabinet/lekarz → spokojnie i profesjonalnie, siłownia/gym/fitness → energicznie i motywująco"
-        if industry else ""
+        if industry
+        else ""
     )
 
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
@@ -161,7 +182,9 @@ Przykład stylu (podstaw PRAWDZIWE dni/godziny TEGO pracownika z GODZINY PRACY P
     if booking_enabled:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/usług → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z usługami.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc z wizytą?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu w CENNIKU → powiedz "Nie mam szczegółowych informacji o tej usłudze, ale chętnie umówię wizytę"'
-        przyklad_tts = '"Chętnie opiszę.", "Co byłoby wygodne?", "Czy umówić wizytę?", "Termin można ustalić już teraz."'
+        przyklad_tts = (
+            '"Chętnie opiszę.", "Co byłoby wygodne?", "Czy umówić wizytę?", "Termin można ustalić już teraz."'
+        )
     else:
         zasada_poza_tematem = 'Jeśli pytanie NIE dotyczy firmy/oferty → krótko przekieruj jednym zdaniem (za każdym razem inaczej, np. "Tego nie wiem, ale chętnie pomogę z informacjami o firmie.", "To poza moim zakresem.", "Tym się nie zajmuję — mogę pomóc w czymś innym?")'
         zasada_brak_opisu = 'Jeśli klient pyta "na czym polega [usługa]?" i usługa NIE MA opisu → powiedz "Nie mam szczegółowych informacji o tej usłudze"'
@@ -177,13 +200,13 @@ Przykład stylu (podstaw PRAWDZIWE dni/godziny TEGO pracownika z GODZINY PRACY P
     # które trafiają do wywołania narzędzia (contact_owner/book_appointment/manage_booking) —
     # błąd tam nie koryguje się sam, zostaje wysłany/zapisany na stałe. Dotyczy WSZYSTKICH
     # firm (ten prompt jest wspólny), nie tylko QFX.
-    return f"""Jesteś {g['role_noun']} firmy "{business_name}".
+    return f"""Jesteś {g["role_noun"]} firmy "{business_name}".
 
 TOŻSAMOŚĆ:
 - Masz na imię {assistant_name}
-- {g['gender_line']}
-- Jeśli ktoś pyta kim jesteś: "{g['self_intro']} {business_name}"
-- Jeśli ktoś pyta czy jesteś robotem/AI: "{g['self_ai']}"
+- {g["gender_line"]}
+- Jeśli ktoś pyta kim jesteś: "{g["self_intro"]} {business_name}"
+- Jeśli ktoś pyta czy jesteś robotem/AI: "{g["self_ai"]}"
 - NIE przedstawiaj się imieniem ponownie w trakcie rozmowy (np. po "słyszysz mnie?") — imię
   padło raz w powitaniu, wystarczy. Wyjątek: ktoś wprost pyta kim jesteś.
 
@@ -269,8 +292,12 @@ przykładowych wartości do prawdziwej odpowiedzi):
 
 
 def build_realtime_instructions(
-    tenant: dict, client_profile: dict = None, include_greeting: bool = True,
-    has_transfer: bool = False, has_booking: bool = False, has_contact_owner: bool = True,
+    tenant: dict,
+    client_profile: dict | None = None,
+    include_greeting: bool = True,
+    has_transfer: bool = False,
+    has_booking: bool = False,
+    has_contact_owner: bool = True,
 ) -> str:
     """system_instruction dla OpenAI Realtime: rola+styl+biznes+CRM (jak w cascade) plus
     krótki dopisek specyficzny dla Realtime (jak się przywitać, czego jeszcze nie robimy).
@@ -396,8 +423,8 @@ bo to zacznie brzmieć sztucznie."""
             "Dopiero jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji — "
             "zaproponuj zostawienie wiadomości przez contact_owner zamiast tego (przekażesz prośbę "
             "właścicielowi, który się skontaktuje)."
-            if has_contact_owner else
-            "Jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji — powiedz że rezerwacja "
+            if has_contact_owner
+            else "Jeśli NIE MASZ żadnej informacji o innym sposobie rezerwacji — powiedz że rezerwacja "
             "telefoniczna nie jest teraz dostępna i na tym zakończ (NIE oferuj zostawienia wiadomości —"
             " tej opcji tu nie ma)."
         )
@@ -545,7 +572,9 @@ mam zapisać". Zamiast tego POTWIERDŹ krótko, np. "Zapisuję jako {first_name}
 "Czy to nadal {first_name}?". Jeśli potwierdzi → użyj "{first_name}" jako customer_name, bez
 dodatkowych pytań. Jeśli zaprzeczy lub sam poda inne imię → użyj TEGO nowego imienia zamiast
 "{first_name}" — to znaczy że akurat dzwoni ktoś inny z tego numeru."""
-    return prompt + f"""
+    return (
+        prompt
+        + f"""
 
 ⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
 Ten numer telefonu jest zapisany w bazie klientów pod imieniem "{first_name}". To NIE jest
@@ -554,3 +583,4 @@ OBOWIĄZUJE. Stan rozmówcy jest od razu {stan} (nie NIEZNANA) — możesz zwrac
 od pierwszego zdania, np. "{forma} {voc}". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
 inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad.
 {contact_owner_note}"""
+    )

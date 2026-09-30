@@ -33,6 +33,7 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
         return False
     e164 = phone_number if phone_number.startswith("+") else f"+{phone_number}"
     import httpx
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -62,7 +63,9 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
             return True
         if response.status_code == 409:
             return True
-        logger.warning(f"⚠️ [ELEVENLABS SIP] Import {e164} nie powiódł się: {response.status_code} {response.text[:200]}")
+        logger.warning(
+            f"⚠️ [ELEVENLABS SIP] Import {e164} nie powiódł się: {response.status_code} {response.text[:200]}"
+        )
         return False
     except Exception as e:
         logger.error(f"❌ [ELEVENLABS SIP] Import {e164} — wyjątek: {e}")

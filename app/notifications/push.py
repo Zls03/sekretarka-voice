@@ -1,5 +1,6 @@
 """Powiadomienia web push do portalu /crm (PWA) o nowych zgłoszeniach."""
 
+import contextlib
 import json
 
 from loguru import logger
@@ -65,13 +66,11 @@ async def _send_push_notifications(tenant: dict, title: str, body: str, url: str
             status = getattr(getattr(e, "response", None), "status_code", None)
             if status in (404, 410):
                 expired += 1
-                try:
+                with contextlib.suppress(Exception):
                     await saas_db.execute(
                         "DELETE FROM crm_push_subscriptions WHERE endpoint = ?",
                         [subscription_info["endpoint"]],
                     )
-                except Exception:
-                    pass
             else:
                 logger.error(f"📲 [PUSH] Błąd wysyłki (status={status}): {e}")
         except Exception as e:

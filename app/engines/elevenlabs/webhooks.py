@@ -137,7 +137,9 @@ async def elevenlabs_tool_contact_owner(request: Request):
         # has_contact_owner w realtime_prompt.py), więc nawet gdy model je i tak wywoła
         # wbrew instrukcji w prompcie, tu odmawiamy wysyłki — to jedyne miejsce gdzie
         # ustawienie tenanta jest faktycznie wymuszone, nie tylko sugerowane tekstem.
-        logger.warning(f"🚫 [ELEVENLABS AGENT] contact_owner wywołany mimo contact_owner_enabled=0 dla {tenant.get('name')} — odmawiam wysyłki")
+        logger.warning(
+            f"🚫 [ELEVENLABS AGENT] contact_owner wywołany mimo contact_owner_enabled=0 dla {tenant.get('name')} — odmawiam wysyłki"
+        )
         return {"status": "error", "reason": "disabled"}
 
     to_email = tenant.get("notification_email") or tenant.get("email")
@@ -340,8 +342,11 @@ async def elevenlabs_post_call(request: Request):
     # transkrypt zapisywał się pod WEWNĘTRZNYM call_sid ElevenLabs (SCL_xxx), którego panel
     # nigdy nie znajdował przy wyświetlaniu historii rozmowy dla danego wpisu w logu połączeń.
     call_sid = (
-        dyn_vars.get("system__call_sid") or dyn_vars.get("call_sid")
-        or dyn_vars.get("twilio_call_sid") or phone_call.get("call_sid") or ""
+        dyn_vars.get("system__call_sid")
+        or dyn_vars.get("call_sid")
+        or dyn_vars.get("twilio_call_sid")
+        or phone_call.get("call_sid")
+        or ""
     )
     duration = int(metadata.get("call_duration_secs") or 0)
     transcript = data.get("transcript") or []
@@ -396,7 +401,9 @@ async def elevenlabs_post_call(request: Request):
         logger.error(f"⚠️ [ELEVENLABS AGENT] Post-call: DB dedup check error: {e}")
         already_saved = None
     if already_saved:
-        logger.warning(f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} ma już transkrypt w DB, pomijam duplikat webhooka (inna replika/restart)")
+        logger.warning(
+            f"⚠️ [ELEVENLABS AGENT] Post-call: {call_sid} ma już transkrypt w DB, pomijam duplikat webhooka (inna replika/restart)"
+        )
         return {"status": "duplicate_ignored"}
 
     saved = await save_elevenlabs_transcript(tenant, call_sid, transcript, analysis)
@@ -437,13 +444,20 @@ async def elevenlabs_post_call(request: Request):
     elif not summary and int(tenant.get("report_empty_calls") or 0):
         # 2026-09-09 — patrz identyczny komentarz w realtime_tools.py::maybe_send_call_summary
         # (QFX Group: raport nawet dla połączeń bez treści, zamiast pomijać całkiem).
-        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        caller_display = (
+            caller_phone
+            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
+            else "numer zastrzeżony"
+        )
         summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
     if summary:
         await persist_call_summary(tenant, call_sid, summary)
     if lead_email_enabled and to_email and summary:
         ok = await send_call_summary_email(
-            tenant, caller_phone or "nieznany", summary, to_email,
+            tenant,
+            caller_phone or "nieznany",
+            summary,
+            to_email,
             pending_message=pending_contact_owner,
             transcript_lines=conversation_lines if int(tenant.get("transcript_email_enabled") or 0) else None,
         )
@@ -469,7 +483,11 @@ async def elevenlabs_post_call(request: Request):
             logger.warning("📧 [ELEVENLABS AGENT] pending_contact_owner: raport nie poleciał, wysłano awaryjnie osobno")
 
     if has_real_content and summary:
-        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        caller_display = (
+            caller_phone
+            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
+            else "numer zastrzeżony"
+        )
         await _send_push_notifications(
             tenant,
             title="📞 Nowe zgłoszenie",

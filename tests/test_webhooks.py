@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
-
 from conftest import assert_golden, make_booking_tenant, make_tenant, patch_everywhere
+from fastapi.testclient import TestClient
 
 TENANT_PHONE = "+48111222333"
 CALLER = "+48600700800"
@@ -50,6 +49,7 @@ def _response(resp):
 # Twilio
 # --------------------------------------------------------------------------
 
+
 def _twilio_incoming(client, path="/twilio/incoming-gemini-live-test"):
     return client.post(path, data={"Called": TENANT_PHONE, "From": CALLER, "CallSid": "CA123"})
 
@@ -62,7 +62,9 @@ def test_twilio_incoming_streams_to_engine_websocket(client, tenants, credits_ok
 
 def test_twilio_incoming_elevenlabs_registers_call(client, tenants, credits_ok, monkeypatch):
     tenants[TENANT_PHONE] = make_tenant(
-        realtime_engine="elevenlabs", elevenlabs_voice_id="voice_x", elevenlabs_tts_speed=1.1,
+        realtime_engine="elevenlabs",
+        elevenlabs_voice_id="voice_x",
+        elevenlabs_tts_speed=1.1,
     )
     captured = {}
 
@@ -72,7 +74,7 @@ def test_twilio_incoming_elevenlabs_registers_call(client, tenants, credits_ok, 
             return "<Response>elevenlabs</Response>"
 
     class FakeClient:
-        class conversational_ai:  # noqa: N801 — kształt API SDK ElevenLabs
+        class conversational_ai:
             twilio = FakeTwilio()
 
     patch_everywhere(monkeypatch, "_get_elevenlabs_client", lambda: FakeClient())
@@ -111,10 +113,16 @@ def test_twilio_status_completed_charges_call(client, tenants, fake_db):
     fake_db.on("SELECT user_id FROM firms", [{"user_id": "user_1"}])
     fake_db.on("SELECT balance FROM credits", [{"balance": "40"}])
     fake_db.on("SELECT minutes_used, minutes_limit FROM firms", [{"minutes_used": "10", "minutes_limit": "100"}])
-    resp = client.post("/twilio/status", data={
-        "CallSid": "CA999", "CallStatus": "completed", "CallDuration": "95",
-        "To": TENANT_PHONE, "From": CALLER,
-    })
+    resp = client.post(
+        "/twilio/status",
+        data={
+            "CallSid": "CA999",
+            "CallStatus": "completed",
+            "CallDuration": "95",
+            "To": TENANT_PHONE,
+            "From": CALLER,
+        },
+    )
     assert_golden("twilio_status_completed.json", {"response": _response(resp), "db": fake_db.calls})
 
 
@@ -127,9 +135,15 @@ def test_twilio_status_in_progress_is_ignored(client, tenants, fake_db):
 # Vonage — answer
 # --------------------------------------------------------------------------
 
+
 def _vonage_answer(client, path="/vonage/answer-gemini-live", **extra):
-    params = {"to": TENANT_PHONE.lstrip("+"), "from": CALLER.lstrip("+"), "uuid": "uuid-1",
-              "region_url": "https://api-eu-3.vonage.com", **extra}
+    params = {
+        "to": TENANT_PHONE.lstrip("+"),
+        "from": CALLER.lstrip("+"),
+        "uuid": "uuid-1",
+        "region_url": "https://api-eu-3.vonage.com",
+        **extra,
+    }
     return client.get(path, params=params)
 
 
@@ -154,7 +168,9 @@ def test_vonage_answer_elevenlabs(client, tenants, credits_ok, monkeypatch, sip_
 @pytest.mark.parametrize("sip_username", ["siperb-firma", ""])
 def test_vonage_answer_human_first(client, tenants, credits_ok, sip_username):
     tenants[TENANT_PHONE] = make_tenant(
-        human_first_enabled=1, siperb_sip_username=sip_username, human_first_timeout_seconds=20,
+        human_first_enabled=1,
+        siperb_sip_username=sip_username,
+        human_first_timeout_seconds=20,
     )
     assert_golden(f"vonage_answer_human_first_{bool(sip_username)}.json", _response(_vonage_answer(client)))
 
@@ -175,45 +191,76 @@ def test_vonage_answer_openai_legacy_route(client, tenants, credits_ok):
 # Vonage — zdarzenia i fallbacki
 # --------------------------------------------------------------------------
 
+
 def test_vonage_events_completed_inbound(client, tenants, fake_db):
     tenants[TENANT_PHONE] = make_tenant()
     fake_db.on("SELECT id FROM call_logs", [{"id": "call_1"}])
     fake_db.on("SELECT user_id FROM firms", [{"user_id": "user_1"}])
     fake_db.on("SELECT balance FROM credits", [{"balance": "0.2"}])
     fake_db.on("SELECT minutes_used, minutes_limit FROM firms", [{"minutes_used": "99.5", "minutes_limit": "100"}])
-    resp = client.post("/vonage/events", json={
-        "status": "completed", "uuid": "uuid-1", "duration": "61",
-        "to": TENANT_PHONE.lstrip("+"), "from": CALLER.lstrip("+"), "direction": "inbound",
-    })
+    resp = client.post(
+        "/vonage/events",
+        json={
+            "status": "completed",
+            "uuid": "uuid-1",
+            "duration": "61",
+            "to": TENANT_PHONE.lstrip("+"),
+            "from": CALLER.lstrip("+"),
+            "direction": "inbound",
+        },
+    )
     assert_golden("vonage_events_completed.json", {"response": _response(resp), "db": fake_db.calls})
 
 
 def test_vonage_events_new_admin_call_log(client, tenants, fake_db):
     tenants[TENANT_PHONE] = make_tenant(id="tenant_admin", source="admin")
     fake_db.on("SELECT minutes_used, minutes_limit FROM tenants", [{"minutes_used": "5", "minutes_limit": "100"}])
-    resp = client.get("/vonage/events", params={
-        "status": "completed", "uuid": "uuid-2", "duration": "30", "to": TENANT_PHONE, "from": "",
-    })
+    resp = client.get(
+        "/vonage/events",
+        params={
+            "status": "completed",
+            "uuid": "uuid-2",
+            "duration": "30",
+            "to": TENANT_PHONE,
+            "from": "",
+        },
+    )
     assert_golden("vonage_events_admin.json", {"response": _response(resp), "db": fake_db.calls})
 
 
 def test_vonage_events_skips_outbound_and_other_statuses(client, tenants, fake_db):
     tenants[TENANT_PHONE] = make_tenant()
-    outbound = client.post("/vonage/events", json={
-        "status": "completed", "uuid": "u", "to": TENANT_PHONE, "direction": "outbound",
-    })
+    outbound = client.post(
+        "/vonage/events",
+        json={
+            "status": "completed",
+            "uuid": "u",
+            "to": TENANT_PHONE,
+            "direction": "outbound",
+        },
+    )
     ringing = client.post("/vonage/events", json={"status": "ringing", "uuid": "u"})
-    assert_golden("vonage_events_skipped.json", {
-        "outbound": _response(outbound), "ringing": _response(ringing), "db": fake_db.calls,
-    })
+    assert_golden(
+        "vonage_events_skipped.json",
+        {
+            "outbound": _response(outbound),
+            "ringing": _response(ringing),
+            "db": fake_db.calls,
+        },
+    )
 
 
 def test_vonage_transfer_fallback(client, monkeypatch):
     email = Recorder(result=True)
     patch_everywhere(monkeypatch, "send_missed_transfer_email", email)
-    resp = client.get("/vonage/transfer-fallback", params={
-        "businessName": "Salon Testowy", "callerPhone": CALLER, "ownerEmail": "owner@example.com",
-    })
+    resp = client.get(
+        "/vonage/transfer-fallback",
+        params={
+            "businessName": "Salon Testowy",
+            "callerPhone": CALLER,
+            "ownerEmail": "owner@example.com",
+        },
+    )
     assert_golden("vonage_transfer_fallback.json", {"response": _response(resp), "email": email.calls})
 
 
@@ -222,9 +269,13 @@ def test_vonage_sip_fallback_elevenlabs(client, status):
     ws_uri = "wss://bot.test/ws-elevenlabs-vonage?phone=48111222333"
     with_uri = client.post(f"/vonage/sip-fallback-elevenlabs?wsUri={ws_uri}", json={"status": status})
     without_uri = client.post("/vonage/sip-fallback-elevenlabs", content=b"not json")
-    assert_golden(f"vonage_sip_fallback_{status}.json", {
-        "with_uri": _response(with_uri), "without_uri": _response(without_uri),
-    })
+    assert_golden(
+        f"vonage_sip_fallback_{status}.json",
+        {
+            "with_uri": _response(with_uri),
+            "without_uri": _response(without_uri),
+        },
+    )
 
 
 def test_vonage_human_first_fallback(client, tenants, credits_ok):
@@ -240,14 +291,24 @@ def test_vonage_human_first_recording(client, tenants, monkeypatch):
     process = Recorder()
     patch_everywhere(monkeypatch, "process_human_first_recording", process)
     params = {"to": TENANT_PHONE, "from": CALLER, "uuid": "uuid-4"}
-    ok = client.post("/vonage/human-first-recording", params=params, json={
-        "recording_url": "https://api.nexmo.com/rec/1",
-        "start_time": "2026-09-30T10:00:00Z", "end_time": "2026-09-30T10:02:05Z",
-    })
+    ok = client.post(
+        "/vonage/human-first-recording",
+        params=params,
+        json={
+            "recording_url": "https://api.nexmo.com/rec/1",
+            "start_time": "2026-09-30T10:00:00Z",
+            "end_time": "2026-09-30T10:02:05Z",
+        },
+    )
     no_url = client.post("/vonage/human-first-recording", params=params, json={})
-    assert_golden("vonage_human_first_recording.json", {
-        "ok": _response(ok), "no_url": _response(no_url), "process": process.calls,
-    })
+    assert_golden(
+        "vonage_human_first_recording.json",
+        {
+            "ok": _response(ok),
+            "no_url": _response(no_url),
+            "process": process.calls,
+        },
+    )
 
 
 def test_vonage_test_siperb(client, tenants, credits_ok):
@@ -255,27 +316,41 @@ def test_vonage_test_siperb(client, tenants, credits_ok):
     other = client.get("/vonage/test-siperb", params={"to": TENANT_PHONE.lstrip("+"), "from": CALLER, "uuid": "u5"})
     bizvoice = client.get("/vonage/test-siperb", params={"to": "48459050542", "from": CALLER})
     event = client.post("/vonage/test-siperb-event", json={"status": "answered"})
-    assert_golden("vonage_test_siperb.json", {
-        "other": _response(other), "bizvoice": _response(bizvoice), "event": _response(event),
-    })
+    assert_golden(
+        "vonage_test_siperb.json",
+        {
+            "other": _response(other),
+            "bizvoice": _response(bizvoice),
+            "event": _response(event),
+        },
+    )
 
 
 def test_health_endpoints(client):
-    assert_golden("health.json", {
-        "gemini": client.get("/health-gemini-live-test").json(),
-        "openai": client.get("/health-gemini-test").json(),
-    })
+    assert_golden(
+        "health.json",
+        {
+            "gemini": client.get("/health-gemini-live-test").json(),
+            "openai": client.get("/health-gemini-test").json(),
+        },
+    )
 
 
 # --------------------------------------------------------------------------
 # ElevenLabs
 # --------------------------------------------------------------------------
 
+
 def test_elevenlabs_personalization(client, tenants, credits_ok):
     tenants[TENANT_PHONE] = make_booking_tenant(realtime_engine="elevenlabs", elevenlabs_voice_id="voice_y")
-    known = client.post("/elevenlabs/personalization", json={
-        "called_number": TENANT_PHONE, "caller_id": CALLER, "call_sid": "SCL_1",
-    })
+    known = client.post(
+        "/elevenlabs/personalization",
+        json={
+            "called_number": TENANT_PHONE,
+            "caller_id": CALLER,
+            "call_sid": "SCL_1",
+        },
+    )
     unknown = client.post("/elevenlabs/personalization", json={"called_number": "+48999999999"})
     assert_golden("elevenlabs_personalization.json", {"known": known.json(), "unknown": unknown.json()})
 
@@ -285,8 +360,13 @@ def test_elevenlabs_contact_owner_tool(client, tenants, monkeypatch):
     save_name = Recorder()
     patch_everywhere(monkeypatch, "send_message_email", email)
     patch_everywhere(monkeypatch, "maybe_save_contact_name", save_name)
-    body = {"customer_name": "Jan", "message": "Proszę o oddzwonienie w sprawie koloryzacji na sobotę",
-            "called_number": TENANT_PHONE, "caller_phone": CALLER, "conversation_id": "conv_1"}
+    body = {
+        "customer_name": "Jan",
+        "message": "Proszę o oddzwonienie w sprawie koloryzacji na sobotę",
+        "called_number": TENANT_PHONE,
+        "caller_phone": CALLER,
+        "conversation_id": "conv_1",
+    }
 
     tenants[TENANT_PHONE] = make_tenant(contact_owner_closing_line="Przekażę wiadomość.")
     sent = client.post("/elevenlabs/tools/contact_owner", json=body).json()
@@ -297,10 +377,18 @@ def test_elevenlabs_contact_owner_tool(client, tenants, monkeypatch):
     vague = client.post("/elevenlabs/tools/contact_owner", json={**body, "message": "wiadomość"}).json()
     missing = client.post("/elevenlabs/tools/contact_owner", json={**body, "customer_name": ""}).json()
 
-    assert_golden("elevenlabs_contact_owner.json", {
-        "sent": sent, "deferred": deferred, "disabled": disabled, "vague": vague, "missing": missing,
-        "emails": email.calls, "saved_names": len(save_name.calls),
-    })
+    assert_golden(
+        "elevenlabs_contact_owner.json",
+        {
+            "sent": sent,
+            "deferred": deferred,
+            "disabled": disabled,
+            "vague": vague,
+            "missing": missing,
+            "emails": email.calls,
+            "saved_names": len(save_name.calls),
+        },
+    )
 
 
 def test_elevenlabs_post_call(client, tenants, fake_db, monkeypatch):
@@ -316,29 +404,46 @@ def test_elevenlabs_post_call(client, tenants, fake_db, monkeypatch):
     for name, recorder in recorders.items():
         patch_everywhere(monkeypatch, name, recorder)
     patch_everywhere(monkeypatch, "_processed_post_call_sids", set())
-    patch_everywhere(monkeypatch, "_elevenlabs_call_states", {
-        "conv_9": {"pending_contact_owner": {"customer_name": "Jan", "message": "Oddzwonić"}},
-    })
-    payload = {"data": {
-        "conversation_id": "conv_9", "status": "done",
-        "metadata": {"call_duration_secs": 42},
-        "analysis": {"transcript_summary": "fallback"},
-        "conversation_initiation_client_data": {"dynamic_variables": {
-            "called_number": TENANT_PHONE, "caller_phone": CALLER, "call_sid": "uuid-9",
-        }},
-        "transcript": [
-            {"role": "agent", "message": "Dzień dobry, tu Salon Testowy."},
-            {"role": "user", "message": "Chciałbym się umówić."},
-            {"role": "user", "message": ""},
-        ],
-    }}
+    patch_everywhere(
+        monkeypatch,
+        "_elevenlabs_call_states",
+        {
+            "conv_9": {"pending_contact_owner": {"customer_name": "Jan", "message": "Oddzwonić"}},
+        },
+    )
+    payload = {
+        "data": {
+            "conversation_id": "conv_9",
+            "status": "done",
+            "metadata": {"call_duration_secs": 42},
+            "analysis": {"transcript_summary": "fallback"},
+            "conversation_initiation_client_data": {
+                "dynamic_variables": {
+                    "called_number": TENANT_PHONE,
+                    "caller_phone": CALLER,
+                    "call_sid": "uuid-9",
+                }
+            },
+            "transcript": [
+                {"role": "agent", "message": "Dzień dobry, tu Salon Testowy."},
+                {"role": "user", "message": "Chciałbym się umówić."},
+                {"role": "user", "message": ""},
+            ],
+        }
+    }
     first = client.post("/elevenlabs/post-call", content=json.dumps(payload)).json()
     duplicate = client.post("/elevenlabs/post-call", content=json.dumps(payload)).json()
     invalid = client.post("/elevenlabs/post-call", content=b"{").json()
-    assert_golden("elevenlabs_post_call.json", {
-        "first": first, "duplicate": duplicate, "invalid": invalid, "db": fake_db.calls,
-        "calls": {name: r.calls for name, r in recorders.items()},
-    })
+    assert_golden(
+        "elevenlabs_post_call.json",
+        {
+            "first": first,
+            "duplicate": duplicate,
+            "invalid": invalid,
+            "db": fake_db.calls,
+            "calls": {name: r.calls for name, r in recorders.items()},
+        },
+    )
 
 
 @pytest.mark.parametrize("tool", ["book_appointment", "manage_booking"])
@@ -347,12 +452,24 @@ def test_elevenlabs_booking_tools_delegate(client, tenants, monkeypatch, tool):
     handler = Recorder(result={"status": "ask", "say": "Na jaką usługę?"})
     patch_everywhere(monkeypatch, f"_handle_{tool}", handler)
     patch_everywhere(monkeypatch, "_elevenlabs_call_states", {})
-    resp = client.post(f"/elevenlabs/tools/{tool}", json={
-        "conversation_id": "conv_b", "called_number": TENANT_PHONE, "caller_phone": CALLER,
-        "channel": "vonage", "service": "strzyżenie", "action": "cancel",
-    })
+    resp = client.post(
+        f"/elevenlabs/tools/{tool}",
+        json={
+            "conversation_id": "conv_b",
+            "called_number": TENANT_PHONE,
+            "caller_phone": CALLER,
+            "channel": "vonage",
+            "service": "strzyżenie",
+            "action": "cancel",
+        },
+    )
     call = handler.calls[0]
-    assert_golden(f"elevenlabs_tool_{tool}.json", {
-        "response": resp.json(), "args": call["args"][0], "caller": call["args"][2],
-        "kwargs": call["kwargs"],
-    })
+    assert_golden(
+        f"elevenlabs_tool_{tool}.json",
+        {
+            "response": resp.json(),
+            "args": call["args"][0],
+            "caller": call["args"][2],
+            "kwargs": call["kwargs"],
+        },
+    )

@@ -1,4 +1,4 @@
-""""Bring your own Twilio": rejestracja połączenia w ElevenLabs i TwiML dla Twilio."""
+""" "Bring your own Twilio": rejestracja połączenia w ElevenLabs i TwiML dla Twilio."""
 
 import asyncio
 
@@ -17,12 +17,13 @@ def _get_elevenlabs_client():
     global _elevenlabs_client
     if _elevenlabs_client is None:
         from elevenlabs.client import ElevenLabs
+
         _elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
     return _elevenlabs_client
 
 
 async def build_register_call_twiml(tenant: dict, caller_phone: str, called_number: str, call_sid: str = "") -> str:
-    """"Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
+    """ "Bring your own Twilio" — patrz punkt 4 w docstringu modułu. Zwraca TwiML
     gotowe do zwrócenia bezpośrednio Twilio (media_type="application/xml").
 
     Rzuca wyjątek przy braku ELEVENLABS_API_KEY/agent_id lub błędzie API — wołający
@@ -33,7 +34,11 @@ async def build_register_call_twiml(tenant: dict, caller_phone: str, called_numb
         raise RuntimeError("ELEVENLABS_API_KEY lub elevenlabs_agent_id (tenant/env) nieskonfigurowane")
 
     conversation_config_override, dynamic_variables = await build_conversation_config_override(
-        tenant, caller_phone, called_number, call_sid, channel="twilio",
+        tenant,
+        caller_phone,
+        called_number,
+        call_sid,
+        channel="twilio",
     )
 
     client = _get_elevenlabs_client()

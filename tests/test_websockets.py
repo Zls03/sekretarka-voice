@@ -8,9 +8,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
-
 from conftest import _project_modules, assert_golden, make_booking_tenant, make_tenant, patch_everywhere
+from fastapi.testclient import TestClient
 
 TENANT_PHONE = "+48111222333"
 CALLER = "+48600700800"
@@ -29,8 +28,7 @@ def _describe_processor(proc) -> dict | str:
     if name in ("PipelineSource", "PipelineSink"):
         return None
     if hasattr(proc, "_pipelines"):
-        return {name: [[d for d in (_describe_processor(p) for p in sub._processors) if d]
-                       for sub in proc._pipelines]}
+        return {name: [[d for d in (_describe_processor(p) for p in sub._processors) if d] for sub in proc._pipelines]}
     info: dict = {}
     params = getattr(proc, "_params", None)
     serializer = getattr(params, "serializer", None)
@@ -58,10 +56,12 @@ def capture(monkeypatch, tenants, fake_db):
 
     class FakeTask:
         def __init__(self, pipeline, params=None, **kwargs):
-            cap.tasks.append({
-                "processors": [d for d in (_describe_processor(p) for p in pipeline._processors) if d],
-                "params": params.model_dump(exclude_unset=True),
-            })
+            cap.tasks.append(
+                {
+                    "processors": [d for d in (_describe_processor(p) for p in pipeline._processors) if d],
+                    "params": params.model_dump(exclude_unset=True),
+                }
+            )
 
         async def queue_frame(self, frame):
             pass
@@ -83,15 +83,20 @@ def capture(monkeypatch, tenants, fake_db):
         original = _original(builder)
 
         def recording(system_prompt, tools=None, _original=original, _name=builder, **kwargs):
-            cap.llm_builds.append({
-                "builder": _name, "system_prompt": system_prompt,
-                "tools": [t.name for t in (tools or [])], **kwargs,
-            })
+            cap.llm_builds.append(
+                {
+                    "builder": _name,
+                    "system_prompt": system_prompt,
+                    "tools": [t.name for t in (tools or [])],
+                    **kwargs,
+                }
+            )
             return _original(system_prompt, tools=tools, **kwargs)
 
         patch_everywhere(monkeypatch, builder, recording)
 
     for name in ("save_call_transcript", "maybe_send_call_summary"):
+
         async def record(*args, _name=name, **kwargs):
             cap.finalize.append(_name)
 
@@ -115,10 +120,17 @@ def client():
 def _twilio_session(client, path):
     with client.websocket_connect(path) as ws:
         ws.send_text(json.dumps({"event": "connected"}))
-        ws.send_text(json.dumps({"event": "start", "start": {
-            "streamSid": "MZ1",
-            "customParameters": {"phone": TENANT_PHONE, "callerPhone": CALLER, "callSid": "CA1"},
-        }}))
+        ws.send_text(
+            json.dumps(
+                {
+                    "event": "start",
+                    "start": {
+                        "streamSid": "MZ1",
+                        "customParameters": {"phone": TENANT_PHONE, "callerPhone": CALLER, "callSid": "CA1"},
+                    },
+                }
+            )
+        )
 
 
 def _vonage_session(client, path):
@@ -135,20 +147,27 @@ def _golden(name, cap):
 TENANT_VARIANTS = {
     "basic": lambda: make_tenant(tts_provider="openai"),
     "full": lambda: make_booking_tenant(
-        tts_provider="openai", transfer_enabled=1, transfer_number="+48500600700",
-        gemini_voice="Aoede", realtime_voice="marin", speaking_rate=1.2,
+        tts_provider="openai",
+        transfer_enabled=1,
+        transfer_number="+48500600700",
+        gemini_voice="Aoede",
+        realtime_voice="marin",
+        speaking_rate=1.2,
     ),
     "no_contact_owner": lambda: make_tenant(tts_provider="openai", contact_owner_enabled=0),
 }
 
 
 @pytest.mark.parametrize("variant", sorted(TENANT_VARIANTS))
-@pytest.mark.parametrize("transport,path", [
-    ("twilio", "/ws-gemini-live-test"),
-    ("vonage", "/ws-gemini-live-test-vonage"),
-    ("twilio", "/ws-gemini-test"),
-    ("vonage", "/ws-gemini-test-vonage"),
-])
+@pytest.mark.parametrize(
+    "transport,path",
+    [
+        ("twilio", "/ws-gemini-live-test"),
+        ("vonage", "/ws-gemini-live-test-vonage"),
+        ("twilio", "/ws-gemini-test"),
+        ("vonage", "/ws-gemini-test-vonage"),
+    ],
+)
 def test_engine_websocket_pipeline(client, tenants, capture, variant, transport, path):
     tenants[TENANT_PHONE] = TENANT_VARIANTS[variant]()
     (_twilio_session if transport == "twilio" else _vonage_session)(client, path)

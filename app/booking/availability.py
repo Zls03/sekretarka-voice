@@ -13,8 +13,13 @@ from app.polish.formatting import format_date_polish, format_hour_polish
 def get_opening_hours(tenant: dict, weekday: int) -> tuple[int, int] | None:
     """Pobierz godziny otwarcia dla danego dnia tygodnia"""
     default_hours = {
-        0: (9, 18), 1: (9, 18), 2: (9, 18), 3: (9, 18), 4: (9, 18),
-        5: (9, 14), 6: None,
+        0: (9, 18),
+        1: (9, 18),
+        2: (9, 18),
+        3: (9, 18),
+        4: (9, 18),
+        5: (9, 14),
+        6: None,
     }
 
     working_hours = tenant.get("working_hours", [])
@@ -101,9 +106,7 @@ def get_staff_working_hours(staff: dict, weekday: int) -> tuple[int, int] | None
     return None
 
 
-async def get_available_slots_from_working_hours(
-    tenant: dict, staff: dict, service: dict, date: datetime
-) -> list[str]:
+async def get_available_slots_from_working_hours(tenant: dict, staff: dict, service: dict, date: datetime) -> list[str]:
     """Fallback: generuje sloty co 30 min z godzin pracy"""
     weekday = date.weekday()
 
@@ -169,9 +172,7 @@ _slots_cache = {}
 _slots_cache_lock = asyncio.Lock()
 
 
-async def get_available_slots(
-    tenant: dict, staff: dict, service: dict, date: datetime
-) -> list[str]:
+async def get_available_slots(tenant: dict, staff: dict, service: dict, date: datetime) -> list[str]:
     """Główna funkcja - z cache 60s (używaj get_available_slots_from_api dla świeżych danych)"""
     cache_key = f"{staff.get('id')}_{date.strftime('%Y-%m-%d')}"
 

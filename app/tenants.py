@@ -1,6 +1,5 @@
 """Wyszukiwanie firmy (tenanta) po numerze telefonu — najpierw baza admina, potem SaaS."""
 
-
 from loguru import logger
 
 from app.crypto import decrypt_token
@@ -8,10 +7,7 @@ from app.db import db, saas_db
 
 
 async def _get_tenant_from_admin(phone_suffix: str) -> dict | None:
-    rows = await db.execute(
-        "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1",
-        [f"%{phone_suffix}"]
-    )
+    rows = await db.execute("SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1", [f"%{phone_suffix}"])
     if not rows:
         return None
 
@@ -20,61 +16,58 @@ async def _get_tenant_from_admin(phone_suffix: str) -> dict | None:
 
     services = await db.execute(
         "SELECT id, name, duration_minutes, price, description FROM services WHERE tenant_id = ? AND is_active = 1",
-        [tenant_id]
+        [tenant_id],
     )
 
     hours_rows = await db.execute(
-        "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?",
-        [tenant_id]
+        "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?", [tenant_id]
     )
     working_hours = [
         {
             "day_of_week": int(h["day_of_week"]) if h["day_of_week"] else 0,
-            "open_time":   h["open_time"],
-            "close_time":  h["close_time"],
+            "open_time": h["open_time"],
+            "close_time": h["close_time"],
         }
         for h in hours_rows
     ]
 
     faq_rows = await db.execute(
-        "SELECT question, answer FROM tenant_faq WHERE tenant_id = ? ORDER BY sort_order",
-        [tenant_id]
+        "SELECT question, answer FROM tenant_faq WHERE tenant_id = ? ORDER BY sort_order", [tenant_id]
     )
 
     info_services = await db.execute(
-        "SELECT name, price, description FROM info_services WHERE tenant_id = ? ORDER BY sort_order",
-        [tenant_id]
+        "SELECT name, price, description FROM info_services WHERE tenant_id = ? ORDER BY sort_order", [tenant_id]
     )
 
     logger.info(f"✅ [admin] Found tenant: {tenant.get('name')} (id: {tenant_id})")
 
     return {
         **tenant,
-        "source":             "admin",
-        "business_name":      tenant.get("business_name") or tenant.get("name"),
-        "services":           services,
-        "working_hours":      working_hours,
-        "faq":                faq_rows,
-        "is_blocked":         int(tenant.get("is_blocked") or 0),
-        "minutes_limit":      int(tenant.get("minutes_limit") or 100),
-        "minutes_used":       float(tenant.get("minutes_used") or 0),
-        "first_message":      tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
-        "additional_info":    tenant.get("additional_info") or "",
-        "industry":           tenant.get("industry") or "",
-        "booking_enabled":    int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
-        "transfer_enabled":   int(tenant.get("transfer_enabled") or 0),
-        "transfer_number":    tenant.get("transfer_number") or "",
+        "source": "admin",
+        "business_name": tenant.get("business_name") or tenant.get("name"),
+        "services": services,
+        "working_hours": working_hours,
+        "faq": faq_rows,
+        "is_blocked": int(tenant.get("is_blocked") or 0),
+        "minutes_limit": int(tenant.get("minutes_limit") or 100),
+        "minutes_used": float(tenant.get("minutes_used") or 0),
+        "first_message": tenant.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info": tenant.get("additional_info") or "",
+        "industry": tenant.get("industry") or "",
+        "booking_enabled": int(tenant.get("booking_enabled") if tenant.get("booking_enabled") is not None else 1),
+        "transfer_enabled": int(tenant.get("transfer_enabled") or 0),
+        "transfer_number": tenant.get("transfer_number") or "",
         "notification_email": tenant.get("notification_email") or tenant.get("email") or "",
         "lead_email_enabled": int(tenant.get("lead_email_enabled") or 0),
-        "lead_email":         tenant.get("lead_email") or "",
-        "azure_voice_id":     tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
-        "info_services":      info_services,
-        "lead_mode":          int(tenant.get("lead_mode") or 0),
-        "lead_triggers":      tenant.get("lead_triggers") or "",
-        "lead_collection":    tenant.get("lead_collection") or "",
-        "lead_urgency_mode":  int(tenant.get("lead_urgency_mode") or 0),
-        "lead_urgency_text":  tenant.get("lead_urgency_text") or "",
-        "recording_enabled":  int(tenant.get("recording_enabled") or 0),
+        "lead_email": tenant.get("lead_email") or "",
+        "azure_voice_id": tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural",
+        "info_services": info_services,
+        "lead_mode": int(tenant.get("lead_mode") or 0),
+        "lead_triggers": tenant.get("lead_triggers") or "",
+        "lead_collection": tenant.get("lead_collection") or "",
+        "lead_urgency_mode": int(tenant.get("lead_urgency_mode") or 0),
+        "lead_urgency_text": tenant.get("lead_urgency_text") or "",
+        "recording_enabled": int(tenant.get("recording_enabled") or 0),
     }
 
 
@@ -85,7 +78,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
 
     rows = await saas_db.execute(
         "SELECT * FROM firms WHERE REPLACE(REPLACE(phone_number, ' ', ''), '-', '') LIKE ? AND is_active = 1 AND is_blocked = 0",
-        [f"%{phone_suffix}"]
+        [f"%{phone_suffix}"],
     )
     if not rows:
         return None
@@ -95,32 +88,27 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
 
     services = await saas_db.execute(
         "SELECT id, name, duration_minutes, price, description, price_text, duration_text FROM services WHERE firm_id = ?",
-        [firm_id]
+        [firm_id],
     )
 
     hours_rows = await saas_db.execute(
-        "SELECT day_of_week, open_time, close_time FROM working_hours WHERE firm_id = ?",
-        [firm_id]
+        "SELECT day_of_week, open_time, close_time FROM working_hours WHERE firm_id = ?", [firm_id]
     )
     working_hours = [
         {
             "day_of_week": int(h["day_of_week"]) if h["day_of_week"] else 0,
-            "open_time":   h["open_time"],
-            "close_time":  h["close_time"],
+            "open_time": h["open_time"],
+            "close_time": h["close_time"],
         }
         for h in hours_rows
         if h.get("open_time")
     ]
 
     faq_rows = await saas_db.execute(
-        "SELECT question, answer FROM faqs WHERE firm_id = ? ORDER BY created_at",
-        [firm_id]
+        "SELECT question, answer FROM faqs WHERE firm_id = ? ORDER BY created_at", [firm_id]
     )
 
-    staff_rows = await saas_db.execute(
-        "SELECT * FROM staff WHERE firm_id = ?",
-        [firm_id]
-    )
+    staff_rows = await saas_db.execute("SELECT * FROM staff WHERE firm_id = ?", [firm_id])
     staff_list = []
     for s in staff_rows:
         staff_services = await saas_db.execute(
@@ -128,13 +116,15 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
                FROM services srv
                JOIN staff_services ss ON srv.id = ss.service_id
                WHERE ss.staff_id = ?""",
-            [s["id"]]
+            [s["id"]],
         )
-        staff_list.append({
-            **s,
-            "services": staff_services,
-            "description": s.get("description") or "",
-        })
+        staff_list.append(
+            {
+                **s,
+                "services": staff_services,
+                "description": s.get("description") or "",
+            }
+        )
 
     # Deszyfruj Auth Token
     raw_token = firm.get("twilio_auth_token") or ""
@@ -143,8 +133,7 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
     twilio_sid = firm.get("twilio_account_sid") or ""
     if not twilio_sid:
         user_rows = await saas_db.execute(
-            "SELECT twilio_account_sid, twilio_auth_token FROM users WHERE id = ?",
-            [firm["user_id"]]
+            "SELECT twilio_account_sid, twilio_auth_token FROM users WHERE id = ?", [firm["user_id"]]
         )
         if user_rows:
             twilio_sid = user_rows[0].get("twilio_account_sid") or ""
@@ -162,16 +151,20 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
     # zapasowy"), niezależnie od tego jaki provider jest faktycznie aktywny. Błąd
     # złapany na żywo 2026-09-01: ElevenLabs zapisywał się poprawnie w bazie, ale
     # rozmowa i tak leciała przez Google, bo to właśnie ta gałąź go nadpisywała.
-    db_provider  = firm.get("tts_provider")
+    db_provider = firm.get("tts_provider")
     raw_provider = db_provider or "google"
     raw_voice_id = firm.get("voice_id") or ""
 
     # Zabezpieczenie na stare dane gdzie nazwa głosu była wpisana do tts_provider
     google_voices = [
-        "pl-PL-Chirp3-HD-Leda", "pl-PL-Chirp3-HD-Aoede",
-        "pl-PL-Chirp3-HD-Kore", "pl-PL-Chirp3-HD-Zephyr",
-        "pl-PL-Chirp3-HD-Charon", "pl-PL-Chirp3-HD-Fenrir",
-        "pl-PL-Chirp3-HD-Orus", "pl-PL-Chirp3-HD-Puck",
+        "pl-PL-Chirp3-HD-Leda",
+        "pl-PL-Chirp3-HD-Aoede",
+        "pl-PL-Chirp3-HD-Kore",
+        "pl-PL-Chirp3-HD-Zephyr",
+        "pl-PL-Chirp3-HD-Charon",
+        "pl-PL-Chirp3-HD-Fenrir",
+        "pl-PL-Chirp3-HD-Orus",
+        "pl-PL-Chirp3-HD-Puck",
     ]
     azure_voices = ["pl-PL-AgnieszkaNeural", "pl-PL-ZofiaNeural", "pl-PL-MarekNeural"]
 
@@ -208,34 +201,31 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
         actual_provider = raw_provider
         actual_voice_id = raw_voice_id or {
             "google": "pl-PL-Chirp3-HD-Aoede",
-            "azure":  "pl-PL-AgnieszkaNeural",
+            "azure": "pl-PL-AgnieszkaNeural",
         }.get(actual_provider, "")
 
     logger.info(f"✅ [saas] Found firm: {firm.get('name')} (id: {firm_id})")
     logger.info(f"   tts_provider: {actual_provider} | voice: {actual_voice_id or 'default'}")
 
     return {
-        "id":               firm_id,
-        "slug":             firm_id,
-        "source":           "saas",
-        "name":             firm.get("name") or "",
-        "business_name":    firm.get("name") or "",
-        "industry":         firm.get("industry") or "",
-        "address":          firm.get("address") or "",
-        "email":            firm.get("email") or "",
-        "phone_number":     firm.get("phone_number") or "",
-        "user_id":          firm.get("user_id") or "",
-
+        "id": firm_id,
+        "slug": firm_id,
+        "source": "saas",
+        "name": firm.get("name") or "",
+        "business_name": firm.get("name") or "",
+        "industry": firm.get("industry") or "",
+        "address": firm.get("address") or "",
+        "email": firm.get("email") or "",
+        "phone_number": firm.get("phone_number") or "",
+        "user_id": firm.get("user_id") or "",
         "twilio_account_sid": twilio_sid,
-        "twilio_auth_token":  decrypted_token,
-
-        "assistant_name":   firm.get("assistant_name") or "Ania",
-        "first_message":    firm.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
-        "additional_info":  firm.get("additional_info") or "",
-
+        "twilio_auth_token": decrypted_token,
+        "assistant_name": firm.get("assistant_name") or "Ania",
+        "first_message": firm.get("first_message") or "Dzień dobry, w czym mogę pomóc?",
+        "additional_info": firm.get("additional_info") or "",
         # TTS — poprawnie rozdzielone
-        "tts_provider":        actual_provider,
-        "azure_voice_id":      actual_voice_id,
+        "tts_provider": actual_provider,
+        "azure_voice_id": actual_voice_id,
         "elevenlabs_voice_id": actual_voice_id if actual_provider == "elevenlabs" else None,
         # Surowa wartość kolumny, NIEZALEŻNA od tts_provider/actual_provider powyżej —
         # ten sam głos ElevenLabs co wybór providera kaskady (jedna kolumna w bazie),
@@ -249,36 +239,36 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
         # co przy contact_owner_enabled/custom_report_format wyżej groziłby tu też — ta
         # funkcja zwraca RĘCZNIE wybrane pola, nowa kolumna niewidoczna dla reszty backendu
         # dopóki nie zostanie tu jawnie dopisana, więc dopisuję od razu przy wprowadzeniu.
-        "elevenlabs_tts_stability":        firm.get("elevenlabs_tts_stability"),
-        "elevenlabs_tts_speed":            firm.get("elevenlabs_tts_speed"),
+        "elevenlabs_tts_stability": firm.get("elevenlabs_tts_stability"),
+        "elevenlabs_tts_speed": firm.get("elevenlabs_tts_speed"),
         "elevenlabs_tts_similarity_boost": firm.get("elevenlabs_tts_similarity_boost"),
-        "speaking_rate":       float(firm.get("speaking_rate") or 1.06),
-        "realtime_voice":      firm.get("realtime_voice") or "",
-        "gemini_voice":        firm.get("gemini_voice") or "",
+        "speaking_rate": float(firm.get("speaking_rate") or 1.06),
+        "realtime_voice": firm.get("realtime_voice") or "",
+        "gemini_voice": firm.get("gemini_voice") or "",
         "gemini_native_voice_enabled": int(firm.get("gemini_native_voice_enabled") or 0),
         "realtime_engine": firm.get("realtime_engine") or "gemini",
-
-        "is_active":        int(firm.get("is_active") or 1),
-        "is_blocked":       int(firm.get("is_blocked") or 0),
-        "minutes_used":     float(firm.get("minutes_used") or 0),
-        "minutes_limit":    int(firm.get("minutes_limit") or 100),
-
-        "booking_enabled":    int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
-        "transfer_enabled":   int(firm.get("transfer_enabled") or 0),
-        "transfer_number":    firm.get("transfer_number") or "",
+        "is_active": int(firm.get("is_active") or 1),
+        "is_blocked": int(firm.get("is_blocked") or 0),
+        "minutes_used": float(firm.get("minutes_used") or 0),
+        "minutes_limit": int(firm.get("minutes_limit") or 100),
+        "booking_enabled": int(firm.get("booking_enabled") if firm.get("booking_enabled") is not None else 1),
+        "transfer_enabled": int(firm.get("transfer_enabled") or 0),
+        "transfer_number": firm.get("transfer_number") or "",
         # 2026-09-28 — "najpierw dzwoni do właściciela" v2 (SIP/Siperb, patrz
         # realtime_tools.py::build_human_first_ncco). TEN SAM błąd co przy
         # transfer_enabled/contact_owner_enabled wyżej czyha tu regularnie — dopisane od
         # razu przy dodaniu kolumn, nie po fakcie.
-        "human_first_enabled":         int(firm.get("human_first_enabled") or 0),
+        "human_first_enabled": int(firm.get("human_first_enabled") or 0),
         "human_first_timeout_seconds": int(firm.get("human_first_timeout_seconds") or 15),
-        "siperb_sip_username":         firm.get("siperb_sip_username") or "",
+        "siperb_sip_username": firm.get("siperb_sip_username") or "",
         # 2026-09-07: pole zapomniane przy pierwotnym budowaniu tego słownika — bez niego
         # tenant.get("contact_owner_enabled", 1) w bot_gemini_test.py/bot_elevenlabs_agent.py
         # ZAWSZE dostawał domyślne 1, więc checkbox "Zbieranie wiadomości dla właściciela"
         # w panelu nie miał żadnego efektu (złapane na żywym telefonie — bot i tak zbierał
         # i wysyłał wiadomość mimo wyłączonego ustawienia w bazie).
-        "contact_owner_enabled": int(firm.get("contact_owner_enabled") if firm.get("contact_owner_enabled") is not None else 1),
+        "contact_owner_enabled": int(
+            firm.get("contact_owner_enabled") if firm.get("contact_owner_enabled") is not None else 1
+        ),
         # 2026-09-09: TEN SAM błąd co przy contact_owner_enabled wyżej (2026-09-07) —
         # ta funkcja zwraca RĘCZNIE wybrane pola, nie surowy wiersz z bazy, więc nowa
         # kolumna dodana do tabeli firms jest niewidoczna dla reszty backendu dopóki
@@ -286,53 +276,50 @@ async def _get_tenant_from_saas(phone_suffix: str) -> dict | None:
         # contact_owner_closing_line wracały jako None mimo poprawnej wartości w bazie
         # (potwierdzone bezpośrednim zapytaniem) — panel je zapisywał, ta funkcja po
         # prostu ich nie przepisywała dalej.
-        "custom_report_format":      int(firm.get("custom_report_format") or 0),
+        "custom_report_format": int(firm.get("custom_report_format") or 0),
         "contact_owner_closing_line": firm.get("contact_owner_closing_line") or "",
-        "report_empty_calls":        int(firm.get("report_empty_calls") or 0),
+        "report_empty_calls": int(firm.get("report_empty_calls") or 0),
         # 2026-09-23 — TEN SAM błąd co przy contact_owner_enabled/custom_report_format/
         # crm_enabled wyżej: checkbox "📝 Pełny zapis rozmowy na email" w panelu zapisywał
         # się poprawnie w bazie, ale ta funkcja go nie przepisywała dalej, więc
         # maybe_send_call_summary()/elevenlabs_post_call zawsze widziały 0 — złapane na
         # żywym telefonie (mail przyszedł z datą/godziną, ale bez sekcji transkryptu).
-        "transcript_email_enabled":  int(firm.get("transcript_email_enabled") or 0),
-
-        "notification_email":  firm.get("notification_email") or firm.get("email") or "",
-        "lead_email_enabled":  int(firm.get("lead_email_enabled") or 0),
-        "lead_email":          firm.get("lead_email") or "",
-        "lead_mode":           int(firm.get("lead_mode") or 0),
-        "lead_triggers":       firm.get("lead_triggers") or "",
-        "lead_collection":     firm.get("lead_collection") or "",
-        "lead_urgency_mode":   int(firm.get("lead_urgency_mode") or 0),
-        "lead_urgency_text":   firm.get("lead_urgency_text") or "",
-        "recording_enabled":   int(firm.get("recording_enabled") or 0),
-        "llm_provider":        firm.get("llm_provider") or "groq",
-        "llm_model":           firm.get("llm_model") or "",
-
+        "transcript_email_enabled": int(firm.get("transcript_email_enabled") or 0),
+        "notification_email": firm.get("notification_email") or firm.get("email") or "",
+        "lead_email_enabled": int(firm.get("lead_email_enabled") or 0),
+        "lead_email": firm.get("lead_email") or "",
+        "lead_mode": int(firm.get("lead_mode") or 0),
+        "lead_triggers": firm.get("lead_triggers") or "",
+        "lead_collection": firm.get("lead_collection") or "",
+        "lead_urgency_mode": int(firm.get("lead_urgency_mode") or 0),
+        "lead_urgency_text": firm.get("lead_urgency_text") or "",
+        "recording_enabled": int(firm.get("recording_enabled") or 0),
+        "llm_provider": firm.get("llm_provider") or "groq",
+        "llm_model": firm.get("llm_model") or "",
         # 2026-09-18 — TEN SAM błąd co przy contact_owner_enabled (2026-09-07) i
         # custom_report_format (2026-09-09) wyżej: nowa kolumna w `firms` (panel,
         # sekcja "Integracja CRM") była niewidoczna dla reszty backendu, bo ta funkcja
         # zwraca ręcznie wybrane pola, nie surowy wiersz z bazy — maybe_send_to_crm()
         # w realtime_tools.py zawsze dostawał crm_provider/crm_domain/crm_api_key
         # puste mimo poprawnie zapisanych danych w panelu.
-        "crm_enabled":   int(firm.get("crm_enabled") or 0),
-        "crm_provider":  firm.get("crm_provider") or "",
-        "crm_domain":    firm.get("crm_domain") or "",
+        "crm_enabled": int(firm.get("crm_enabled") or 0),
+        "crm_provider": firm.get("crm_provider") or "",
+        "crm_domain": firm.get("crm_domain") or "",
         # crm_api_key jest w bazie zaszyfrowany (AES-GCM, ten sam ENCRYPTION_KEY co
         # twilio_auth_token — panel go tak zapisuje, patrz encrypt() w
         # bizvoice-panel/src/app/api/firms/[id]/route.ts) — trzeba go tu odszyfrować,
         # inaczej n8n dostałby ciphertext zamiast prawdziwego tokenu Pipedrive.
-        "crm_api_key":   decrypt_token(firm.get("crm_api_key") or ""),
-
-        "services":      services,
+        "crm_api_key": decrypt_token(firm.get("crm_api_key") or ""),
+        "services": services,
         "working_hours": working_hours,
-        "faq":           faq_rows,
+        "faq": faq_rows,
         "info_services": services,
-        "staff":         staff_list,
+        "staff": staff_list,
     }
 
 
 async def get_tenant_by_phone(phone: str) -> dict | None:
-    phone_clean  = phone.replace(" ", "").replace("-", "")
+    phone_clean = phone.replace(" ", "").replace("-", "")
     phone_suffix = phone_clean[-9:] if len(phone_clean) >= 9 else phone_clean
 
     tenant = await _get_tenant_from_admin(phone_suffix)

@@ -54,7 +54,9 @@ def build_contact_owner_tool(
             await params.result_callback({"status": "error", "reason": "empty_message"})
             return
         if _is_scripted_bot_phrase(message):
-            logger.warning(f"📞 [REALTIME TEST] contact_owner: treść to zaszyta wypowiedź bota (nie klienta), odrzucam: {message[:60]!r}")
+            logger.warning(
+                f"📞 [REALTIME TEST] contact_owner: treść to zaszyta wypowiedź bota (nie klienta), odrzucam: {message[:60]!r}"
+            )
             await params.result_callback({"status": "error", "reason": "message_too_vague"})
             return
         if _looks_like_vague_meta_message(message):
@@ -81,7 +83,9 @@ def build_contact_owner_tool(
         # Gdy adresy się różnią (rzadkie, ale panel na to pozwala) albo raport jest wyłączony —
         # wysyłamy jak dotychczas natychmiast, żeby nie zgubić gwarancji dostarczenia.
         report_to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
-        defer_to_report = bool(int(tenant.get("lead_email_enabled") or 0) and report_to_email and report_to_email == owner_email)
+        defer_to_report = bool(
+            int(tenant.get("lead_email_enabled") or 0) and report_to_email and report_to_email == owner_email
+        )
         if defer_to_report:
             call_state["pending_contact_owner"] = {"customer_name": customer_name, "message": message}
             sent = True
@@ -101,6 +105,7 @@ def build_contact_owner_tool(
 
         if sent:
             call_state["ended"] = True
+
             # Zaplanuj rozłączenie po TTS — ta sama logika co bot.py::save_and_confirm_message
             # (sleep + EndFrame — nie czekamy na realny koniec audio, patrz komentarz przy say_now
             # w bot_gemini_test.py).
@@ -113,6 +118,7 @@ def build_contact_owner_tool(
                         logger.info("🔚 [REALTIME TEST] EndFrame po contact_owner")
                 except Exception as e:
                     logger.error(f"[REALTIME TEST] EndFrame po contact_owner error: {e}")
+
             spawn(auto_hangup())
 
     if has_transfer_tool:

@@ -71,6 +71,7 @@ async def _answer_general_question(question: str, tenant: dict, context_box: dic
     tekst do powiedzenia pochodzi z osobnego wywołania LLM, nie z czystej logiki Pythona —
     dokładnie jak w cascade (tam też osobne wywołanie gpt-4.1-mini), więc to nie regresja."""
     import openai
+
     try:
         client = openai.AsyncOpenAI()
         history = []
@@ -78,7 +79,9 @@ async def _answer_general_question(question: str, tenant: dict, context_box: dic
         if ctx:
             try:
                 all_messages = ctx.get_messages()
-                user_assistant = [m for m in all_messages if m.get("role") in ("user", "assistant") and m.get("content")]
+                user_assistant = [
+                    m for m in all_messages if m.get("role") in ("user", "assistant") and m.get("content")
+                ]
                 history = user_assistant[-6:]
             except Exception:
                 pass
@@ -87,7 +90,9 @@ async def _answer_general_question(question: str, tenant: dict, context_box: dic
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
+                {
+                    "role": "system",
+                    "content": f"""Odpowiedz KRÓTKO (1-2 zdania) na pytanie klienta.
 
 INFORMACJE O FIRMIE:
 {context}
@@ -101,7 +106,8 @@ ZASADY:
 - Używaj formy bezpłciowej dopóki nie znasz płci klienta
 - Gdy klient poda imię → używaj odpowiednio "Pan" lub "Pani"
 - NIGDY nie używaj formy "ty"
-- Na końcu NIE pytaj czy mogę w czymś pomóc"""},
+- Na końcu NIE pytaj czy mogę w czymś pomóc""",
+                },
                 *history,
                 {"role": "user", "content": question},
             ],
@@ -128,8 +134,10 @@ async def _handle_book_appointment(
 
     state = call_state.get("booking", {})
 
-    logger.info(f"📥 [BOOKING] service={service_text}, staff={staff_text}, "
-                f"date={date_text}, time={time_text}, name={customer_name}, confirm={confirmation}")
+    logger.info(
+        f"📥 [BOOKING] service={service_text}, staff={staff_text}, "
+        f"date={date_text}, time={time_text}, name={customer_name}, confirm={confirmation}"
+    )
 
     services = tenant.get("services", [])
     staff_list = tenant.get("staff", [])
@@ -141,15 +149,22 @@ async def _handle_book_appointment(
             # potwierdzeniem (patrz ZAKAZ FAŁSZYWYCH POTWIERDZEŃ w prompcie). Model mógł tu trafić
             # bo klient chce odwołać wizytę umówioną WCZEŚNIEJ (inna rozmowa) — do tego jest
             # osobne narzędzie manage_booking, nie to.
-            return _ask(call_state, {}, "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?")
+            return _ask(
+                call_state,
+                {},
+                "Nie mam żadnej rezerwacji w trakcie tej rozmowy. Chce Pan/Pani umówić nową wizytę, czy odwołać wcześniej umówioną?",
+            )
         return _finish(call_state, "Rozumiem, rezerwacja anulowana. Czy mogę w czymś jeszcze pomóc?", "cancelled")
 
     # === OBSŁUGA ZMIANY ===
     if confirmation == "change":
         change_field = args.get("change_field")
         field_names = {
-            "service": "usługę", "staff": "pracownika",
-            "date": "datę", "time": "godzinę", "name": "imię",
+            "service": "usługę",
+            "staff": "pracownika",
+            "date": "datę",
+            "time": "godzinę",
+            "name": "imię",
         }
         # Model czasem ustawia confirmation="change" BEZ change_field gdy klient po prostu SAM
         # PODAJE inny termin niż zaproponowany (typowo odpowiadając na "zapisać, czy wolisz inny
@@ -186,7 +201,11 @@ async def _handle_book_appointment(
             elif change_field == "date" and date_text:
                 pass  # fall through do walidacji daty
             else:
-                return _ask(call_state, state, f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}")
+                return _ask(
+                    call_state,
+                    state,
+                    f"Dobrze, zmieniam {field_names[change_field]}. {_get_next_step(state, staff_list)}",
+                )
         else:
             return _ask(call_state, {}, "Dobrze, zaczynamy od nowa. Na jaką usługę?")
 
@@ -194,31 +213,53 @@ async def _handle_book_appointment(
     if question:
         question_lower = question.lower()
         availability_keywords = [
-            "kiedy wolne", "wolny termin", "wolne terminy", "na jaki", "na jaki dzień",
-            "kiedy można", "kiedy dostępn", "jaki termin", "najbliższy termin",
-            "najszybciej", "jest wolny", "są wolne", "macie wolne",
-            "najbliższ", "jakie terminy", "wolne godziny", "kiedy wolna",
+            "kiedy wolne",
+            "wolny termin",
+            "wolne terminy",
+            "na jaki",
+            "na jaki dzień",
+            "kiedy można",
+            "kiedy dostępn",
+            "jaki termin",
+            "najbliższy termin",
+            "najszybciej",
+            "jest wolny",
+            "są wolne",
+            "macie wolne",
+            "najbliższ",
+            "jakie terminy",
+            "wolne godziny",
+            "kiedy wolna",
         ]
         is_availability_question = any(kw in question_lower for kw in availability_keywords)
 
         if is_availability_question and "service" in state and "staff" in state:
             available_days = await get_next_available_days(
-                tenant, state["staff"], state["service"],
-                max_days=int(state["staff"].get("max_booking_days") or 14), limit=2,
+                tenant,
+                state["staff"],
+                state["service"],
+                max_days=int(state["staff"].get("max_booking_days") or 14),
+                limit=2,
             )
             if available_days:
                 state["_pending_date"] = available_days[0]["date"].strftime("%Y-%m-%d")
                 state["_pending_time"] = available_days[0]["slots"][0]
                 return _ask(call_state, state, format_availability_message(available_days))
             else:
-                return _ask(call_state, state,
+                return _ask(
+                    call_state,
+                    state,
                     f"Niestety, w najbliższych {int(state['staff'].get('max_booking_days') or 14)} dniach "
-                    f"nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.")
+                    f"nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
+                )
 
         elif is_availability_question and "service" not in state:
-            return _ask(call_state, state,
+            return _ask(
+                call_state,
+                state,
                 "Żeby sprawdzić dostępne terminy, muszę wiedzieć na jaką usługę. "
-                f"Mamy: {natural_list([s['name'] for s in services[:4]])}. Która usługa?")
+                f"Mamy: {natural_list([s['name'] for s in services[:4]])}. Która usługa?",
+            )
 
         else:
             answer = await _answer_general_question(question, tenant, context_box)
@@ -238,7 +279,15 @@ async def _handle_book_appointment(
         found = next((s for s in services if s["name"].strip().lower() == service_text.strip().lower()), None)
         if found:
             if _service_changed:
-                for k in ("staff", "date", "time", "available_slots", "_pending_date", "_pending_time", "_last_date_text"):
+                for k in (
+                    "staff",
+                    "date",
+                    "time",
+                    "available_slots",
+                    "_pending_date",
+                    "_pending_time",
+                    "_last_date_text",
+                ):
                     state.pop(k, None)
             state["service"] = found
         else:
@@ -272,7 +321,11 @@ async def _handle_book_appointment(
                 else:
                     available = [s for s in staff_list if staff_can_do_service(s, state["service"])]
                     names = ", ".join(s["name"] for s in available)
-                    return _ask(call_state, state, f"{found['name']} nie wykonuje {state['service']['name']}. Tę usługę wykonują: {names}.")
+                    return _ask(
+                        call_state,
+                        state,
+                        f"{found['name']} nie wykonuje {state['service']['name']}. Tę usługę wykonują: {names}.",
+                    )
             else:
                 names = ", ".join(s["name"] for s in staff_list)
                 return _ask(call_state, state, f"Nie rozpoznałam pracownika. Dostępni: {names}.")
@@ -282,7 +335,11 @@ async def _handle_book_appointment(
         if len(available) == 1:
             state["staff"] = available[0]
         elif len(available) == 0:
-            return _ask(call_state, state, f"Przepraszam, obecnie nie mamy dostępnych pracowników do {state['service']['name']}.")
+            return _ask(
+                call_state,
+                state,
+                f"Przepraszam, obecnie nie mamy dostępnych pracowników do {state['service']['name']}.",
+            )
         else:
             names = natural_list([s["name"] for s in available])
             return _ask(call_state, state, f"Świetnie. Do kogo? Dostępni: {names}.")
@@ -304,28 +361,34 @@ async def _handle_book_appointment(
         state.pop("available_slots", None)
 
         date_text_clean = preprocess_date_text(date_text)
-        _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
+        _iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date_text_clean)
         if _iso:
             parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3)))
         else:
-            parsed_date = dateparser.parse(date_text_clean, languages=['pl'], settings=DATEPARSER_SETTINGS)
+            parsed_date = dateparser.parse(date_text_clean, languages=["pl"], settings=DATEPARSER_SETTINGS)
 
         if parsed_date:
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             if parsed_date.date() < today.date():
-                return _ask(call_state, state, f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.")
+                return _ask(
+                    call_state, state, f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę."
+                )
 
             weekday = parsed_date.weekday()
             if get_opening_hours(tenant, weekday) is None:
                 date_label = format_date_polish(parsed_date).capitalize()
-                return _ask(call_state, state, f"{date_label} to {POLISH_DAYS[weekday]} — jesteśmy zamknięci. Na kiedy?")
+                return _ask(
+                    call_state, state, f"{date_label} to {POLISH_DAYS[weekday]} — jesteśmy zamknięci. Na kiedy?"
+                )
 
             if not _date_from_system:
                 is_valid, constraint_msg = validate_max_days_ahead(parsed_date, tenant, state["staff"])
                 if not is_valid:
                     staff_name = odmien_imie(state["staff"]["name"])
                     max_days_val = int(state["staff"].get("max_booking_days") or 14)
-                    available_days = await get_next_available_days(tenant, state["staff"], state["service"], max_days=max_days_val, limit=1)
+                    available_days = await get_next_available_days(
+                        tenant, state["staff"], state["service"], max_days=max_days_val, limit=1
+                    )
                     date_label = format_date_polish(parsed_date)
                     if available_days:
                         first = available_days[0]
@@ -338,24 +401,38 @@ async def _handle_book_appointment(
                         )
                         return _ask(call_state, state, suggestion)
                     else:
-                        return _ask(call_state, state, f"{constraint_msg} {date_label.capitalize()} to za daleko. Niestety w tym oknie nie ma wolnych terminów.")
+                        return _ask(
+                            call_state,
+                            state,
+                            f"{constraint_msg} {date_label.capitalize()} to za daleko. Niestety w tym oknie nie ma wolnych terminów.",
+                        )
 
             slots = await get_available_slots_from_api(tenant, state["staff"], state["service"], parsed_date)
 
             if not slots:
                 available_days = await get_next_available_days(
-                    tenant, state["staff"], state["service"],
-                    max_days=int(state["staff"].get("max_booking_days") or 14), limit=2,
+                    tenant,
+                    state["staff"],
+                    state["service"],
+                    max_days=int(state["staff"].get("max_booking_days") or 14),
+                    limit=2,
                 )
                 staff_name = odmien_imie(state["staff"]["name"])
                 if available_days:
                     suggestion = format_availability_message(available_days)
-                    return _ask(call_state, state, f"{format_date_polish(parsed_date).capitalize()} u {staff_name} nie ma wolnych terminów. {suggestion}")
+                    return _ask(
+                        call_state,
+                        state,
+                        f"{format_date_polish(parsed_date).capitalize()} u {staff_name} nie ma wolnych terminów. {suggestion}",
+                    )
                 else:
                     max_days = int(state["staff"].get("max_booking_days") or 14)
-                    return _ask(call_state, state,
+                    return _ask(
+                        call_state,
+                        state,
                         f"{format_date_polish(parsed_date).capitalize()} u {staff_name} nie ma wolnych terminów "
-                        f"i w najbliższych {max_days} dniach grafik jest pełny. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.")
+                        f"i w najbliższych {max_days} dniach grafik jest pełny. Nowe terminy pojawiają się codziennie — proszę spróbować jutro.",
+                    )
 
             state["date"] = parsed_date
             state["available_slots"] = slots
@@ -363,16 +440,33 @@ async def _handle_book_appointment(
         else:
             state["_retry_date"] = state.get("_retry_date", 0) + 1
             if state["_retry_date"] >= 3:
-                for k in ("date", "time", "available_slots", "_pending_date", "_pending_time", "_retry_date", "_last_date_text"):
+                for k in (
+                    "date",
+                    "time",
+                    "available_slots",
+                    "_pending_date",
+                    "_pending_time",
+                    "_retry_date",
+                    "_last_date_text",
+                ):
                     state.pop(k, None)
-                return _ask(call_state, state, "Przepraszam za kłopot. Na jaki dzień szukamy terminu? Proszę powiedzieć np. 'jutro' lub '15 maja'.")
-            return _ask(call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.")
+                return _ask(
+                    call_state,
+                    state,
+                    "Przepraszam za kłopot. Na jaki dzień szukamy terminu? Proszę powiedzieć np. 'jutro' lub '15 maja'.",
+                )
+            return _ask(
+                call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'."
+            )
 
     if "date" not in state:
         staff_name = odmien_imie(state["staff"]["name"])
         available_days = await get_next_available_days(
-            tenant, state["staff"], state["service"],
-            max_days=int(state["staff"].get("max_booking_days") or 14), limit=1,
+            tenant,
+            state["staff"],
+            state["service"],
+            max_days=int(state["staff"].get("max_booking_days") or 14),
+            limit=1,
         )
         if available_days:
             first_day = available_days[0]
@@ -380,10 +474,18 @@ async def _handle_book_appointment(
             first_slot = format_hour_polish(first_day["slots"][0])
             state["_pending_date"] = first_day["date"].strftime("%Y-%m-%d")
             state["_pending_time"] = first_day["slots"][0]
-            return _ask(call_state, state, f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. Zapisać, czy wolisz inny termin?")
+            return _ask(
+                call_state,
+                state,
+                f"U {staff_name} najbliższy wolny termin to {first_date_str} o {first_slot}. Zapisać, czy wolisz inny termin?",
+            )
         else:
             max_days = int(state["staff"].get("max_booking_days") or 14)
-            return _ask(call_state, state, f"U {staff_name} w najbliższych {max_days} dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.")
+            return _ask(
+                call_state,
+                state,
+                f"U {staff_name} w najbliższych {max_days} dniach nie ma wolnych terminów. Nowe terminy pojawiają się codziennie — proszę spróbować jutro lub za kilka dni.",
+            )
 
     # === 4. WALIDACJA GODZINY ===
     if not time_text:
@@ -431,7 +533,9 @@ async def _handle_book_appointment(
                 slots_text = _slots_summary(state.get("available_slots", []))
                 return _ask(call_state, state, f"{advance_msg} Wolne są: {slots_text}.")
 
-            is_available, current_slots = await validate_slot_available(tenant, state["staff"], state["service"], state["date"], parsed_time)
+            is_available, current_slots = await validate_slot_available(
+                tenant, state["staff"], state["service"], state["date"], parsed_time
+            )
 
             if is_available:
                 state["time"] = parsed_time
@@ -452,24 +556,41 @@ async def _handle_book_appointment(
                         open_h, close_h = staff_hours
                         if requested_h < open_h or (requested_h == open_h and requested_m < 0):
                             slots_text = _slots_summary(current_slots)
-                            return _ask(call_state, state, f"W tym dniu pracujemy od {format_hour_polish(f'{open_h}:00')}. Wolne są: {slots_text}.")
+                            return _ask(
+                                call_state,
+                                state,
+                                f"W tym dniu pracujemy od {format_hour_polish(f'{open_h}:00')}. Wolne są: {slots_text}.",
+                            )
                         elif requested_h >= close_h:
                             slots_text = _slots_summary(current_slots)
-                            return _ask(call_state, state, f"W tym dniu pracujemy do {format_hour_polish(f'{close_h}:00')}. Wolne są: {slots_text}.")
+                            return _ask(
+                                call_state,
+                                state,
+                                f"W tym dniu pracujemy do {format_hour_polish(f'{close_h}:00')}. Wolne są: {slots_text}.",
+                            )
 
                     slots_text = _slots_summary(current_slots)
-                    return _ask(call_state, state, f"Godzina {format_hour_polish(parsed_time)} zajęta. Wolne: {slots_text}.")
+                    return _ask(
+                        call_state, state, f"Godzina {format_hour_polish(parsed_time)} zajęta. Wolne: {slots_text}."
+                    )
                 else:
                     state.pop("date", None)
                     available_days = await get_next_available_days(
-                        tenant, state["staff"], state["service"],
-                        max_days=int(state["staff"].get("max_booking_days") or 14), limit=2,
+                        tenant,
+                        state["staff"],
+                        state["service"],
+                        max_days=int(state["staff"].get("max_booking_days") or 14),
+                        limit=2,
                     )
                     if available_days:
                         suggestion = format_availability_message(available_days)
                         return _ask(call_state, state, f"Na ten dzień nie ma już wolnych terminów. {suggestion}")
                     else:
-                        return _ask(call_state, state, "Na ten dzień nie ma już wolnych terminów i w najbliższych dniach też jest pełny grafik.")
+                        return _ask(
+                            call_state,
+                            state,
+                            "Na ten dzień nie ma już wolnych terminów i w najbliższych dniach też jest pełny grafik.",
+                        )
         else:
             state["_retry_time"] = state.get("_retry_time", 0) + 1
             if state["_retry_time"] >= 3:
@@ -482,7 +603,11 @@ async def _handle_book_appointment(
 
     if "time" not in state:
         slots_text = _slots_summary(state["available_slots"])
-        return _ask(call_state, state, f"{format_date_polish(state['date']).capitalize()} wolne są: {slots_text}. Którą godzinę?")
+        return _ask(
+            call_state,
+            state,
+            f"{format_date_polish(state['date']).capitalize()} wolne są: {slots_text}. Którą godzinę?",
+        )
 
     # === 5. WALIDACJA IMIENIA ===
     name_just_collected = False
@@ -490,7 +615,7 @@ async def _handle_book_appointment(
         name = customer_name.strip()
         for prefix in ["pan ", "pani ", "na "]:
             if name.lower().startswith(prefix):
-                name = name[len(prefix):]
+                name = name[len(prefix) :]
 
         if len(name) >= 2 and name.lower() not in ["tak", "nie", "halo", "proszę"]:
             state["name"] = name.title()
@@ -500,7 +625,11 @@ async def _handle_book_appointment(
             return _ask(call_state, state, f"{gender_msg} imienia. Na jakie imię zapisać wizytę?")
 
     if "name" not in state:
-        return _ask(call_state, state, f"Świetnie, {format_date_polish(state['date'])} o {format_hour_polish(state['time'])}. Na jakie imię zapisać wizytę?")
+        return _ask(
+            call_state,
+            state,
+            f"Świetnie, {format_date_polish(state['date'])} o {format_hour_polish(state['time'])}. Na jakie imię zapisać wizytę?",
+        )
 
     # === 5.5 UWAGI ===
     _no_notes = {"brak", "nie", "nie ma", "żadnych", "brak uwag", "nie mam", "nie mam uwag", "żadne", "ok", "dobrze"}
@@ -512,10 +641,7 @@ async def _handle_book_appointment(
     # === 6. POTWIERDZENIE ===
     if "confirmed" not in state:
         is_confirming = (
-            confirmation not in ("no", "change")
-            and not name_just_collected
-            and not time_just_set
-            and not question
+            confirmation not in ("no", "change") and not name_just_collected and not time_just_set and not question
         )
         if is_confirming:
             state["confirmed"] = True
@@ -525,15 +651,22 @@ async def _handle_book_appointment(
             customer_name_declined = odmien_imie(state["name"])
             notes_part = f" Uwagi: {state['notes']}." if state.get("notes") else ""
 
-            if customer_name and state.get("name") and customer_name.strip().lower() != state["name"].lower() and not name_just_collected:
+            if (
+                customer_name
+                and state.get("name")
+                and customer_name.strip().lower() != state["name"].lower()
+                and not name_just_collected
+            ):
                 new_name = customer_name.strip().title()
                 for prefix in ["pan ", "pani ", "na "]:
                     if new_name.lower().startswith(prefix):
-                        new_name = new_name[len(prefix):].title()
+                        new_name = new_name[len(prefix) :].title()
                 state["name"] = new_name
                 customer_name_declined = odmien_imie(new_name)
                 customer_gender = detect_gender(new_name)
-                return _ask(call_state, state, f"Poprawiam — na {customer_gender} {customer_name_declined}. Zgadza się?")
+                return _ask(
+                    call_state, state, f"Poprawiam — na {customer_gender} {customer_name_declined}. Zgadza się?"
+                )
 
             summary = (
                 f"{state['service']['name']} u {staff_name}, "
@@ -546,13 +679,17 @@ async def _handle_book_appointment(
     return await _save_booking(state, tenant, caller_phone, call_state, channel)
 
 
-async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state: dict, channel: str = "twilio") -> dict:
+async def _save_booking(
+    state: dict, tenant: dict, caller_phone: str, call_state: dict, channel: str = "twilio"
+) -> dict:
     """Zapisuje rezerwację do API — z PODWÓJNĄ walidacją. 1:1 z _save_booking() w cascade,
     plus obsługa 409 slot_taken (patrz _save_booking_via_api)."""
     logger.info("💾 [BOOKING] SAVING BOOKING...")
 
     try:
-        is_available, current_slots = await validate_slot_available(tenant, state["staff"], state["service"], state["date"], state["time"])
+        is_available, current_slots = await validate_slot_available(
+            tenant, state["staff"], state["service"], state["date"], state["time"]
+        )
 
         if not is_available:
             logger.warning("❌ [BOOKING] Slot was taken between confirmation and save (re-check)")
@@ -567,8 +704,14 @@ async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state
                 return _ask(call_state, state, "Ten dzień właśnie się zapełnił. Który inny?")
 
         outcome, result = await _save_booking_via_api(
-            tenant, state["staff"], state["service"], state["date"], state["time"],
-            state["name"], caller_phone, notes=state.get("notes", ""),
+            tenant,
+            state["staff"],
+            state["service"],
+            state["date"],
+            state["time"],
+            state["name"],
+            caller_phone,
+            notes=state.get("notes", ""),
         )
 
         if outcome == "slot_taken":
@@ -602,9 +745,12 @@ async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state
                 # (cascade zawsze ma Twilio, więc tam ten problem nie istnieje).
                 sms_func = send_booking_sms_vonage if channel == "vonage" else send_booking_sms
                 sms_sent = await sms_func(
-                    tenant=tenant, customer_phone=caller_phone,
-                    service_name=state["service"]["name"], staff_name=state["staff"]["name"],
-                    date_str=state["date"].strftime("%d.%m"), time_str=state["time"],
+                    tenant=tenant,
+                    customer_phone=caller_phone,
+                    service_name=state["service"]["name"],
+                    staff_name=state["staff"]["name"],
+                    date_str=state["date"].strftime("%d.%m"),
+                    time_str=state["time"],
                     booking_code=booking_code,
                 )
                 if sms_sent:
@@ -619,11 +765,17 @@ async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state
         try:
             time_padded = state["time"].zfill(5)
             scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{time_padded}:00"
-            spawn(save_client_visit(
-                firm_id=tenant.get("id", ""), phone=caller_phone, name=state.get("name", ""),
-                service=state["service"]["name"], staff=state["staff"]["name"],
-                scheduled_at=scheduled_at, notes=state.get("notes", ""),
-            ))
+            spawn(
+                save_client_visit(
+                    firm_id=tenant.get("id", ""),
+                    phone=caller_phone,
+                    name=state.get("name", ""),
+                    service=state["service"]["name"],
+                    staff=state["staff"]["name"],
+                    scheduled_at=scheduled_at,
+                    notes=state.get("notes", ""),
+                )
+            )
         except Exception as e:
             logger.warning(f"[BOOKING] CRM save_client_visit error: {e}")
 
@@ -641,7 +793,9 @@ async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state
         return _ask(call_state, state, "Coś poszło nie tak. Przekazać wiadomość?")
 
 
-def build_book_appointment_tool(tenant: dict, caller_phone: str, call_state: dict, context_box: dict, channel: str = "twilio") -> FunctionSchema:
+def build_book_appointment_tool(
+    tenant: dict, caller_phone: str, call_state: dict, context_box: dict, channel: str = "twilio"
+) -> FunctionSchema:
     """FunctionSchema dla rezerwacji — WARUNKOWO dołączane z bot_gemini_test.py tylko gdy
     tenant.get("booking_enabled")==1 (nazwa pola do potwierdzenia przy podpinaniu).
 
@@ -657,7 +811,9 @@ def build_book_appointment_tool(tenant: dict, caller_phone: str, call_state: dic
     staff_names = [s["name"] for s in staff_list] + ["dowolny"]
 
     async def handle_book_appointment(params: FunctionCallParams):
-        result = await _handle_book_appointment(params.arguments, tenant, caller_phone, call_state, context_box, channel)
+        result = await _handle_book_appointment(
+            params.arguments, tenant, caller_phone, call_state, context_box, channel
+        )
         await params.result_callback(result)
 
     return FunctionSchema(
@@ -698,11 +854,13 @@ rezerwację (usługę, pracownika) do zera, co jest widoczne dla klienta i frust
 Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu, nie tylko jedno.""",
         properties={
             "service": {
-                "type": "string", "enum": service_names,
+                "type": "string",
+                "enum": service_names,
                 "description": "Wybierz usługę z listy która najbardziej pasuje do słów klienta",
             },
             "staff": {
-                "type": "string", "enum": staff_names,
+                "type": "string",
+                "enum": staff_names,
                 "description": "Wybierz pracownika z listy lub 'dowolny'",
             },
             "date_text": {
@@ -714,14 +872,17 @@ Wypełniaj WSZYSTKIE pola które klient podał w jednym zdaniu, nie tylko jedno.
                 "description": "Godzina w formacie HH:MM (patrz opis narzędzia). Null jeśli klient nie podał godziny.",
             },
             "customer_name": {
-                "type": "string", "description": "Imię klienta lub null",
+                "type": "string",
+                "description": "Imię klienta lub null",
             },
             "confirmation": {
-                "type": "string", "enum": ["yes", "no", "change", "none"],
+                "type": "string",
+                "enum": ["yes", "no", "change", "none"],
                 "description": "yes=potwierdza, no=anuluje, change=chce zmienić coś, none=nic z tych",
             },
             "change_field": {
-                "type": "string", "enum": ["service", "staff", "date", "time", "name"],
+                "type": "string",
+                "enum": ["service", "staff", "date", "time", "name"],
                 "description": "Co klient chce zmienić gdy confirmation='change'",
             },
             "question": {

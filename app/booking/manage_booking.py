@@ -27,7 +27,7 @@ def _match_booking_by_text(bookings: list[dict], text: str) -> int | None:
     """Dopasowuje wskazaną przez klienta wizytę po dacie (gdy ma kilka nadchodzących)."""
     if not text:
         return None
-    parsed = dateparser.parse(preprocess_date_text(text), languages=['pl'], settings=DATEPARSER_SETTINGS)
+    parsed = dateparser.parse(preprocess_date_text(text), languages=["pl"], settings=DATEPARSER_SETTINGS)
     if not parsed:
         return None
     for i, b in enumerate(bookings):
@@ -55,16 +55,15 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
 
     state = call_state.get("manage_booking", {})
 
-    logger.info(f"📥 [MANAGE_BOOKING] action={action}, date={new_date_text}, time={new_time_text}, "
-                f"confirm={confirmation}, which={which_text}")
+    logger.info(
+        f"📥 [MANAGE_BOOKING] action={action}, date={new_date_text}, time={new_time_text}, "
+        f"confirm={confirmation}, which={which_text}"
+    )
 
     # === 1. ZNAJDŹ WIZYTĘ(Y) PO NUMERZE — tylko raz na rozmowę o zarządzaniu ===
     if "bookings" not in state:
         profile = await get_client_profile(tenant.get("id", ""), caller_phone)
-        candidates = [
-            v for v in ((profile or {}).get("upcoming_visits") or [])
-            if v.get("booking_id")
-        ]
+        candidates = [v for v in ((profile or {}).get("upcoming_visits") or []) if v.get("booking_id")]
         if not candidates:
             return _finish_mgmt(
                 call_state,
@@ -90,7 +89,9 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
                 state["selected"] = match_idx
             else:
                 options = natural_list([_describe_booking(b) for b in bookings])
-                return _ask_mgmt(call_state, state, f"Widzę kilka nadchodzących wizyt: {options}. Której z nich dotyczy?")
+                return _ask_mgmt(
+                    call_state, state, f"Widzę kilka nadchodzących wizyt: {options}. Której z nich dotyczy?"
+                )
 
     booking = bookings[state["selected"]]
     booking_desc = _describe_booking(booking)
@@ -108,7 +109,11 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         name_part = ""
         if booking.get("customer_name"):
             name_part = f" — na {detect_gender(booking['customer_name'])} {odmien_imie(booking['customer_name'])}"
-        return _ask_mgmt(call_state, state, f"Tak, jest zaplanowana wizyta: {booking_desc}{name_part}. Czy chodzi o zmianę tego terminu?")
+        return _ask_mgmt(
+            call_state,
+            state,
+            f"Tak, jest zaplanowana wizyta: {booking_desc}{name_part}. Czy chodzi o zmianę tego terminu?",
+        )
 
     # === 4A. ANULOWANIE ===
     if action == "cancel":
@@ -147,18 +152,27 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         new_date_text = state.get("_new_date") or booking["scheduled_at"][:10]
 
     date_text_clean = preprocess_date_text(new_date_text)
-    _iso = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date_text_clean)
-    parsed_date = datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3))) if _iso else \
-        dateparser.parse(date_text_clean, languages=['pl'], settings=DATEPARSER_SETTINGS)
+    _iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date_text_clean)
+    parsed_date = (
+        datetime(int(_iso.group(1)), int(_iso.group(2)), int(_iso.group(3)))
+        if _iso
+        else dateparser.parse(date_text_clean, languages=["pl"], settings=DATEPARSER_SETTINGS)
+    )
 
     if not parsed_date:
-        return _ask_mgmt(call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'.")
+        return _ask_mgmt(
+            call_state, state, "Nie zrozumiałam daty. Proszę powiedzieć np. 'jutro', 'w piątek' lub '15 maja'."
+        )
     if parsed_date.date() < datetime.now().date():
         return _ask_mgmt(call_state, state, f"Data {format_date_polish(parsed_date)} już minęła. Podaj przyszłą datę.")
 
     slots = await get_available_slots_from_api(tenant, staff_obj, service_obj, parsed_date)
     if not slots:
-        return _ask_mgmt(call_state, state, f"{format_date_polish(parsed_date).capitalize()} nie ma wolnych terminów. Na jaki inny dzień?")
+        return _ask_mgmt(
+            call_state,
+            state,
+            f"{format_date_polish(parsed_date).capitalize()} nie ma wolnych terminów. Na jaki inny dzień?",
+        )
 
     state["_new_date"] = parsed_date.strftime("%Y-%m-%d")
     state["_new_slots"] = slots
@@ -169,7 +183,11 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         if "_new_time" in state:
             new_time_text = state["_new_time"]
         else:
-            return _ask_mgmt(call_state, state, f"{format_date_polish(parsed_date).capitalize()} wolne są: {_slots_summary(slots)}. Którą godzinę?")
+            return _ask_mgmt(
+                call_state,
+                state,
+                f"{format_date_polish(parsed_date).capitalize()} wolne są: {_slots_summary(slots)}. Którą godzinę?",
+            )
 
     parsed_time = _parse_time(new_time_text)
     slots_normalized = [_normalize_time(s) for s in slots]
@@ -182,7 +200,8 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         # Krótko — pełny opis wizyty (usługa/pracownik) już padł raz przy identyfikacji,
         # powtarzanie go w każdej turze brzmiało sztywno/robotycznie na żywym telefonie.
         return _ask_mgmt(
-            call_state, state,
+            call_state,
+            state,
             f"Dobrze, przekładamy wizytę na {format_date_polish(new_date_obj)}, na {format_hour_polish(parsed_time)}. Zgadza się?",
         )
 
@@ -231,7 +250,8 @@ sprawy, wywołaj contact_owner żeby przekazać wiadomość właścicielowi.
 Wywołuj przy KAŻDEJ kolejnej odpowiedzi klienta dotyczącej tej sprawy, aż wynik będzie miał "done": true.""",
         properties={
             "action": {
-                "type": "string", "enum": ["cancel", "reschedule", "none"],
+                "type": "string",
+                "enum": ["cancel", "reschedule", "none"],
                 "description": "cancel=odwołanie wizyty, reschedule=przełożenie na inny termin, none=jeszcze nie wiadomo",
             },
             "date_text": {
@@ -243,7 +263,8 @@ Wywołuj przy KAŻDEJ kolejnej odpowiedzi klienta dotyczącej tej sprawy, aż wy
                 "description": "Nowa godzina (tylko dla reschedule) w formacie HH:MM. Null jeśli nie dotyczy.",
             },
             "confirmation": {
-                "type": "string", "enum": ["yes", "no", "none"],
+                "type": "string",
+                "enum": ["yes", "no", "none"],
                 "description": "yes=klient potwierdza ostatnio zaproponowaną akcję, no=rezygnuje, none=jeszcze nic",
             },
             "which_visit": {

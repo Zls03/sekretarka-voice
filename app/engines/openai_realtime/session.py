@@ -46,10 +46,10 @@ async def run_openai_realtime_call(
     client_profile_task = asyncio.create_task(get_client_profile(tenant.get("id", ""), caller_phone))
 
     transport = create_transport(
-        websocket, channel, stream_sid=stream_sid,
-        vad_analyzer=SileroVADAnalyzer(
-            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)
-        ),
+        websocket,
+        channel,
+        stream_sid=stream_sid,
+        vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.3, min_volume=0.4)),
     )
 
     task_box: dict = {"task": None}
@@ -57,8 +57,13 @@ async def run_openai_realtime_call(
     call_state = make_call_state()
     features = CallFeatures.for_tenant(tenant)
     tools = build_call_tools(
-        tenant, caller_phone, features,
-        call_state=call_state, task_box=task_box, context_box=context_box, channel=channel,
+        tenant,
+        caller_phone,
+        features,
+        call_state=call_state,
+        task_box=task_box,
+        context_box=context_box,
+        channel=channel,
     )
     system_prompt = await build_call_prompt(tenant, caller_phone, features)
     # Głos i tempo per firma; brak wartości = domyślne ustawienia (patrz build_realtime_llm).
@@ -69,15 +74,17 @@ async def run_openai_realtime_call(
     )
     context_box["context"] = llm_context
 
-    pipeline = Pipeline([
-        transport.input(),
-        user_aggregator,
-        UserTranscriptMonitor(call_state),
-        llm,
-        BotAudioMonitor(call_state),
-        transport.output(),
-        assistant_aggregator,
-    ])
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            user_aggregator,
+            UserTranscriptMonitor(call_state),
+            llm,
+            BotAudioMonitor(call_state),
+            transport.output(),
+            assistant_aggregator,
+        ]
+    )
     task = PipelineTask(pipeline, params=call_pipeline_params(channel))
     task_box["task"] = task
 

@@ -7,7 +7,9 @@ from app.db import db, saas_db
 PRICE_PER_MINUTE = 0.39  # zł/min — MUSI być zsynchronizowane z bot.py::PRICE_PER_MINUTE
 
 
-async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str, call_status: str, duration: int) -> None:
+async def apply_call_charge(
+    tenant_id: str, is_saas_tenant: bool, call_sid: str, call_status: str, duration: int
+) -> None:
     """Nalicza minuty/kredyty za zakończoną rozmowę. 1:1 port bot.py::apply_call_charge
     (sama logika finansowa, bez zmian) — wołane z /vonage/events poniżej."""
     duration_minutes = duration / 60.0
@@ -44,15 +46,15 @@ async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str,
                 await saas_db.execute("UPDATE firms SET is_blocked = 1 WHERE id = ?", [tenant_id])
                 logger.warning(f"⚠️ [REALTIME TEST] SaaS firm {tenant_id} BLOCKED — balance too low: {balance:.2f} zł")
 
-        firm_data = await saas_db.execute(
-            "SELECT minutes_used, minutes_limit FROM firms WHERE id = ?", [tenant_id]
-        )
+        firm_data = await saas_db.execute("SELECT minutes_used, minutes_limit FROM firms WHERE id = ?", [tenant_id])
         if firm_data:
             used = float(firm_data[0].get("minutes_used") or 0)
             limit = int(firm_data[0].get("minutes_limit") or 0)
             if limit > 0 and used >= limit * 0.99:
                 await saas_db.execute("UPDATE firms SET is_blocked = 1 WHERE id = ?", [tenant_id])
-                logger.warning(f"⚠️ [REALTIME TEST] SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min")
+                logger.warning(
+                    f"⚠️ [REALTIME TEST] SaaS firm {tenant_id} BLOCKED — minutes limit reached: {used:.1f}/{limit} min"
+                )
 
         await saas_db.execute(
             """INSERT INTO transactions
@@ -72,9 +74,7 @@ async def apply_call_charge(tenant_id: str, is_saas_tenant: bool, call_sid: str,
         )
         logger.info(f"📊 [REALTIME TEST] Admin: +{duration_minutes:.2f} min for {tenant_id}")
 
-        tenant_data = await db.execute(
-            "SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?", [tenant_id]
-        )
+        tenant_data = await db.execute("SELECT minutes_used, minutes_limit FROM tenants WHERE id = ?", [tenant_id])
         if tenant_data:
             used = float(tenant_data[0].get("minutes_used", 0))
             limit = int(tenant_data[0].get("minutes_limit", 100))

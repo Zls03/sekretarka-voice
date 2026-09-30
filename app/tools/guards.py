@@ -1,8 +1,15 @@
 """Heurystyki odrzucające bezwartościowe wywołania narzędzi (puste/meta wiadomości, frazy bota)."""
 
 _VAGUE_MESSAGE_STARTS = (
-    "klient chce", "klient prosi", "klient jest", "klient potrzebuje", "klient dzwoni",
-    "proszę o kontakt", "proszę skontaktować się", "proszę zadzwonić", "proszę oddzwonić",
+    "klient chce",
+    "klient prosi",
+    "klient jest",
+    "klient potrzebuje",
+    "klient dzwoni",
+    "proszę o kontakt",
+    "proszę skontaktować się",
+    "proszę zadzwonić",
+    "proszę oddzwonić",
 )
 
 
@@ -31,7 +38,7 @@ def _looks_like_vague_meta_message(message: str) -> bool:
         return True
     for p in _VAGUE_MESSAGE_STARTS:
         if m.startswith(p):
-            remainder = m[len(p):].strip(" .,!?")
+            remainder = m[len(p) :].strip(" .,!?")
             return len(remainder) < 15
     return False
 

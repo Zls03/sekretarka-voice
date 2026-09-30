@@ -1,6 +1,5 @@
 """Wysyłka podsumowania rozmowy do zewnętrznego CRM przez webhook n8n (POC: Pipedrive)."""
 
-
 from loguru import logger
 
 from app.config import settings
@@ -41,11 +40,12 @@ async def estimate_deal_value(summary: str, tenant: dict) -> int | None:
             "Na podstawie poniższego streszczenia rozmowy telefonicznej i cennika/oferty "
             "firmy oszacuj miesięczną wartość tej transakcji w złotych, jeśli da się to "
             "wywnioskować z rozmowy (np. klient wspomniał konkretny pakiet/usługę z "
-            "cennika). Odpowiedz WYŁĄCZNIE samą liczbą całkowitą (bez \"zł\", bez spacji, "
-            "bez opisu), albo słowem \"brak\" jeśli nie da się tego ocenić.\n"
+            'cennika). Odpowiedz WYŁĄCZNIE samą liczbą całkowitą (bez "zł", bez spacji, '
+            'bez opisu), albo słowem "brak" jeśli nie da się tego ocenić.\n'
             f"Cennik/kontekst firmy: {additional_info}"
         )
         import openai
+
         client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -101,6 +101,7 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
         if "🔥" in priority:
             estimated_value = await estimate_deal_value(summary, tenant)
         import httpx
+
         async with httpx.AsyncClient() as client:
             await client.post(
                 N8N_CRM_WEBHOOK_URL,

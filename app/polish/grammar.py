@@ -2,90 +2,156 @@
 
 NAME_ALIASES = {
     # Kobiece - zdrobnienia → pełne imię
-    "ania": "anna", "ani": "anna", "aneczka": "anna", "anka": "anna",
-    "kasia": "katarzyna", "kaśka": "katarzyna", "kasieńka": "katarzyna", "kacha": "katarzyna",
-    "asia": "joanna", "joasia": "joanna", "aśka": "joanna",
-    "basia": "barbara", "baśka": "barbara",
-    "gosia": "małgorzata", "gośka": "małgorzata", "małgosia": "małgorzata",
-    "ela": "elżbieta", "elka": "elżbieta", "elusia": "elżbieta",
-    "ola": "aleksandra", "olka": "aleksandra", "oleńka": "aleksandra",
-    "ewka": "ewa", "ewunia": "ewa",
-    "magda": "magdalena", "magdzia": "magdalena",
-    "wika": "wiktoria", "wiki": "wiktoria",
-    "monia": "monika", "moniczka": "monika",
-    "daria": "daria", "darka": "daria",
-    "natka": "natalia", "natalka": "natalia",
-    "aga": "agnieszka", "agniesia": "agnieszka",
-    "iza": "izabela", "izka": "izabela",
+    "ania": "anna",
+    "ani": "anna",
+    "aneczka": "anna",
+    "anka": "anna",
+    "kasia": "katarzyna",
+    "kaśka": "katarzyna",
+    "kasieńka": "katarzyna",
+    "kacha": "katarzyna",
+    "asia": "joanna",
+    "joasia": "joanna",
+    "aśka": "joanna",
+    "basia": "barbara",
+    "baśka": "barbara",
+    "gosia": "małgorzata",
+    "gośka": "małgorzata",
+    "małgosia": "małgorzata",
+    "ela": "elżbieta",
+    "elka": "elżbieta",
+    "elusia": "elżbieta",
+    "olka": "aleksandra",
+    "oleńka": "aleksandra",
+    "ewka": "ewa",
+    "ewunia": "ewa",
+    "magda": "magdalena",
+    "magdzia": "magdalena",
+    "wika": "wiktoria",
+    "wiki": "wiktoria",
+    "monia": "monika",
+    "moniczka": "monika",
+    "daria": "daria",
+    "darka": "daria",
+    "natka": "natalia",
+    "natalka": "natalia",
+    "aga": "agnieszka",
+    "agniesia": "agnieszka",
+    "iza": "izabela",
+    "izka": "izabela",
     "kinga": "kinga",
-    "sylwia": "sylwia", "sylwka": "sylwia",
-    "marta": "marta", "marcia": "marta",
-    "beata": "beata", "beatka": "beata",
-    "dorota": "dorota", "dorcia": "dorota",
-    "paulina": "paulina", "paula": "paulina",
-    "zuzia": "zuzanna", "zuza": "zuzanna",
-    "hania": "hanna", "hanka": "hanna",
-    "jola": "jolanta", "jolka": "jolanta",
+    "sylwia": "sylwia",
+    "sylwka": "sylwia",
+    "marta": "marta",
+    "marcia": "marta",
+    "beata": "beata",
+    "beatka": "beata",
+    "dorota": "dorota",
+    "dorcia": "dorota",
+    "paulina": "paulina",
+    "paula": "paulina",
+    "zuzia": "zuzanna",
+    "zuza": "zuzanna",
+    "hania": "hanna",
+    "hanka": "hanna",
+    "jola": "jolanta",
+    "jolka": "jolanta",
     "madzia": "magdalena",
-    "krysia": "krystyna", "kryśka": "krystyna",
+    "krysia": "krystyna",
+    "kryśka": "krystyna",
     "bożenka": "bożena",
     "grażynka": "grażyna",
-    "danusia": "danuta", "danka": "danuta",
-    "renata": "renata", "renia": "renata",
-    "aldona": "aldona", "aldonka": "aldona",
+    "danusia": "danuta",
+    "danka": "danuta",
+    "renata": "renata",
+    "renia": "renata",
+    "aldona": "aldona",
+    "aldonka": "aldona",
     "maja": "maja",
-    "lena": "lena", "lenka": "lena",
-    "julia": "julia", "julka": "julia",
-    "weronika": "weronika", "werka": "weronika",
+    "lena": "lena",
+    "lenka": "lena",
+    "julia": "julia",
+    "julka": "julia",
+    "weronika": "weronika",
+    "werka": "weronika",
     "dominika": "dominika",
     "patrycja": "patrycja",
     "sandra": "aleksandra",
     "ola": "aleksandra",
-
     # Męskie - zdrobnienia → pełne imię
-    "tomek": "tomasz", "tomcio": "tomasz",
-    "bartek": "bartłomiej", "bartuś": "bartłomiej", "bartosz": "bartłomiej",
-    "krzysiek": "krzysztof", "krzyś": "krzysztof",
-    "piotrek": "piotr", "piotruś": "piotr",
-    "marcin": "marcin", "marciniek": "marcin",
+    "tomek": "tomasz",
+    "tomcio": "tomasz",
+    "bartek": "bartłomiej",
+    "bartuś": "bartłomiej",
+    "bartosz": "bartłomiej",
+    "krzysiek": "krzysztof",
+    "krzyś": "krzysztof",
+    "piotrek": "piotr",
+    "piotruś": "piotr",
+    "marcin": "marcin",
+    "marciniek": "marcin",
     "michałek": "michał",
-    "janek": "jan", "jasiek": "jan", "jaś": "jan",
-    "maciek": "maciej", "maciuś": "maciej",
-    "witek": "wiktor", "wicio": "wiktor",
-    "wojtek": "wojciech", "wojtuś": "wojciech",
-    "arek": "arkadiusz", "aruś": "arkadiusz",
-    "darek": "dariusz", "daruś": "dariusz",
-    "łukasz": "łukasz", "łuki": "łukasz",
+    "janek": "jan",
+    "jasiek": "jan",
+    "jaś": "jan",
+    "maciek": "maciej",
+    "maciuś": "maciej",
+    "witek": "wiktor",
+    "wicio": "wiktor",
+    "wojtek": "wojciech",
+    "wojtuś": "wojciech",
+    "arek": "arkadiusz",
+    "aruś": "arkadiusz",
+    "darek": "dariusz",
+    "daruś": "dariusz",
+    "łukasz": "łukasz",
+    "łuki": "łukasz",
     "pawełek": "paweł",
     "adaś": "adam",
-    "rafał": "rafał", "rafcio": "rafał",
-    "kamil": "kamil", "kamilek": "kamil",
-    "sebastian": "sebastian", "seba": "sebastian",
-    "grzesiek": "grzegorz", "grześ": "grzegorz",
-    "daniel": "daniel", "danek": "daniel",
-    "kuba": "jakub", "kubuś": "jakub",
-    "staszek": "stanisław", "staś": "stanisław",
+    "rafał": "rafał",
+    "rafcio": "rafał",
+    "kamil": "kamil",
+    "kamilek": "kamil",
+    "sebastian": "sebastian",
+    "seba": "sebastian",
+    "grzesiek": "grzegorz",
+    "grześ": "grzegorz",
+    "daniel": "daniel",
+    "danek": "daniel",
+    "kuba": "jakub",
+    "kubuś": "jakub",
+    "staszek": "stanisław",
+    "staś": "stanisław",
     "stefek": "stefan",
-    "józek": "józef", "józio": "józef",
-    "zbyszek": "zbigniew", "zbysio": "zbigniew",
-    "rysiek": "ryszard", "rysio": "ryszard",
+    "józek": "józef",
+    "józio": "józef",
+    "zbyszek": "zbigniew",
+    "zbysio": "zbigniew",
+    "rysiek": "ryszard",
+    "rysio": "ryszard",
     "leszek": "leszek",
-    "heniek": "henryk", "henio": "henryk",
+    "heniek": "henryk",
+    "henio": "henryk",
     "władek": "władysław",
-    "bogdan": "bogdan", "bogdanek": "bogdan",
-    "mateusz": "mateusz", "mati": "mateusz",
+    "bogdan": "bogdan",
+    "bogdanek": "bogdan",
+    "mateusz": "mateusz",
+    "mati": "mateusz",
     "damian": "damian",
     "dawid": "dawid",
     "hubert": "hubert",
     "filip": "filip",
     "oskar": "oskar",
-    "szymon": "szymon", "szymek": "szymon",
+    "szymon": "szymon",
+    "szymek": "szymon",
     "kacper": "kacper",
     "dominik": "dominik",
     "patryk": "patryk",
     "adrian": "adrian",
-    "przemek": "przemysław", "przemcio": "przemysław",
-    "mirek": "mirosław", "miruś": "mirosław",
+    "przemek": "przemysław",
+    "przemcio": "przemysław",
+    "mirek": "mirosław",
+    "miruś": "mirosław",
     "jacek": "jacek",
     "mariusz": "mariusz",
     "robert": "robert",
@@ -105,7 +171,6 @@ IMIE_DOPELNIACZ = {
     "barbara": "barbary",
     "krystyna": "krystyny",
     "elżbieta": "elżbiety",
-    "ewa": "ewy",
     "teresa": "teresy",
     "joanna": "joanny",
     "magdalena": "magdaleny",
@@ -116,9 +181,6 @@ IMIE_DOPELNIACZ = {
     "bożena": "bożeny",
     "aleksandra": "aleksandry",
     "janina": "janiny",
-    "marta": "marty",
-    "dorota": "doroty",
-    "beata": "beaty",
     "jolanta": "jolanty",
     "renata": "renaty",
     "iwona": "iwony",
@@ -127,10 +189,8 @@ IMIE_DOPELNIACZ = {
     "karolina": "karoliny",
     "natalia": "natalii",
     "justyna": "justyny",
-    "sylwia": "sylwii",
     "wiktoria": "wiktorii",
     "paulina": "pauliny",
-    "kinga": "kingi",
     "patrycja": "patrycji",
     "dominika": "dominiki",
     "weronika": "weroniki",
@@ -138,7 +198,6 @@ IMIE_DOPELNIACZ = {
     "zuzanna": "zuzanny",
     "hanna": "hanny",
     "alicja": "alicji",
-    "daria": "darii",
     "aldona": "aldony",
     "edyta": "edyty",
     "aneta": "anety",
@@ -169,7 +228,6 @@ IMIE_DOPELNIACZ = {
     "klaudia": "klaudii",
     "nicole": "nicole",  # nieodmienne
     "nikola": "nikoli",
-
     # ==========================================
     # ŻEŃSKIE - zdrobnienia
     # ==========================================
@@ -207,7 +265,6 @@ IMIE_DOPELNIACZ = {
     "bożenka": "bożenki",
     "werka": "werki",
     "aldonka": "aldonki",
-
     # ==========================================
     # MĘSKIE - popularne (TOP 60)
     # ==========================================
@@ -237,7 +294,6 @@ IMIE_DOPELNIACZ = {
     "robert": "roberta",
     "mateusz": "mateusza",
     "rafał": "rafała",
-    "jacek": "jacka",
     "janusz": "janusza",
     "maciej": "macieja",
     "sławomir": "sławomira",
@@ -250,12 +306,9 @@ IMIE_DOPELNIACZ = {
     "przemysław": "przemysława",
     "sebastian": "sebastiana",
     "mirosław": "mirosława",
-    "leszek": "leszka",
     "daniel": "daniela",
     "dawid": "dawida",
     "damian": "damiana",
-    "szymon": "szymona",
-    "kacper": "kacpra",
     "filip": "filipa",
     "hubert": "huberta",
     "oskar": "oskara",
@@ -298,7 +351,6 @@ IMIE_DOPELNIACZ = {
     "sylwester": "sylwestra",
     "waldemar": "waldemara",
     "witold": "witolda",
-
     # ==========================================
     # MĘSKIE - zdrobnienia
     # ==========================================
@@ -340,8 +392,14 @@ IMIE_DOPELNIACZ = {
 
 # Imiona męskie kończące się na 'a' (wyjątki)
 MESKIE_NA_A = {
-    "kuba", "barnaba", "bonawentura", "kosma", "dyzma",
-    "jarema", "saba", "boryna",  # literackie/rzadkie
+    "kuba",
+    "barnaba",
+    "bonawentura",
+    "kosma",
+    "dyzma",
+    "jarema",
+    "saba",
+    "boryna",  # literackie/rzadkie
 }
 
 
@@ -351,10 +409,24 @@ def normalize_polish_text(text: str) -> str:
         return ""
 
     replacements = {
-        "ą": "a", "ć": "c", "ę": "e", "ł": "l", "ń": "n",
-        "ó": "o", "ś": "s", "ź": "z", "ż": "z",
-        "Ą": "A", "Ć": "C", "Ę": "E", "Ł": "L", "Ń": "N",
-        "Ó": "O", "Ś": "S", "Ź": "Z", "Ż": "Z",
+        "ą": "a",
+        "ć": "c",
+        "ę": "e",
+        "ł": "l",
+        "ń": "n",
+        "ó": "o",
+        "ś": "s",
+        "ź": "z",
+        "ż": "z",
+        "Ą": "A",
+        "Ć": "C",
+        "Ę": "E",
+        "Ł": "L",
+        "Ń": "N",
+        "Ó": "O",
+        "Ś": "S",
+        "Ź": "Z",
+        "Ż": "Z",
     }
 
     result = text
@@ -367,14 +439,14 @@ def normalize_polish_text(text: str) -> str:
 def odmien_imie(imie: str, przypadek: str = "dopelniacz") -> str:
     """
     Odmienia imię przez przypadki.
-    
+
     Args:
         imie: Imię w mianowniku (np. "Ania", "Paweł")
         przypadek: "dopelniacz" (u Ani), "biernik" (widzę Anię), etc.
-    
+
     Returns:
         Odmienione imię
-    
+
     Przykłady:
         odmien_imie("Ania") → "Ani"
         odmien_imie("Paweł") → "Pawła"
@@ -467,10 +539,10 @@ def _odmien_reguly(imie: str) -> str:
 def detect_gender(imie: str) -> str:
     """
     Wykrywa płeć na podstawie imienia.
-    
+
     Returns:
         "Pana" lub "Pani"
-    
+
     Przykłady:
         detect_gender("Paweł") → "Pana"
         detect_gender("Anna") → "Pani"
@@ -502,41 +574,91 @@ def detect_gender(imie: str) -> str:
 
 _VOCATIVE = {
     # Męskie
-    "Adam": "Adamie", "Andrzej": "Andrzeju", "Artur": "Arturze",
-    "Bartosz": "Bartoszu", "Bartłomiej": "Bartłomieju",
-    "Damian": "Damianie", "Daniel": "Danielu", "Dariusz": "Dariuszu",
-    "Dawid": "Dawidzie", "Dominik": "Dominiku",
-    "Filip": "Filipie", "Grzegorz": "Grzegorzu",
-    "Igor": "Igorze", "Jakub": "Jakubie", "Jan": "Janie",
-    "Jarek": "Jarku", "Jarosław": "Jarosławie",
-    "Kamil": "Kamilu", "Karol": "Karolu", "Konrad": "Konradzie",
-    "Krystian": "Krystianie", "Krzysztof": "Krzysztofie",
-    "Łukasz": "Łukaszu", "Maciej": "Macieju", "Marcin": "Marcinie",
-    "Marek": "Marku", "Mariusz": "Mariuszu", "Mateusz": "Mateuszu",
-    "Michał": "Michale", "Mikołaj": "Mikołaju",
-    "Patryk": "Patryku", "Paweł": "Pawle", "Piotr": "Piotrze",
-    "Przemysław": "Przemysławie", "Radosław": "Radosławie",
-    "Rafał": "Rafale", "Robert": "Robercie",
-    "Sebastian": "Sebastianie", "Sławomir": "Sławomirze",
-    "Stanisław": "Stanisławie", "Szymon": "Szymonie",
-    "Tomasz": "Tomaszu", "Waldemar": "Waldemarze",
-    "Wiktor": "Wiktorze", "Wiesław": "Wiesławie",
-    "Wojciech": "Wojciechu", "Zbigniew": "Zbigniewie",
+    "Adam": "Adamie",
+    "Andrzej": "Andrzeju",
+    "Artur": "Arturze",
+    "Bartosz": "Bartoszu",
+    "Bartłomiej": "Bartłomieju",
+    "Damian": "Damianie",
+    "Daniel": "Danielu",
+    "Dariusz": "Dariuszu",
+    "Dawid": "Dawidzie",
+    "Dominik": "Dominiku",
+    "Filip": "Filipie",
+    "Grzegorz": "Grzegorzu",
+    "Igor": "Igorze",
+    "Jakub": "Jakubie",
+    "Jan": "Janie",
+    "Jarek": "Jarku",
+    "Jarosław": "Jarosławie",
+    "Kamil": "Kamilu",
+    "Karol": "Karolu",
+    "Konrad": "Konradzie",
+    "Krystian": "Krystianie",
+    "Krzysztof": "Krzysztofie",
+    "Łukasz": "Łukaszu",
+    "Maciej": "Macieju",
+    "Marcin": "Marcinie",
+    "Marek": "Marku",
+    "Mariusz": "Mariuszu",
+    "Mateusz": "Mateuszu",
+    "Michał": "Michale",
+    "Mikołaj": "Mikołaju",
+    "Patryk": "Patryku",
+    "Paweł": "Pawle",
+    "Piotr": "Piotrze",
+    "Przemysław": "Przemysławie",
+    "Radosław": "Radosławie",
+    "Rafał": "Rafale",
+    "Robert": "Robercie",
+    "Sebastian": "Sebastianie",
+    "Sławomir": "Sławomirze",
+    "Stanisław": "Stanisławie",
+    "Szymon": "Szymonie",
+    "Tomasz": "Tomaszu",
+    "Waldemar": "Waldemarze",
+    "Wiktor": "Wiktorze",
+    "Wiesław": "Wiesławie",
+    "Wojciech": "Wojciechu",
+    "Zbigniew": "Zbigniewie",
     # Żeńskie
-    "Agnieszka": "Agnieszko", "Aleksandra": "Aleksandro",
-    "Ania": "Aniu", "Anna": "Anno", "Asia": "Asiu",
-    "Barbara": "Barbaro", "Basia": "Basiu", "Beata": "Beato",
-    "Celina": "Celino", "Dominika": "Dominiko", "Dorota": "Doroto",
-    "Ewa": "Ewo", "Gosia": "Gosiu", "Halina": "Halino",
-    "Izabela": "Izabelo", "Iwona": "Iwono",
-    "Joanna": "Joanno", "Justyna": "Justyno",
-    "Karolina": "Karolino", "Kasia": "Kasiu", "Katarzyna": "Katarzyno",
-    "Magda": "Magdo", "Magdalena": "Magdaleno",
-    "Małgorzata": "Małgorzato", "Marta": "Marto", "Monika": "Moniko",
-    "Nadia": "Nadiu", "Natalia": "Natalio",
-    "Ola": "Olu", "Patrycja": "Patrycjo", "Paulina": "Paulino",
-    "Sylwia": "Sylwio", "Teresa": "Tereso", "Weronika": "Weronico",
-    "Zofia": "Zofio", "Zuzanna": "Zuzanno", "Zuzia": "Zuziu",
+    "Agnieszka": "Agnieszko",
+    "Aleksandra": "Aleksandro",
+    "Ania": "Aniu",
+    "Anna": "Anno",
+    "Asia": "Asiu",
+    "Barbara": "Barbaro",
+    "Basia": "Basiu",
+    "Beata": "Beato",
+    "Celina": "Celino",
+    "Dominika": "Dominiko",
+    "Dorota": "Doroto",
+    "Ewa": "Ewo",
+    "Gosia": "Gosiu",
+    "Halina": "Halino",
+    "Izabela": "Izabelo",
+    "Iwona": "Iwono",
+    "Joanna": "Joanno",
+    "Justyna": "Justyno",
+    "Karolina": "Karolino",
+    "Kasia": "Kasiu",
+    "Katarzyna": "Katarzyno",
+    "Magda": "Magdo",
+    "Magdalena": "Magdaleno",
+    "Małgorzata": "Małgorzato",
+    "Marta": "Marto",
+    "Monika": "Moniko",
+    "Nadia": "Nadiu",
+    "Natalia": "Natalio",
+    "Ola": "Olu",
+    "Patrycja": "Patrycjo",
+    "Paulina": "Paulino",
+    "Sylwia": "Sylwio",
+    "Teresa": "Tereso",
+    "Weronika": "Weronico",
+    "Zofia": "Zofio",
+    "Zuzanna": "Zuzanno",
+    "Zuzia": "Zuziu",
 }
 
 
@@ -549,22 +671,22 @@ def vocative_imie(name: str) -> str:
         return _VOCATIVE[name_cap]
     lower = name_cap.lower()
     # Żeńskie zdrobnienia: -sia, -zia, -cia, -nia, -bia → -iu
-    if lower.endswith(('sia', 'zia', 'cia', 'nia', 'bia')):
-        return name_cap[:-2] + 'u'
+    if lower.endswith(("sia", "zia", "cia", "nia", "bia")):
+        return name_cap[:-2] + "u"
     # Żeńskie: kończy na -a → -o
-    if lower.endswith('a'):
-        return name_cap[:-1] + 'o'
+    if lower.endswith("a"):
+        return name_cap[:-1] + "o"
     # Męskie: -sz, -cz → -u
-    if lower.endswith(('sz', 'cz')):
-        return name_cap + 'u'
+    if lower.endswith(("sz", "cz")):
+        return name_cap + "u"
     # Męskie: -l, -j, -k → -u
-    if lower.endswith(('l', 'j', 'k')):
-        return name_cap + 'u'
+    if lower.endswith(("l", "j", "k")):
+        return name_cap + "u"
     # Męskie: -r → -rze
-    if lower.endswith('r'):
-        return name_cap + 'ze'
+    if lower.endswith("r"):
+        return name_cap + "ze"
     # Męskie: -ł → -le
-    if lower.endswith('ł'):
-        return name_cap[:-1] + 'le'
+    if lower.endswith("ł"):
+        return name_cap[:-1] + "le"
     # Nieznane → mianownik
     return name_cap

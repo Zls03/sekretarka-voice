@@ -1,6 +1,5 @@
 """Wewnętrzne API panelu: profil klienta (historia wizyt) i zapis wizyty."""
 
-
 import httpx
 from loguru import logger
 
@@ -26,7 +25,9 @@ async def get_client_profile(firm_id: str, phone: str) -> dict | None:
     return None
 
 
-async def save_client_visit(firm_id: str, phone: str, name: str, service: str, staff: str, scheduled_at: str, notes: str = ""):
+async def save_client_visit(
+    firm_id: str, phone: str, name: str, service: str, staff: str, scheduled_at: str, notes: str = ""
+):
     """Zapisuje/aktualizuje klienta i wizytę w panelu (CRM). Nie blokuje przy błędzie."""
     if not PANEL_URL or not INTERNAL_API_SECRET:
         logger.warning("CRM save_client_visit: PANEL_URL lub INTERNAL_API_SECRET nie ustawione — pomijam")

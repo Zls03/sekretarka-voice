@@ -14,24 +14,24 @@ def _assistant_gender(assistant_name: str) -> dict:
 
     if is_female:
         return {
-            "role_noun":       "wirtualną asystentką (sekretarką)",
+            "role_noun": "wirtualną asystentką (sekretarką)",
             "role_noun_short": "wirtualna asystentka",
-            "role_booking":    "asystentką rezerwacji",
-            "gender_line":     "Jesteś kobietą - mów w rodzaju żeńskim (zrobiłam, powiedziałam, zapisałam, pomogę)",
-            "self_intro":      f"Jestem {assistant_name}, wirtualna asystentka",
-            "self_ai":         "Jestem wirtualną asystentką, ale chętnie pomogę",
-            "gender_short":    "w rodzaju żeńskim (jestem asystentką)",
+            "role_booking": "asystentką rezerwacji",
+            "gender_line": "Jesteś kobietą - mów w rodzaju żeńskim (zrobiłam, powiedziałam, zapisałam, pomogę)",
+            "self_intro": f"Jestem {assistant_name}, wirtualna asystentka",
+            "self_ai": "Jestem wirtualną asystentką, ale chętnie pomogę",
+            "gender_short": "w rodzaju żeńskim (jestem asystentką)",
             "nie_dosłyszałam": "Nie dosłyszałam",
         }
     else:
         return {
-            "role_noun":       "wirtualnym asystentem (sekretarzem)",
+            "role_noun": "wirtualnym asystentem (sekretarzem)",
             "role_noun_short": "wirtualny asystent",
-            "role_booking":    "asystentem rezerwacji",
-            "gender_line":     "Jesteś mężczyzną - mów w rodzaju męskim (zrobiłem, powiedziałem, zapisałem, pomogę)",
-            "self_intro":      f"Jestem {assistant_name}, wirtualny asystent",
-            "self_ai":         "Jestem wirtualnym asystentem, ale chętnie pomogę",
-            "gender_short":    "w rodzaju męskim (jestem asystentem)",
+            "role_booking": "asystentem rezerwacji",
+            "gender_line": "Jesteś mężczyzną - mów w rodzaju męskim (zrobiłem, powiedziałem, zapisałem, pomogę)",
+            "self_intro": f"Jestem {assistant_name}, wirtualny asystent",
+            "self_ai": "Jestem wirtualnym asystentem, ale chętnie pomogę",
+            "gender_short": "w rodzaju męskim (jestem asystentem)",
             "nie_dosłyszałam": "Nie dosłyszałem",
         }
 
@@ -63,8 +63,8 @@ def build_business_context(tenant: dict) -> str:
             day_num = wh.get("day_of_week", 0)
             if wh.get("open_time"):
                 day_name = POLISH_DAYS.get(day_num, str(day_num))
-                open_t = format_time_for_tts(wh['open_time'])
-                close_t = format_time_for_tts(wh['close_time'])
+                open_t = format_time_for_tts(wh["open_time"])
+                close_t = format_time_for_tts(wh["close_time"])
                 hours_text.append(f"{day_name}: {open_t}-{close_t}")
         if hours_text:
             parts.append(f"GODZINY PRACY: {', '.join(hours_text)}")
@@ -76,10 +76,10 @@ def build_business_context(tenant: dict) -> str:
         if services:
             svc_lines = []
             for s in services:
-                price_text = (s.get('price_text') or '').strip()
-                duration_text = (s.get('duration_text') or '').strip()
-                price = s.get('price', '')
-                duration = s.get('duration_minutes', 30)
+                price_text = (s.get("price_text") or "").strip()
+                duration_text = (s.get("duration_text") or "").strip()
+                price = s.get("price", "")
+                duration = s.get("duration_minutes", 30)
                 description = s.get("description", "").strip() if s.get("description") else ""
                 price_display = price_text if price_text else (f"{price} zł" if price else "cena do uzgodnienia")
                 duration_display = duration_text if duration_text else f"{duration} min"
@@ -97,12 +97,12 @@ def build_business_context(tenant: dict) -> str:
         if info_services:
             svc_lines = []
             for s in info_services:
-                name = s.get('name', '')
-                price_text = (s.get('price_text') or '').strip()
-                duration_text = (s.get('duration_text') or '').strip()
-                price = s.get('price', '')
-                duration = s.get('duration_minutes', '')
-                description = s.get('description', '').strip() if s.get('description') else ''
+                name = s.get("name", "")
+                price_text = (s.get("price_text") or "").strip()
+                duration_text = (s.get("duration_text") or "").strip()
+                price = s.get("price", "")
+                duration = s.get("duration_minutes", "")
+                description = s.get("description", "").strip() if s.get("description") else ""
 
                 line = f"• {name}"
                 if price_text:
@@ -122,7 +122,9 @@ def build_business_context(tenant: dict) -> str:
             parts.append("CENNIK: NIE SKONFIGUROWANY — nie znasz usług ani cen, nie podawaj żadnych")
 
         # Dodaj informację że rezerwacje są wyłączone
-        parts.append("UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon.")
+        parts.append(
+            "UWAGA: Rezerwacje telefoniczne są WYŁĄCZONE. Jeśli klient pyta o rezerwację, poinformuj że nie jest dostępna przez telefon."
+        )
 
     # Adres - formatuj ładnie dla wymowy TTS
     address = tenant.get("address", "").strip()
@@ -136,7 +138,7 @@ def build_business_context(tenant: dict) -> str:
 
         # Dodaj "numer" przed liczbą w adresie (np. "Kwiatowa 15" → "Kwiatowa numer 15")
         # Szuka: spacja + cyfry + (koniec lub przecinek lub spacja)
-        address = re.sub(r' (\d+)([,\s]|$)', r' numer \1\2', address)
+        address = re.sub(r" (\d+)([,\s]|$)", r" numer \1\2", address)
 
         parts.append(f"ADRES: {address}")
     else:
@@ -169,20 +171,29 @@ def build_business_context(tenant: dict) -> str:
                 if wh_json and wh_json != "'{}'":
                     try:
                         import json
+
                         wh = json.loads(wh_json) if isinstance(wh_json, str) else wh_json
-                        days_pl = {"mon": "pon", "tue": "wt", "wed": "śr", "thu": "czw", "fri": "pt", "sat": "sob", "sun": "niedz"}
+                        days_pl = {
+                            "mon": "pon",
+                            "tue": "wt",
+                            "wed": "śr",
+                            "thu": "czw",
+                            "fri": "pt",
+                            "sat": "sob",
+                            "sun": "niedz",
+                        }
                         hours_list = []
                         for day_en, day_pl in days_pl.items():
                             day_data = wh.get(day_en, {})
                             if day_data and not day_data.get("closed", False) and day_data.get("open"):
-                                open_t = format_time_for_tts(day_data['open'])
-                                close_t = format_time_for_tts(day_data['close'])
+                                open_t = format_time_for_tts(day_data["open"])
+                                close_t = format_time_for_tts(day_data["close"])
                                 hours_list.append(f"{day_pl}: {open_t}-{close_t}")
                         if hours_list:
                             position = s.get("position", "").strip()
-                            name_part = f"{s['name']} ({position})" if position else s['name']
+                            name_part = f"{s['name']} ({position})" if position else s["name"]
                             staff_hours.append(f"{name_part}: {', '.join(hours_list)}")
-                    except:
+                    except Exception:
                         pass
             if staff_hours:
                 parts.append("GODZINY PRACY PRACOWNIKÓW:\n" + "\n".join(staff_hours))
@@ -205,9 +216,13 @@ def build_business_context(tenant: dict) -> str:
             "Kieruj się instrukcją REZERWACJE dalej w prompcie."
         )
     elif has_additional_info:
-        reservation_rule = "- Sposoby rezerwacji podawaj TYLKO na podstawie DODATKOWYCH INFO powyżej — nie wymyślaj innych"
+        reservation_rule = (
+            "- Sposoby rezerwacji podawaj TYLKO na podstawie DODATKOWYCH INFO powyżej — nie wymyślaj innych"
+        )
     else:
-        reservation_rule = "- Rezerwacje przyjmuj PRZEZ AGENTA — nie odsyłaj do innych miejsc jeśli nie ma takiej informacji"
+        reservation_rule = (
+            "- Rezerwacje przyjmuj PRZEZ AGENTA — nie odsyłaj do innych miejsc jeśli nie ma takiej informacji"
+        )
 
     parts.append(f"""⚠️ WAŻNE ZASADY:
 - Jeśli powyżej NIE MA jakiejś informacji - powiedz że nie masz tej informacji

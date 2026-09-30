@@ -33,26 +33,26 @@ from pipecat.processors.frame_processor import FrameProcessor
 def make_call_state() -> dict:
     now = time.time()
     return {
-        "last_user_frame": None,       # event-loop time, tylko do pomiaru TTFB
+        "last_user_frame": None,  # event-loop time, tylko do pomiaru TTFB
         "waiting_for_bot_audio": False,
-        "idle_since": now,             # wall-clock, do wykrywania ciszy — nadpisywany
-                                        # ponownie w monitor_call_health() przy starcie,
-                                        # żeby nie liczyć czasu setupu (CRM, VAD, connect)
-                                        # jako "ciszy klienta"
+        "idle_since": now,  # wall-clock, do wykrywania ciszy — nadpisywany
+        # ponownie w monitor_call_health() przy starcie,
+        # żeby nie liczyć czasu setupu (CRM, VAD, connect)
+        # jako "ciszy klienta"
         "suppress_idle_reset": False,  # True = kolejny TTSStoppedFrame to say_now()
-                                        # (dopytanie/pożegnanie), nie prawdziwa tura bota
-        "audio_playback_until": now,   # estymowany czas zakończenia odtwarzania zbuforowanego
-                                        # audio (patrz BotAudioMonitor) — kumuluje realny czas
-                                        # trwania paczek, nie tylko moment ich odebrania
+        # (dopytanie/pożegnanie), nie prawdziwa tura bota
+        "audio_playback_until": now,  # estymowany czas zakończenia odtwarzania zbuforowanego
+        # audio (patrz BotAudioMonitor) — kumuluje realny czas
+        # trwania paczek, nie tylko moment ich odebrania
         "ended": False,
-        "greeted": False,              # True dopiero gdy padnie PIERWSZA ramka audio bota
-                                        # (powitanie). Bug złapany na żywym telefonie 16.08.2026:
-                                        # gdy TTFB powitania był anomalnie wolny (11s zamiast
-                                        # ~0.7s), monitor_call_health i tak liczył ten czas jako
-                                        # "ciszę klienta" i wystrzelił wymuszone "czy nadal jesteśmy
-                                        # połączeni?" ZANIM klient usłyszał choćby powitanie —
-                                        # transkrypt pokazał to wprost: (początek rozmowy) →
-                                        # od razu wymuszona dogrywka, bez powitania między nimi.
+        "greeted": False,  # True dopiero gdy padnie PIERWSZA ramka audio bota
+        # (powitanie). Bug złapany na żywym telefonie 16.08.2026:
+        # gdy TTFB powitania był anomalnie wolny (11s zamiast
+        # ~0.7s), monitor_call_health i tak liczył ten czas jako
+        # "ciszę klienta" i wystrzelił wymuszone "czy nadal jesteśmy
+        # połączeni?" ZANIM klient usłyszał choćby powitanie —
+        # transkrypt pokazał to wprost: (początek rozmowy) →
+        # od razu wymuszona dogrywka, bez powitania między nimi.
     }
 
 
@@ -134,9 +134,8 @@ class BotAudioMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, TTSTextFrame) and frame.text:
             logger.info(f"⏱️ [BOT] mówi: {frame.text!r}")
-        if isinstance(frame, TTSStartedFrame):
-            if not self._state.get("suppress_idle_reset"):
-                self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSStartedFrame) and not self._state.get("suppress_idle_reset"):
+            self._state["idle_since"] = time.time()
         if isinstance(frame, TTSAudioRawFrame):
             self._state["greeted"] = True
             if not self._state.get("suppress_idle_reset"):

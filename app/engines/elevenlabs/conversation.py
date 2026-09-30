@@ -66,7 +66,11 @@ async def build_agent_override(tenant: dict, caller_phone: str) -> dict:
 
 
 async def build_conversation_config_override(
-    tenant: dict, caller_phone: str, called_number: str, call_sid: str = "", channel: str = "twilio",
+    tenant: dict,
+    caller_phone: str,
+    called_number: str,
+    call_sid: str = "",
+    channel: str = "twilio",
 ) -> tuple[dict, dict]:
     """(conversation_config_override, dynamic_variables) dla połączeń inicjowanych przez nas.
 

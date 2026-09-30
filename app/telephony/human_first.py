@@ -1,4 +1,4 @@
-""""Najpierw dzwoni do właściciela": NCCO do apki Siperb (SIP) oraz nagranie i transkrypcja
+""" "Najpierw dzwoni do właściciela": NCCO do apki Siperb (SIP) oraz nagranie i transkrypcja
 rozmów odebranych osobiście."""
 
 import time
@@ -16,7 +16,12 @@ from app.telephony.vonage_api import _download_vonage_recording
 
 
 async def build_human_first_ncco(
-    tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str,
+    tenant: dict,
+    from_number: str,
+    to_number: str,
+    call_uuid: str,
+    host: str,
+    region_url: str,
 ) -> list | None:
     """NCCO dla firm z human_first_enabled=1 — dzwoni NAJPIERW do apki Siperb właściciela
     (SIP, konto założone RĘCZNIE dla TEJ FIRMY — patrz panel: zakładka Ustawienia, sekcja
@@ -70,10 +75,12 @@ async def build_human_first_ncco(
             "timeout": timeout,
             "eventType": "synchronous",
             "eventUrl": [fallback_url],
-            "endpoint": [{
-                "type": "sip",
-                "uri": f"sip:{sip_username}@eu-west-1-sbc-1.siperb.com;transport=udp",
-            }],
+            "endpoint": [
+                {
+                    "type": "sip",
+                    "uri": f"sip:{sip_username}@eu-west-1-sbc-1.siperb.com;transport=udp",
+                }
+            ],
         },
     ]
 
@@ -91,6 +98,7 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
         return []
     try:
         import httpx
+
         # nova-3 + language=pl — TEN SAM model co bot.py/cascade (DeepgramSTTService,
         # live_options) używa dla polskiego na żywo od dawna, sprawdzony na produkcji.
         # DEEPGRAM_BASE_URL (opcjonalny, "api.eu.deepgram.com") — ten sam env var co
@@ -135,7 +143,12 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
 
 
 async def _save_human_first_call_log(
-    tenant: dict, call_uuid: str, caller_phone: str, duration_seconds: int, summary: str, lines: list[str],
+    tenant: dict,
+    call_uuid: str,
+    caller_phone: str,
+    duration_seconds: int,
+    summary: str,
+    lines: list[str],
 ) -> None:
     """Zapisuje rozmowę odebraną osobiście przez właściciela do call_logs/call_transcripts —
     TA SAMA tabela i kształt co rozmowy z AI (żeby portal /crm nie potrzebował żadnej
@@ -163,7 +176,11 @@ async def _save_human_first_call_log(
                 [f"tr_{uuid.uuid4().hex[:12]}", tenant_id, call_uuid, role or "Rozmowa", content[:500]],
             )
         logger.info(f"📼 [HUMAN-FIRST/RECORDING] Zapisano rozmowę odebraną osobiście: {tenant_id}")
-        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        caller_display = (
+            caller_phone
+            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
+            else "numer zastrzeżony"
+        )
         await _send_push_notifications(
             tenant,
             title="📞 Odebrałeś osobiście",
@@ -174,7 +191,11 @@ async def _save_human_first_call_log(
 
 
 async def process_human_first_recording(
-    tenant: dict, recording_url: str, caller_phone: str, call_uuid: str, duration_seconds: int,
+    tenant: dict,
+    recording_url: str,
+    caller_phone: str,
+    call_uuid: str,
+    duration_seconds: int,
 ) -> None:
     """Orkiestruje całość: pobranie nagrania -> Deepgram -> podsumowanie (ten sam GPT-4.1-mini
     co dla AI) -> zapis do CRM. Wołane jako osobny task (fire-and-forget) z webhooka

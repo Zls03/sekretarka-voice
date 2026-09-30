@@ -4,9 +4,9 @@ import re
 from datetime import datetime
 
 DATEPARSER_SETTINGS = {
-    'PREFER_DATES_FROM': 'future',
-    'PREFER_DAY_OF_MONTH': 'first',
-    'RETURN_AS_TIMEZONE_AWARE': False,
+    "PREFER_DATES_FROM": "future",
+    "PREFER_DAY_OF_MONTH": "first",
+    "RETURN_AS_TIMEZONE_AWARE": False,
 }
 
 
@@ -19,8 +19,12 @@ def preprocess_date_text(date_text: str) -> str:
     text = date_text.lower().strip()
 
     time_modifiers = [
-        " po południu", " popołudniu", " popoludniu",
-        " rano", " wieczorem", " przed południem",
+        " po południu",
+        " popołudniu",
+        " popoludniu",
+        " rano",
+        " wieczorem",
+        " przed południem",
         " po poludniu",
     ]
     for mod in time_modifiers:
@@ -29,15 +33,20 @@ def preprocess_date_text(date_text: str) -> str:
     prefixes_to_remove = ["na ", "w dniu ", "dnia ", "w ", "we "]
     for prefix in prefixes_to_remove:
         if text.startswith(prefix):
-            text = text[len(prefix):]
+            text = text[len(prefix) :]
             break
 
     day_mappings = {
-        "poniedziałek": "poniedziałek", "wtorek": "wtorek",
-        "środę": "środa", "środe": "środa",
-        "czwartek": "czwartek", "piątek": "piątek",
-        "sobotę": "sobota", "sobote": "sobota",
-        "niedzielę": "niedziela", "niedziele": "niedziela",
+        "poniedziałek": "poniedziałek",
+        "wtorek": "wtorek",
+        "środę": "środa",
+        "środe": "środa",
+        "czwartek": "czwartek",
+        "piątek": "piątek",
+        "sobotę": "sobota",
+        "sobote": "sobota",
+        "niedzielę": "niedziela",
+        "niedziele": "niedziela",
     }
     for wrong, correct in day_mappings.items():
         if text == wrong or text.startswith(wrong + " "):
@@ -55,9 +64,14 @@ def _parse_time(text: str) -> str | None:
     text = text.lower().strip()
 
     stt_time_fixes = {
-        "siedem zer zero": "7:00", "siedem zero zero": "7:00", "siedem zero": "7:00",
-        "osiem zer zero": "8:00", "osiem zero zero": "8:00", "osiem zero": "8:00",
-        "dziewięć zer zero": "9:00", "dziewięć zero": "9:00",
+        "siedem zer zero": "7:00",
+        "siedem zero zero": "7:00",
+        "siedem zero": "7:00",
+        "osiem zer zero": "8:00",
+        "osiem zero zero": "8:00",
+        "osiem zero": "8:00",
+        "dziewięć zer zero": "9:00",
+        "dziewięć zero": "9:00",
     }
     for wrong, correct in stt_time_fixes.items():
         if wrong in text:
@@ -65,14 +79,22 @@ def _parse_time(text: str) -> str | None:
 
     if "wpół do" in text or "w pół do" in text:
         wpol_mappings = {
-            "siódmej": "6:30", "siedmej": "6:30",
-            "ósmej": "7:30", "osmej": "7:30",
-            "dziewiątej": "8:30", "dziewiatej": "8:30",
-            "dziesiątej": "9:30", "dziesiatej": "9:30",
-            "jedenastej": "10:30", "dwunastej": "11:30",
-            "trzynastej": "12:30", "czternastej": "13:30",
-            "piętnastej": "14:30", "pietnastej": "14:30",
-            "szesnastej": "15:30", "siedemnastej": "16:30",
+            "siódmej": "6:30",
+            "siedmej": "6:30",
+            "ósmej": "7:30",
+            "osmej": "7:30",
+            "dziewiątej": "8:30",
+            "dziewiatej": "8:30",
+            "dziesiątej": "9:30",
+            "dziesiatej": "9:30",
+            "jedenastej": "10:30",
+            "dwunastej": "11:30",
+            "trzynastej": "12:30",
+            "czternastej": "13:30",
+            "piętnastej": "14:30",
+            "pietnastej": "14:30",
+            "szesnastej": "15:30",
+            "siedemnastej": "16:30",
             "osiemnastej": "17:30",
         }
         for word, time in wpol_mappings.items():
@@ -81,25 +103,35 @@ def _parse_time(text: str) -> str | None:
 
     has_thirty = any(x in text for x in ["trzydzieści", "trzydziesci", "30", ":30"])
     word_to_hour = {
-        "dziewiąt": 9, "dziesiąt": 10, "jedenast": 11, "dwunast": 12,
-        "trzynast": 13, "czternast": 14, "piętnast": 15, "szesnast": 16,
-        "siedemnast": 17, "osiemnast": 18, "dziewiętnast": 19, "dwudziest": 20,
-        "ósm": 8, "siódm": 7,
+        "dziewiąt": 9,
+        "dziesiąt": 10,
+        "jedenast": 11,
+        "dwunast": 12,
+        "trzynast": 13,
+        "czternast": 14,
+        "piętnast": 15,
+        "szesnast": 16,
+        "siedemnast": 17,
+        "osiemnast": 18,
+        "dziewiętnast": 19,
+        "dwudziest": 20,
+        "ósm": 8,
+        "siódm": 7,
     }
     for word, hour in word_to_hour.items():
         if word in text:
             minutes = "30" if has_thirty else "00"
             return f"{hour}:{minutes}"
 
-    match = re.search(r'(\d{1,2})[:\.](\d{2})', text)
+    match = re.search(r"(\d{1,2})[:\.](\d{2})", text)
     if match:
         return f"{int(match.group(1))}:{match.group(2)}"
 
-    match = re.search(r'(?:o|na|godzin[aeę]?)\s*(\d{1,2})', text)
+    match = re.search(r"(?:o|na|godzin[aeę]?)\s*(\d{1,2})", text)
     if match:
         return f"{int(match.group(1))}:00"
 
-    match = re.search(r'\b(\d{1,2})\b', text)
+    match = re.search(r"\b(\d{1,2})\b", text)
     if match:
         hour = int(match.group(1))
         if 7 <= hour <= 21:

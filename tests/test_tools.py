@@ -30,11 +30,20 @@ def test_tool_schemas():
     tools = {
         "contact_owner": _find("build_contact_owner_tool")(make_tenant(), "+48600", task_box, state),
         "contact_owner_with_transfer": _find("build_contact_owner_tool")(
-            make_tenant(), "+48600", task_box, state, has_transfer_tool=True,
+            make_tenant(),
+            "+48600",
+            task_box,
+            state,
+            has_transfer_tool=True,
         ),
         "end_conversation": _find("build_end_conversation_tool")(task_box, state),
         "transfer_to_owner": _find("build_transfer_tool")(
-            tenant, "uuid-1", state, "https://api-eu-3.vonage.com", caller_phone="+48600", host="bot.test",
+            tenant,
+            "uuid-1",
+            state,
+            "https://api-eu-3.vonage.com",
+            caller_phone="+48600",
+            host="bot.test",
         ),
         "book_appointment": _find("build_book_appointment_tool")(tenant, "+48600", state, context_box),
         "manage_booking": _find("build_manage_booking_tool")(tenant, "+48600", state),

@@ -10,7 +10,10 @@ from app.post_call.summary import extract_conversation_lines, generate_conversat
 
 
 async def maybe_send_call_summary(
-    tenant: dict, caller_phone: str, context: LLMContext, call_state: dict | None = None,
+    tenant: dict,
+    caller_phone: str,
+    context: LLMContext,
+    call_state: dict | None = None,
     call_sid: str | None = None,
 ) -> None:
     """Woła się w finally: bloku websocket handlera — PO KAŻDEJ rozmowie, niezależnie jak się
@@ -56,21 +59,31 @@ async def maybe_send_call_summary(
         if not pending and not int(tenant.get("report_empty_calls") or 0):
             return
         if not pending:
-            caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+            caller_display = (
+                caller_phone
+                if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
+                else "numer zastrzeżony"
+            )
             summary = f"Połączenie odebrane od: {caller_display}. Rozmowa się nie odbyła — rozmówca nic nie powiedział lub rozłączył się bez zostawienia wiadomości."
         else:
             summary = "Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej."
     if call_sid:
         await persist_call_summary(tenant, call_sid, summary)
     if lead_email_enabled and to_email:
-        transcript_lines = extract_conversation_lines(context) if int(tenant.get("transcript_email_enabled") or 0) else None
+        transcript_lines = (
+            extract_conversation_lines(context) if int(tenant.get("transcript_email_enabled") or 0) else None
+        )
         await send_call_summary_email(
             tenant, caller_phone, summary, to_email, pending_message=pending, transcript_lines=transcript_lines
         )
     if crm_enabled:
         await maybe_send_to_crm(tenant, caller_phone, summary)
     if has_real_content:
-        caller_display = caller_phone if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "") else "numer zastrzeżony"
+        caller_display = (
+            caller_phone
+            if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
+            else "numer zastrzeżony"
+        )
         await _send_push_notifications(
             tenant,
             title="📞 Nowe zgłoszenie",

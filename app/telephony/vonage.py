@@ -61,8 +61,13 @@ def _answer_params(request: Request) -> tuple[str, str, str, str, str]:
     przychodzi tylko w Answer, a bez niego transfer w innym regionie kończy się 400/404.
     """
     q = request.query_params
-    return q.get("to", ""), q.get("from", ""), q.get("uuid", ""), q.get("region_url", ""), \
-        request.headers.get("host", "localhost")
+    return (
+        q.get("to", ""),
+        q.get("from", ""),
+        q.get("uuid", ""),
+        q.get("region_url", ""),
+        request.headers.get("host", "localhost"),
+    )
 
 
 @router.api_route("/vonage/events", methods=["GET", "POST"])
@@ -150,7 +155,12 @@ async def vonage_human_first_fallback(request: Request):
     (noga już trwa), więc bezwarunkowy fallback jest bezpieczny.
     """
     q = request.query_params
-    to_number, from_number, call_uuid, region_url = q.get("to", ""), q.get("from", ""), q.get("uuid", ""), q.get("regionUrl", "")
+    to_number, from_number, call_uuid, region_url = (
+        q.get("to", ""),
+        q.get("from", ""),
+        q.get("uuid", ""),
+        q.get("regionUrl", ""),
+    )
     body = await _read_raw_body(request)
     status = body.get("status") if isinstance(body, dict) else None
     logger.info(f"📱 [HUMAN-FIRST/SIPERB] eventUrl odpytany, status={status!r} | body={body}")
@@ -185,10 +195,12 @@ async def vonage_human_first_recording(request: Request):
     try:
         start, end = body.get("start_time"), body.get("end_time")
         if start and end:
-            duration_seconds = int((
-                datetime.strptime(end, VONAGE_RECORDING_TIME_FORMAT)
-                - datetime.strptime(start, VONAGE_RECORDING_TIME_FORMAT)
-            ).total_seconds())
+            duration_seconds = int(
+                (
+                    datetime.strptime(end, VONAGE_RECORDING_TIME_FORMAT)
+                    - datetime.strptime(start, VONAGE_RECORDING_TIME_FORMAT)
+                ).total_seconds()
+            )
     except Exception:
         pass
 
@@ -236,13 +248,17 @@ async def vonage_test_siperb(request: Request):
         return ncco_response(await build_ai_ncco(tenant, from_number, to_number, call_uuid, host, region_url))
 
     logger.info(f"🧪 [SIPERB TEST] Answer webhook wywołany: {dict(request.query_params)}")
-    return ncco_response([{
-        "action": "connect",
-        "timeout": 20,
-        "eventType": "synchronous",
-        "eventUrl": [f"https://{host}/vonage/test-siperb-event"],
-        "endpoint": [{"type": "sip", "uri": "sip:siperb-bizvoice@eu-west-1-sbc-1.siperb.com;transport=udp"}],
-    }])
+    return ncco_response(
+        [
+            {
+                "action": "connect",
+                "timeout": 20,
+                "eventType": "synchronous",
+                "eventUrl": [f"https://{host}/vonage/test-siperb-event"],
+                "endpoint": [{"type": "sip", "uri": "sip:siperb-bizvoice@eu-west-1-sbc-1.siperb.com;transport=udp"}],
+            }
+        ]
+    )
 
 
 @router.api_route("/vonage/test-siperb-event", methods=["GET", "POST"])

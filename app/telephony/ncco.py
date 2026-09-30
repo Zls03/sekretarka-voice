@@ -19,7 +19,12 @@ def _stream_query(tenant: dict, from_number: str, call_uuid: str) -> str:
 
 
 async def build_ai_ncco(
-    tenant: dict, from_number: str, to_number: str, call_uuid: str, host: str, region_url: str,
+    tenant: dict,
+    from_number: str,
+    to_number: str,
+    call_uuid: str,
+    host: str,
+    region_url: str,
 ) -> list:
     """NCCO łączące rozmowę z asystentem AI silnika wybranego w panelu firmy."""
     engine = tenant.get("realtime_engine")
@@ -56,14 +61,18 @@ def _elevenlabs_sip_ncco(to_number: str, from_number: str, call_uuid: str, host:
     sip_number = to_number if to_number.startswith("+") else f"+{to_number}"
     event_url = f"https://{host}/vonage/sip-fallback-elevenlabs?wsUri={quote(bridge_uri, safe='')}"
     logger.info(f"📞 [ELEVENLABS/VONAGE SIP] Bezpośrednie połączenie (uri, z fallbackiem): {sip_number}")
-    return [{
-        "action": "connect",
-        "from": from_number.lstrip("+") if from_number else sip_number.lstrip("+"),
-        "eventType": "synchronous",
-        "eventUrl": [event_url],
-        "endpoint": [{
-            "type": "sip",
-            "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp",
-            "headers": {"CALL-ID": call_uuid},
-        }],
-    }]
+    return [
+        {
+            "action": "connect",
+            "from": from_number.lstrip("+") if from_number else sip_number.lstrip("+"),
+            "eventType": "synchronous",
+            "eventUrl": [event_url],
+            "endpoint": [
+                {
+                    "type": "sip",
+                    "uri": f"sip:{sip_number}@{ELEVENLABS_SIP_DOMAIN};transport=tcp",
+                    "headers": {"CALL-ID": call_uuid},
+                }
+            ],
+        }
+    ]

@@ -120,9 +120,7 @@ async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, c
             if role not in ("user", "assistant") or not content:
                 continue
             if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("text")
-                )
+                content = " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("text"))
             content = (content or "").strip()
             if len(content) < 2:
                 continue
@@ -145,7 +143,12 @@ async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, c
 
 
 async def record_call_status(
-    tenant: dict, call_sid: str, caller_phone: str, duration: int, status: str, log_tag: str,
+    tenant: dict,
+    call_sid: str,
+    caller_phone: str,
+    duration: int,
+    status: str,
+    log_tag: str,
 ) -> None:
     """Zapisuje czas trwania i status zakończonej rozmowy (webhook statusu operatora) i ją rozlicza.
 

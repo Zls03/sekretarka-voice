@@ -166,6 +166,7 @@ def fake_db(monkeypatch):
 # Czas
 # --------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _frozen_time():
     from freezegun import freeze_time
@@ -177,6 +178,7 @@ def _frozen_time():
 # --------------------------------------------------------------------------
 # Tenanci
 # --------------------------------------------------------------------------
+
 
 def make_tenant(**overrides) -> dict:
     """Tenant w kształcie zwracanym przez helpers._get_tenant_from_saas()."""
@@ -237,14 +239,27 @@ def make_tenant(**overrides) -> dict:
         "crm_domain": "",
         "crm_api_key": "",
         "services": [
-            {"id": "svc_1", "name": "Strzyżenie damskie", "duration_minutes": 60, "price": 120,
-             "description": "Mycie, strzyżenie, modelowanie", "price_text": "", "duration_text": ""},
-            {"id": "svc_2", "name": "Koloryzacja", "duration_minutes": 120, "price": 250,
-             "description": "", "price_text": "od 250 zł", "duration_text": "ok. 2h"},
+            {
+                "id": "svc_1",
+                "name": "Strzyżenie damskie",
+                "duration_minutes": 60,
+                "price": 120,
+                "description": "Mycie, strzyżenie, modelowanie",
+                "price_text": "",
+                "duration_text": "",
+            },
+            {
+                "id": "svc_2",
+                "name": "Koloryzacja",
+                "duration_minutes": 120,
+                "price": 250,
+                "description": "",
+                "price_text": "od 250 zł",
+                "duration_text": "ok. 2h",
+            },
         ],
-        "working_hours": [
-            {"day_of_week": d, "open_time": "09:00", "close_time": "18:00"} for d in range(0, 5)
-        ] + [{"day_of_week": 5, "open_time": "10:00", "close_time": "14:00"}],
+        "working_hours": [{"day_of_week": d, "open_time": "09:00", "close_time": "18:00"} for d in range(0, 5)]
+        + [{"day_of_week": 5, "open_time": "10:00", "close_time": "14:00"}],
         "faq": [{"question": "Czy mogę zapłacić kartą?", "answer": "Tak, akceptujemy karty."}],
         "info_services": [],
         "staff": [],
@@ -255,13 +270,21 @@ def make_tenant(**overrides) -> dict:
 
 
 def make_booking_tenant(**overrides) -> dict:
-    staff = [{
-        "id": "staff_1", "firm_id": "firm_test_1", "name": "Kasia Nowak", "position": "Fryzjerka",
-        "description": "", "google_connected": 1, "google_calendar_id": "cal_1",
-        "working_hours_json": json.dumps({"1": {"start": "09:00", "end": "17:00"}}),
-        "min_advance_hours": 2, "max_days_ahead": 30,
-        "services": [{"id": "svc_1", "name": "Strzyżenie damskie", "duration_minutes": 60, "price": 120}],
-    }]
+    staff = [
+        {
+            "id": "staff_1",
+            "firm_id": "firm_test_1",
+            "name": "Kasia Nowak",
+            "position": "Fryzjerka",
+            "description": "",
+            "google_connected": 1,
+            "google_calendar_id": "cal_1",
+            "working_hours_json": json.dumps({"1": {"start": "09:00", "end": "17:00"}}),
+            "min_advance_hours": 2,
+            "max_days_ahead": 30,
+            "services": [{"id": "svc_1", "name": "Strzyżenie damskie", "duration_minutes": 60, "price": 120}],
+        }
+    ]
     return make_tenant(booking_enabled=1, staff=staff, **overrides)
 
 
@@ -291,6 +314,7 @@ def tenants(monkeypatch):
 # --------------------------------------------------------------------------
 # Golden master
 # --------------------------------------------------------------------------
+
 
 def _to_text(value: Any) -> str:
     if isinstance(value, str):

@@ -39,8 +39,8 @@ from app.tools.transfer import build_transfer_tool
 Channel = Literal["twilio", "vonage"]
 
 # Progi nadzoru rozmowy — wspólne dla silników Pipecat, strojone razem na żywych rozmowach.
-IDLE_WARNING_SECONDS = 6    # cisza -> "czy nadal jesteśmy połączeni?"
-IDLE_HANGUP_SECONDS = 14    # cisza -> pożegnanie i rozłączenie
+IDLE_WARNING_SECONDS = 6  # cisza -> "czy nadal jesteśmy połączeni?"
+IDLE_HANGUP_SECONDS = 14  # cisza -> pożegnanie i rozłączenie
 MAX_CALL_DURATION = 4 * 60  # twardy limit długości rozmowy
 
 # Flaga suppress_idle_reset (komunikat skryptowy nie resetuje zegara ciszy) wygasa sama po
@@ -58,8 +58,7 @@ def is_booking_available(tenant: dict) -> bool:
     silnikach, żeby identyczna konfiguracja firmy dawała identyczne zachowanie.
     """
     return tenant.get("booking_enabled") == 1 and any(
-        s.get("google_connected") and len(s.get("services", [])) > 0
-        for s in tenant.get("staff", [])
+        s.get("google_connected") and len(s.get("services", [])) > 0 for s in tenant.get("staff", [])
     )
 
 
@@ -97,17 +96,30 @@ def build_call_tools(
     """Narzędzia function-calling dla rozmowy; kolejność ma znaczenie dla modelu, nie zmieniać."""
     tools = []
     if features.contact_owner:
-        tools.append(build_contact_owner_tool(
-            tenant, caller_phone, task_box, call_state, has_transfer_tool=features.transfer,
-        ))
+        tools.append(
+            build_contact_owner_tool(
+                tenant,
+                caller_phone,
+                task_box,
+                call_state,
+                has_transfer_tool=features.transfer,
+            )
+        )
     tools.append(build_end_conversation_tool(task_box, call_state))
     if features.booking:
         tools.append(build_book_appointment_tool(tenant, caller_phone, call_state, context_box, channel=channel))
         tools.append(build_manage_booking_tool(tenant, caller_phone, call_state))
     if features.transfer:
-        tools.append(build_transfer_tool(
-            tenant, call_sid, call_state, region_url, caller_phone=caller_phone, host=host,
-        ))
+        tools.append(
+            build_transfer_tool(
+                tenant,
+                call_sid,
+                call_state,
+                region_url,
+                caller_phone=caller_phone,
+                host=host,
+            )
+        )
     return tools
 
 
@@ -121,8 +133,11 @@ async def build_call_prompt(
 ) -> str:
     """System prompt rozmowy + podpowiedź o znanym rozmówcy z kartoteki /crm."""
     prompt = build_realtime_instructions(
-        tenant, client_profile, include_greeting=include_greeting,
-        has_transfer=features.transfer, has_booking=features.booking,
+        tenant,
+        client_profile,
+        include_greeting=include_greeting,
+        has_transfer=features.transfer,
+        has_booking=features.booking,
         has_contact_owner=features.contact_owner,
     )
     known_name = await get_crm_contact_name(tenant.get("id", ""), caller_phone)
@@ -151,14 +166,21 @@ def create_transport(
             params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
         )
         params = FastAPIWebsocketParams(
-            audio_in_enabled=True, audio_out_enabled=True, **extra, serializer=serializer,
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            **extra,
+            serializer=serializer,
         )
     else:
         serializer = VonageFrameSerializer(
             params=VonageFrameSerializer.InputParams(vonage_sample_rate=SAMPLE_RATES["vonage"]),
         )
         params = FastAPIWebsocketParams(
-            audio_in_enabled=True, audio_out_enabled=True, add_wav_header=False, **extra, serializer=serializer,
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            **extra,
+            serializer=serializer,
         )
     return FastAPIWebsocketTransport(websocket=websocket, params=params)
 
@@ -169,9 +191,7 @@ def create_local_vad() -> VADProcessor:
     stop_secs=0.2 to próg, pod który pipecat kalibruje swoje szacunki latencji.
     """
     return VADProcessor(
-        vad_analyzer=SileroVADAnalyzer(
-            params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4)
-        )
+        vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.6, start_secs=0.2, stop_secs=0.2, min_volume=0.4))
     )
 
 
@@ -267,7 +287,12 @@ async def accept_vonage_stream(websocket: WebSocket, log_tag: str) -> VonageStre
 
 
 async def finalize_call(
-    tenant: dict, call_sid: str | None, caller_phone: str, context: LLMContext, call_state: dict, log_tag: str,
+    tenant: dict,
+    call_sid: str | None,
+    caller_phone: str,
+    context: LLMContext,
+    call_state: dict,
+    log_tag: str,
 ) -> None:
     """Po rozłączeniu: zapis transkryptu, potem podsumowanie/raport.
 

@@ -6,7 +6,6 @@ starsze, bezpośrednie wejścia tej ścieżki — zostają, bo mogą być wpisan
 numerów. Nazwy ścieżek są historyczne ("gemini-test" mimo OpenAI).
 """
 
-
 from fastapi import APIRouter, Request, WebSocket
 from loguru import logger
 
@@ -46,8 +45,11 @@ async def openai_realtime_twilio_incoming(request: Request):
         return twiml_say(MSG_LINE_UNAVAILABLE, hangup=True)
 
     return twiml_media_stream(
-        request.headers.get("host", "localhost"), "ws-gemini-test",
-        call_sid=call_sid, tenant_phone=tenant["phone_number"], caller_phone=caller,
+        request.headers.get("host", "localhost"),
+        "ws-gemini-test",
+        call_sid=call_sid,
+        tenant_phone=tenant["phone_number"],
+        caller_phone=caller,
     )
 
 
@@ -60,8 +62,13 @@ async def openai_realtime_twilio_stream(websocket: WebSocket):
     if start is None:
         return
     await run_openai_realtime_call(
-        websocket, start.tenant, start.caller_phone, start.call_sid,
-        channel="twilio", log_tag=TWILIO_LOG_TAG, stream_sid=start.stream_sid,
+        websocket,
+        start.tenant,
+        start.caller_phone,
+        start.call_sid,
+        channel="twilio",
+        log_tag=TWILIO_LOG_TAG,
+        stream_sid=start.stream_sid,
     )
 
 
@@ -108,6 +115,10 @@ async def openai_realtime_vonage_stream(websocket: WebSocket):
     if start is None:
         return
     await run_openai_realtime_call(
-        websocket, start.tenant, start.caller_phone, start.call_sid,
-        channel="vonage", log_tag=VONAGE_LOG_TAG,
+        websocket,
+        start.tenant,
+        start.caller_phone,
+        start.call_sid,
+        channel="vonage",
+        log_tag=VONAGE_LOG_TAG,
     )

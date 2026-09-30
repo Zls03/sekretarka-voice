@@ -1,20 +1,19 @@
 """Klient HTTP bazy Turso (libSQL) i dwie instancje: baza admina oraz baza SaaS."""
 
-
 import httpx
 from loguru import logger
 
 from app.config import settings
 
 TURSO_DATABASE_URL = settings.turso_database_url
-TURSO_AUTH_TOKEN   = settings.turso_auth_token
-SAAS_TURSO_URL   = settings.saas_turso_database_url
+TURSO_AUTH_TOKEN = settings.turso_auth_token
+SAAS_TURSO_URL = settings.saas_turso_database_url
 SAAS_TURSO_TOKEN = settings.saas_turso_auth_token
 
 
 class TursoDB:
     def __init__(self, url: str, token: str, label: str = "db"):
-        self.url   = url.replace("libsql://", "https://") if url else ""
+        self.url = url.replace("libsql://", "https://") if url else ""
         self.token = token
         self.label = label
         self._client: httpx.AsyncClient | None = None
@@ -28,7 +27,7 @@ class TursoDB:
             self._client = httpx.AsyncClient(timeout=10.0)
         return self._client
 
-    async def execute(self, sql: str, args: list = None) -> list[dict]:
+    async def execute(self, sql: str, args: list | None = None) -> list[dict]:
         if not self.is_configured:
             logger.warning(f"[{self.label}] DB not configured")
             return []
@@ -48,8 +47,7 @@ class TursoDB:
                             "stmt": {
                                 "sql": sql,
                                 "args": [
-                                    {"type": "text", "value": str(a) if a is not None else None}
-                                    for a in (args or [])
+                                    {"type": "text", "value": str(a) if a is not None else None} for a in (args or [])
                                 ],
                             },
                         },
@@ -81,5 +79,5 @@ class TursoDB:
         return []
 
 
-db      = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
+db = TursoDB(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, label="admin")
 saas_db = TursoDB(SAAS_TURSO_URL, SAAS_TURSO_TOKEN, label="saas")

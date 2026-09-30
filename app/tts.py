@@ -16,6 +16,7 @@ from app.config import settings
 
 class TTSProvider:
     """Identyfikatory dostawców syntezy mowy (TTS)."""
+
     ELEVENLABS = "elevenlabs"
     CARTESIA = "cartesia"
     OPENAI = "openai"
@@ -29,16 +30,43 @@ DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 def _number_to_polish(n: int) -> str:
     if n == 0:
         return "zero"
-    ones = ["", "jeden", "dwa", "trzy", "cztery", "pięć",
-            "sześć", "siedem", "osiem", "dziewięć"]
-    teens = ["dziesięć", "jedenaście", "dwanaście", "trzynaście",
-             "czternaście", "piętnaście", "szesnaście", "siedemnaście",
-             "osiemnaście", "dziewiętnaście"]
-    tens = ["", "dziesięć", "dwadzieścia", "trzydzieści",
-            "czterdzieści", "pięćdziesiąt", "sześćdziesiąt",
-            "siedemdziesiąt", "osiemdziesiąt", "dziewięćdziesiąt"]
-    hundreds = ["", "sto", "dwieście", "trzysta", "czterysta",
-                "pięćset", "sześćset", "siedemset", "osiemset", "dziewięćset"]
+    ones = ["", "jeden", "dwa", "trzy", "cztery", "pięć", "sześć", "siedem", "osiem", "dziewięć"]
+    teens = [
+        "dziesięć",
+        "jedenaście",
+        "dwanaście",
+        "trzynaście",
+        "czternaście",
+        "piętnaście",
+        "szesnaście",
+        "siedemnaście",
+        "osiemnaście",
+        "dziewiętnaście",
+    ]
+    tens = [
+        "",
+        "dziesięć",
+        "dwadzieścia",
+        "trzydzieści",
+        "czterdzieści",
+        "pięćdziesiąt",
+        "sześćdziesiąt",
+        "siedemdziesiąt",
+        "osiemdziesiąt",
+        "dziewięćdziesiąt",
+    ]
+    hundreds = [
+        "",
+        "sto",
+        "dwieście",
+        "trzysta",
+        "czterysta",
+        "pięćset",
+        "sześćset",
+        "siedemset",
+        "osiemset",
+        "dziewięćset",
+    ]
     parts = []
     if n >= 1000:
         t = n // 1000
@@ -85,16 +113,16 @@ def _replace_number(match) -> str:
 
 async def _expand_abbreviations(text: str, aggregation_type=None) -> str:
     """Rozwijanie skrótów przed syntezą mowy: zł → złotych, ul. → ulicy, itd."""
-    text = re.sub(r'^otych\b\s*', '', text)
-    text = text.replace('złotychotych', 'złotych')
-    text = text.replace('złotyotych', 'złoty')
-    text = text.replace('złoteotych', 'złote')
-    text = re.sub(r'(\d+)\s*złotych\b', _replace_number, text)
-    text = re.sub(r'(\d+)\s*zł\b', _replace_number, text)
-    text = re.sub(r'\bul\.', 'ulicy', text)
-    text = re.sub(r'\bnr\b', 'numer', text)
-    text = re.sub(r'\btel\.', 'telefon', text)
-    text = re.sub(r'\bgodz\.', 'godzina', text)
+    text = re.sub(r"^otych\b\s*", "", text)
+    text = text.replace("złotychotych", "złotych")
+    text = text.replace("złotyotych", "złoty")
+    text = text.replace("złoteotych", "złote")
+    text = re.sub(r"(\d+)\s*złotych\b", _replace_number, text)
+    text = re.sub(r"(\d+)\s*zł\b", _replace_number, text)
+    text = re.sub(r"\bul\.", "ulicy", text)
+    text = re.sub(r"\bnr\b", "numer", text)
+    text = re.sub(r"\btel\.", "telefon", text)
+    text = re.sub(r"\bgodz\.", "godzina", text)
     return text
 
 
@@ -113,10 +141,10 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
     resampler (SOXRStreamAudioResampler), który rzuca wyjątkiem przy drugiej,
     innej parze (in_rate, out_rate) zamiast się przeinicjalizować.
     """
-    tts_provider = tenant.get('tts_provider', 'elevenlabs')
+    tts_provider = tenant.get("tts_provider", "elevenlabs")
 
     if tts_provider == TTSProvider.CARTESIA:
-        cartesia_voice = tenant.get('azure_voice_id') or '575a5d29-1fdc-4d4e-9afa-5a9a71759864'
+        cartesia_voice = tenant.get("azure_voice_id") or "575a5d29-1fdc-4d4e-9afa-5a9a71759864"
         logger.info(f"🎙️ Using Cartesia TTS | voice: {cartesia_voice}")
         tts = CartesiaTTSService(
             api_key=settings.cartesia_api_key,
@@ -142,7 +170,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         return tts
 
     if tts_provider == TTSProvider.AZURE:
-        azure_voice = tenant.get('azure_voice_id') or 'pl-PL-AgnieszkaNeural'
+        azure_voice = tenant.get("azure_voice_id") or "pl-PL-AgnieszkaNeural"
         logger.info(f"🎙️ Using Azure TTS | voice: {azure_voice}")
         tts = AzureTTSService(
             api_key=settings.azure_speech_key,
@@ -161,12 +189,13 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         import tempfile
 
         from pipecat.services.google.tts import GoogleTTSService
-        google_voice = tenant.get('azure_voice_id') or 'pl-PL-Chirp3-HD-Aoede'
-        speaking_rate = float(tenant.get('speaking_rate') or 1.06)
+
+        google_voice = tenant.get("azure_voice_id") or "pl-PL-Chirp3-HD-Aoede"
+        speaking_rate = float(tenant.get("speaking_rate") or 1.06)
         logger.info(f"🎙️ Using Google Chirp3 HD TTS | voice: {google_voice} | rate: {speaking_rate}")
         creds_json = settings.google_application_credentials_json
         creds_dict = json.loads(creds_json)
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(creds_dict, f)
             creds_path = f.name
         try:
@@ -185,8 +214,8 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
         return tts
 
     # ElevenLabs (domyślny)
-    voice_id = tenant.get('elevenlabs_voice_id') or DEFAULT_ELEVENLABS_VOICE_ID
-    speaking_rate = float(tenant.get('speaking_rate') or 1.1)
+    voice_id = tenant.get("elevenlabs_voice_id") or DEFAULT_ELEVENLABS_VOICE_ID
+    speaking_rate = float(tenant.get("speaking_rate") or 1.1)
     logger.info(f"🎙️ Using ElevenLabs TTS (quality mode) | voice: {voice_id} | speed: {speaking_rate}")
     tts = ElevenLabsTTSService(
         api_key=settings.elevenlabs_api_key or None,

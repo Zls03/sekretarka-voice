@@ -27,8 +27,12 @@ def _format_transfer_number(raw: str) -> str:
 
 
 def build_transfer_tool(
-    tenant: dict, call_sid: str, call_state: dict, region_url: str | None = None,
-    caller_phone: str = "", host: str | None = None,
+    tenant: dict,
+    call_sid: str,
+    call_state: dict,
+    region_url: str | None = None,
+    caller_phone: str = "",
+    host: str | None = None,
 ) -> FunctionSchema:
     """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane z bot_gemini_test.py
     tylko gdy tenant.get("transfer_enabled")==1 I połączenie idzie przez Vonage (call_sid
@@ -55,7 +59,9 @@ def build_transfer_tool(
             # (treść wiadomości), ale transfer_to_owner nie przyjmuje żadnych argumentów — nie ma
             # czego sprawdzić, więc bez tej flagi nic by nie złapało przypadkowego wywołania transferu
             # w trakcie np. "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!".
-            logger.warning("📞 [TRANSFER] Wywołanie w trakcie wymuszonej wypowiedzi systemowej — odrzucam jako prawdopodobnie przypadkowe")
+            logger.warning(
+                "📞 [TRANSFER] Wywołanie w trakcie wymuszonej wypowiedzi systemowej — odrzucam jako prawdopodobnie przypadkowe"
+            )
             await params.result_callback({"status": "error", "reason": "suppressed"})
             return
         raw_number = (tenant.get("transfer_number") or "").strip()
@@ -82,7 +88,9 @@ def build_transfer_tool(
 
         from_number = _format_transfer_number(tenant.get("phone_number") or "")
         ok = await transfer_vonage_call(
-            call_sid, destination, from_number,
+            call_sid,
+            destination,
+            from_number,
             announce_text="Już łączę z osobą odpowiedzialną, chwileczkę.",
             api_base=region_url,
             fallback_url=fallback_url,

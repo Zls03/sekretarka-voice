@@ -1,6 +1,5 @@
 """Odszyfrowywanie sekretów zapisanych przez panel (AES-GCM, klucz ENCRYPTION_KEY)."""
 
-
 from loguru import logger
 
 from app.config import settings

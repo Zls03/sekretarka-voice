@@ -32,7 +32,9 @@ async def gemini_live_twilio_stream(websocket: WebSocket):
 
     await run_gemini_live_call(
         create_transport(websocket, "twilio", stream_sid=start.stream_sid),
-        start.tenant, start.caller_phone, start.call_sid,
+        start.tenant,
+        start.caller_phone,
+        start.call_sid,
         channel="twilio",
         features=CallFeatures.for_tenant(start.tenant),
         log_tag=TWILIO_LOG_TAG,
@@ -47,7 +49,9 @@ async def gemini_live_vonage_stream(websocket: WebSocket):
 
     await run_gemini_live_call(
         create_transport(websocket, "vonage"),
-        start.tenant, start.caller_phone, start.call_sid,
+        start.tenant,
+        start.caller_phone,
+        start.call_sid,
         channel="vonage",
         features=CallFeatures.for_tenant(start.tenant, transfer_supported=True),
         log_tag=VONAGE_LOG_TAG,

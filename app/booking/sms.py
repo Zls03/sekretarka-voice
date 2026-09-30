@@ -1,6 +1,5 @@
 """SMS z potwierdzeniem wizyty (Twilio lub Vonage) i licznik wysłanych SMS."""
 
-
 import httpx
 from loguru import logger
 
@@ -9,8 +8,13 @@ from app.db import db
 
 
 async def send_booking_sms(
-    tenant: dict, customer_phone: str, service_name: str,
-    staff_name: str, date_str: str, time_str: str, booking_code: str
+    tenant: dict,
+    customer_phone: str,
+    service_name: str,
+    staff_name: str,
+    date_str: str,
+    time_str: str,
+    booking_code: str,
 ) -> bool:
     """Wysyła SMS z potwierdzeniem wizyty przez Twilio"""
 
@@ -44,7 +48,9 @@ async def send_booking_sms(
     business_name = tenant.get("name", "Salon")
 
     # Krótki SMS (max 160 znaków)
-    sms_text = f"{business_name}: {service_name} {date_str} g.{time_str}, {staff_name}. Kod:{booking_code}. Do zobaczenia!"
+    sms_text = (
+        f"{business_name}: {service_name} {date_str} g.{time_str}, {staff_name}. Kod:{booking_code}. Do zobaczenia!"
+    )
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -55,7 +61,7 @@ async def send_booking_sms(
                     "From": twilio_number,
                     "To": phone,
                     "Body": sms_text,
-                }
+                },
             )
 
             if response.status_code in [200, 201]:
@@ -71,8 +77,13 @@ async def send_booking_sms(
 
 
 async def send_booking_sms_vonage(
-    tenant: dict, customer_phone: str, service_name: str,
-    staff_name: str, date_str: str, time_str: str, booking_code: str
+    tenant: dict,
+    customer_phone: str,
+    service_name: str,
+    staff_name: str,
+    date_str: str,
+    time_str: str,
+    booking_code: str,
 ) -> bool:
     """Wysyła SMS z potwierdzeniem wizyty przez Vonage SMS API — odpowiednik send_booking_sms()
     dla tenantów obsługiwanych przez Vonage (numer firmy NIE jest numerem Twilio, więc
@@ -102,7 +113,9 @@ async def send_booking_sms_vonage(
     phone = phone.lstrip("+")
 
     business_name = tenant.get("name", "Salon")
-    sms_text = f"{business_name}: {service_name} {date_str} g.{time_str}, {staff_name}. Kod:{booking_code}. Do zobaczenia!"
+    sms_text = (
+        f"{business_name}: {service_name} {date_str} g.{time_str}, {staff_name}. Kod:{booking_code}. Do zobaczenia!"
+    )
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -135,10 +148,7 @@ async def send_booking_sms_vonage(
 async def increment_sms_count(tenant_id: str):
     """Zwiększa licznik SMS dla tenant"""
     try:
-        await db.execute(
-            "UPDATE tenants SET sms_count = COALESCE(sms_count, 0) + 1 WHERE id = ?",
-            [tenant_id]
-        )
+        await db.execute("UPDATE tenants SET sms_count = COALESCE(sms_count, 0) + 1 WHERE id = ?", [tenant_id])
         logger.info(f"📱 SMS count incremented for {tenant_id}")
     except Exception as e:
         logger.error(f"📱 SMS count error: {e}")

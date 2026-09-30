@@ -4,28 +4,45 @@ from datetime import datetime, timedelta
 
 # Odwrotne mapowanie - liczba na słowo (do TTS)
 NUMBER_TO_HOUR_WORD = {
-    6: "szóstej", 7: "siódmej", 8: "ósmej", 9: "dziewiątej", 10: "dziesiątej",
-    11: "jedenastej", 12: "dwunastej", 13: "trzynastej", 14: "czternastej",
-    15: "piętnastej", 16: "szesnastej", 17: "siedemnastej", 18: "osiemnastej",
-    19: "dziewiętnastej", 20: "dwudziestej", 21: "dwudziestej pierwszej",
+    6: "szóstej",
+    7: "siódmej",
+    8: "ósmej",
+    9: "dziewiątej",
+    10: "dziesiątej",
+    11: "jedenastej",
+    12: "dwunastej",
+    13: "trzynastej",
+    14: "czternastej",
+    15: "piętnastej",
+    16: "szesnastej",
+    17: "siedemnastej",
+    18: "osiemnastej",
+    19: "dziewiętnastej",
+    20: "dwudziestej",
+    21: "dwudziestej pierwszej",
     22: "dwudziestej drugiej",
 }
 
 
 NUMBER_TO_DAY = {
-    0: "poniedziałek", 1: "wtorek", 2: "środa", 3: "czwartek",
-    4: "piątek", 5: "sobota", 6: "niedziela",
+    0: "poniedziałek",
+    1: "wtorek",
+    2: "środa",
+    3: "czwartek",
+    4: "piątek",
+    5: "sobota",
+    6: "niedziela",
 }
 
 
 def natural_list(items: list, connector: str = "i") -> str:
     """
     Tworzy naturalną listę po polsku.
-    
+
     Args:
         items: Lista elementów
         connector: Łącznik (domyślnie "i", może być "lub", "albo")
-    
+
     Przykłady:
         natural_list(["Ania"]) → "Ania"
         natural_list(["Ania", "Wiktor"]) → "Ania i Wiktor"
@@ -87,16 +104,30 @@ def format_date_polish(date: datetime) -> str:
     else:
         # Biernik po "w" (w poniedziałek, w środę, w sobotę...)
         DAYS_ACCUSATIVE = {
-            0: "poniedziałek", 1: "wtorek", 2: "środę",
-            3: "czwartek", 4: "piątek", 5: "sobotę", 6: "niedzielę"
+            0: "poniedziałek",
+            1: "wtorek",
+            2: "środę",
+            3: "czwartek",
+            4: "piątek",
+            5: "sobotę",
+            6: "niedzielę",
         }
         day_name = DAYS_ACCUSATIVE[target.weekday()]
 
         # Miesiące po polsku w dopełniaczu
         POLISH_MONTHS = {
-            1: "stycznia", 2: "lutego", 3: "marca", 4: "kwietnia",
-            5: "maja", 6: "czerwca", 7: "lipca", 8: "sierpnia",
-            9: "września", 10: "października", 11: "listopada", 12: "grudnia"
+            1: "stycznia",
+            2: "lutego",
+            3: "marca",
+            4: "kwietnia",
+            5: "maja",
+            6: "czerwca",
+            7: "lipca",
+            8: "sierpnia",
+            9: "września",
+            10: "października",
+            11: "listopada",
+            12: "grudnia",
         }
 
         month_name = POLISH_MONTHS.get(target.month, str(target.month))

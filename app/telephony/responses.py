@@ -16,8 +16,7 @@ def twiml(content: str) -> Response:
 
 def twiml_say(text: str, *, hangup: bool = False) -> Response:
     return twiml(
-        f'<?xml version="1.0"?><Response><Say language="pl-PL">{text}</Say>'
-        f'{"<Hangup/>" if hangup else ""}</Response>'
+        f'<?xml version="1.0"?><Response><Say language="pl-PL">{text}</Say>{"<Hangup/>" if hangup else ""}</Response>'
     )
 
 
@@ -44,10 +43,12 @@ def ncco_talk(text: str) -> list[dict]:
 
 
 def ncco_connect_websocket(uri: str) -> list[dict]:
-    return [{
-        "action": "connect",
-        "endpoint": [{"type": "websocket", "uri": uri, "content-type": VONAGE_WEBSOCKET_CONTENT_TYPE}],
-    }]
+    return [
+        {
+            "action": "connect",
+            "endpoint": [{"type": "websocket", "uri": uri, "content-type": VONAGE_WEBSOCKET_CONTENT_TYPE}],
+        }
+    ]
 
 
 def ncco_response(ncco: list[dict]) -> JSONResponse:

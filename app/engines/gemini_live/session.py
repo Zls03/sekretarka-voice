@@ -55,9 +55,16 @@ async def run_gemini_live_call(
     task_box: dict = {"task": None}
     context_box: dict = {"context": None}
     tools = build_call_tools(
-        tenant, caller_phone, features,
-        call_state=gemini_state, task_box=task_box, context_box=context_box,
-        channel=channel, call_sid=call_sid, region_url=region_url, host=host,
+        tenant,
+        caller_phone,
+        features,
+        call_state=gemini_state,
+        task_box=task_box,
+        context_box=context_box,
+        channel=channel,
+        call_sid=call_sid,
+        region_url=region_url,
+        host=host,
     )
     system_prompt = await build_call_prompt(tenant, caller_phone, features)
     gemini_voice = (tenant.get("gemini_voice") or "").strip() or None
@@ -71,18 +78,20 @@ async def run_gemini_live_call(
     # — patrz watchdog.speak_directly): gdy sesja Gemini ucichnie, nie da się jej o to prosić.
     fallback_tts = create_tts_service(tenant, sample_rate=GEMINI_AUDIO_SAMPLE_RATE)
 
-    pipeline = Pipeline([
-        transport.input(),
-        # Lokalny VAD przed monitorem użytkownika: wczesny sygnał "klient mówi" chroni
-        # przed dopytaniem o ciszę w środku dłuższej wypowiedzi klienta.
-        create_local_vad(),
-        user_aggregator,
-        GeminiUserMonitor(gemini_state),
-        ParallelPipeline([llm], [fallback_tts]),
-        GeminiBotMonitor(gemini_state),
-        transport.output(),
-        assistant_aggregator,
-    ])
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            # Lokalny VAD przed monitorem użytkownika: wczesny sygnał "klient mówi" chroni
+            # przed dopytaniem o ciszę w środku dłuższej wypowiedzi klienta.
+            create_local_vad(),
+            user_aggregator,
+            GeminiUserMonitor(gemini_state),
+            ParallelPipeline([llm], [fallback_tts]),
+            GeminiBotMonitor(gemini_state),
+            transport.output(),
+            assistant_aggregator,
+        ]
+    )
     task = PipelineTask(pipeline, params=call_pipeline_params(channel))
     task_box["task"] = task
 
@@ -93,12 +102,14 @@ async def run_gemini_live_call(
         # a pierwsze słowo padało dopiero po ~15 s. Treść powitania i tak dyktuje prompt.
         logger.info(f"🎤 [{log_tag}] Klient połączony — wybudzam do przywitania")
         await asyncio.sleep(GREETING_KICK_DELAY_SECONDS)
-        await task.queue_frames([
-            LLMMessagesAppendFrame(
-                messages=[{"role": "user", "content": "(początek rozmowy)"}],
-                run_llm=True,
-            )
-        ])
+        await task.queue_frames(
+            [
+                LLMMessagesAppendFrame(
+                    messages=[{"role": "user", "content": "(początek rozmowy)"}],
+                    run_llm=True,
+                )
+            ]
+        )
         logger.info(f"🎤 [{log_tag}] Kick startowy wysłany")
         spawn(monitor_gemini_call_health(task, gemini_state, llm))
 

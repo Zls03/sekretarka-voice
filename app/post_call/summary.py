@@ -22,8 +22,7 @@ def extract_conversation_lines(context: LLMContext) -> list[str]:
         if isinstance(content, list):
             # Content czasem przychodzi jako lista bloków (np. [{"type": "text", "text": "..."}])
             content = " ".join(
-                block.get("text", "") for block in content
-                if isinstance(block, dict) and block.get("text")
+                block.get("text", "") for block in content if isinstance(block, dict) and block.get("text")
             )
         content = (content or "").strip()
         if len(content) > 2:
@@ -81,8 +80,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
          twardy dowód konfabulacji — a skoro model zmyślił jeden fakt, nie ufamy reszcie)."""
     try:
         client_lines = [
-            l for l in conversation
-            if l.startswith("Klient: ") and len(l) > len("Klient: ") + 3
+            line for line in conversation if line.startswith("Klient: ") and len(line) > len("Klient: ") + 3
         ]
         if not client_lines:
             return "Brak treści rozmowy."
@@ -118,12 +116,12 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "Sprawa: [konkretnie czego dotyczy]\n"
                 "Czego oczekuje: [co konkretnie chce od kancelarii/adresata]\n"
                 "Termin: [jeśli sprawa jest związana z konkretnym terminem]\n"
-                "Pilność: JEDNO z: \"PILNE\" (rozmówca wprost mówi że sprawa jest "
-                "pilna/ma krótki termin), \"OFERTA HANDLOWA\" (to telemarketing/"
-                "sprzedaż/oferta współpracy), \"STANDARD\" (wszystko inne)\n\n"
+                'Pilność: JEDNO z: "PILNE" (rozmówca wprost mówi że sprawa jest '
+                'pilna/ma krótki termin), "OFERTA HANDLOWA" (to telemarketing/'
+                'sprzedaż/oferta współpracy), "STANDARD" (wszystko inne)\n\n'
                 "DODATKOWO: jeśli rozmówca przedstawił się jako przedstawiciel sądu, "
                 "prokuratury, Policji, komornika, urzędu, banku lub notariusza — "
-                "zacznij podsumowanie linią \"PRIORYTETOWE\" i dopisz pod spodem: "
+                'zacznij podsumowanie linią "PRIORYTETOWE" i dopisz pod spodem: '
                 "nazwę instytucji, wydział/jednostkę (jeśli podano), sygnaturę lub "
                 "numer sprawy (jeśli podano), bezpośredni numer telefonu do rozmówcy "
                 "(jeśli podano) — oprócz standardowych punktów powyżej.\n"
@@ -142,13 +140,13 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
                 "Podsumuj poniższą rozmowę telefoniczną dla właściciela firmy, po polsku, "
                 "krótkimi punktami — NIE jednym akapitem. Wypisz TYLKO to, co realnie padło "
                 "w rozmowie (pomiń punkt jeśli danej informacji nie było):\n"
-                "- Priorytet: JEDNO z: \"🚨 PILNE\" (klient opisuje awarię/usterkę/coś nie działa "
-                "i chce naprawy szybko), \"🔥 GORĄCY LEAD\" (klient ma konkretną, sprecyzowaną "
+                '- Priorytet: JEDNO z: "🚨 PILNE" (klient opisuje awarię/usterkę/coś nie działa '
+                'i chce naprawy szybko), "🔥 GORĄCY LEAD" (klient ma konkretną, sprecyzowaną '
                 "potrzebę — wie czego chce, podał konkrety typu lokalizacja/ilość/budżet/termin, "
-                "brzmi na zdecydowanego), \"🟡 STANDARDOWE\" (dopiero się rozgląda, pyta ogólnie, "
+                'brzmi na zdecydowanego), "🟡 STANDARDOWE" (dopiero się rozgląda, pyta ogólnie, '
                 "brak konkretów). Jeśli rozmowa nie dotyczyła żadnej sprawy (samo pytanie o "
                 "godziny/adres/FAQ bez intencji zakupowej) — POMIŃ CAŁY ten punkt (nie pisz "
-                "\"Priorytet: —\" ani samego \"—\", po prostu go nie wypisuj). Wybierz jedno, nie "
+                '"Priorytet: —" ani samego "—", po prostu go nie wypisuj). Wybierz jedno, nie '
                 "tłumacz wyboru.\n"
                 "- Kto dzwonił: imię/nazwisko jeśli klient je podał (inaczej pomiń punkt)\n"
                 "- Firma: nazwa firmy dzwoniącego, TYLKO jeśli klient ją wprost podał (inaczej pomiń "
@@ -177,6 +175,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
             max_tokens = 150
 
         import openai
+
         client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
             model="gpt-4.1-mini",  # ten sam model co flows.py::send_message_email w cascade
@@ -221,10 +220,7 @@ def _contains_unverified_contact_details(summary: str, source_text: str) -> bool
         if len(digits) >= 7 and digits not in source_digits:
             return True
     source_lower = source_text.lower()
-    for match in _EMAIL_CANDIDATE_RE.findall(summary):
-        if match.lower() not in source_lower:
-            return True
-    return False
+    return any(match.lower() not in source_lower for match in _EMAIL_CANDIDATE_RE.findall(summary))
 
 
 _SUMMARY_FIELD_LABELS = ["Priorytet", "Kto dzwonił", "Firma", "Powód kontaktu", "Szczegóły", "Wynik rozmowy"]

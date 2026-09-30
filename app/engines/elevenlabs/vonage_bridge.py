@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import json
 
 import websockets
@@ -65,7 +66,16 @@ class ElevenLabsRealtimeService(FrameProcessor):
     i emituje TTSAudioRawFrame/TTSStartedFrame/TTSStoppedFrame na podstawie zdarzeń
     przychodzących z ich WebSocketu w osobnym tasku czytającym."""
 
-    def __init__(self, tenant: dict, caller_phone: str, called_number: str, call_sid: str, agent_id: str, api_key: str, task_box: dict):
+    def __init__(
+        self,
+        tenant: dict,
+        caller_phone: str,
+        called_number: str,
+        call_sid: str,
+        agent_id: str,
+        api_key: str,
+        task_box: dict,
+    ):
         super().__init__()
         self._tenant = tenant
         self._caller_phone = caller_phone
@@ -147,7 +157,11 @@ class ElevenLabsRealtimeService(FrameProcessor):
 
     async def _connect(self):
         conversation_config_override, dynamic_variables = await build_conversation_config_override(
-            self._tenant, self._caller_phone, self._called_number, self._call_sid, channel="vonage",
+            self._tenant,
+            self._caller_phone,
+            self._called_number,
+            self._call_sid,
+            channel="vonage",
         )
         url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={self._agent_id}"
         try:
@@ -155,11 +169,15 @@ class ElevenLabsRealtimeService(FrameProcessor):
         except Exception as e:
             logger.error(f"❌ [ELEVENLABS/VONAGE] Połączenie WebSocket nie powiodło się: {e}")
             return
-        await self._ws.send(json.dumps({
-            "type": "conversation_initiation_client_data",
-            "conversation_config_override": conversation_config_override,
-            "dynamic_variables": dynamic_variables,
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "conversation_initiation_client_data",
+                    "conversation_config_override": conversation_config_override,
+                    "dynamic_variables": dynamic_variables,
+                }
+            )
+        )
         logger.info(f"🔌 [ELEVENLABS/VONAGE] Połączono z agentem {self._agent_id} dla {self._tenant.get('name')}")
         self._reader_task = asyncio.create_task(self._read_loop())
 
@@ -191,7 +209,9 @@ class ElevenLabsRealtimeService(FrameProcessor):
                     fmt = meta.get("agent_output_audio_format", "pcm_16000")
                     if fmt != "pcm_16000":
                         # Świadomie tylko log, nie resampling — patrz komentarz nad klasą.
-                        logger.warning(f"⚠️ [ELEVENLABS/VONAGE] Nieoczekiwany format audio agenta: {fmt} (oczekiwano pcm_16000, jakość/latencja może ucierpieć)")
+                        logger.warning(
+                            f"⚠️ [ELEVENLABS/VONAGE] Nieoczekiwany format audio agenta: {fmt} (oczekiwano pcm_16000, jakość/latencja może ucierpieć)"
+                        )
 
                 elif mtype == "audio":
                     if not self._speaking:
@@ -206,7 +226,9 @@ class ElevenLabsRealtimeService(FrameProcessor):
                     b64 = msg.get("audio_event", {}).get("audio_base_64", "")
                     if b64:
                         audio_bytes = base64.b64decode(b64)
-                        await self.push_frame(TTSAudioRawFrame(audio=audio_bytes, sample_rate=self._sample_rate, num_channels=1))
+                        await self.push_frame(
+                            TTSAudioRawFrame(audio=audio_bytes, sample_rate=self._sample_rate, num_channels=1)
+                        )
 
                 elif mtype == "agent_response_complete":
                     if self._speaking:
@@ -239,10 +261,8 @@ class ElevenLabsRealtimeService(FrameProcessor):
 
                 elif mtype == "ping":
                     event_id = msg.get("ping_event", {}).get("event_id")
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._ws.send(json.dumps({"type": "pong", "event_id": event_id}))
-                    except Exception:
-                        pass
 
                 elif mtype == "client_error":
                     logger.error(f"❌ [ELEVENLABS/VONAGE] client_error: {msg}")
@@ -279,21 +299,23 @@ class ElevenLabsRealtimeService(FrameProcessor):
         try:
             await task.queue_frame(EndFrame())
         except Exception as e:
-            logger.error(f"❌ [ELEVENLABS/VONAGE] Nie udało się wykolejkować EndFrame po zamknięciu przez ElevenLabs: {e}")
+            logger.error(
+                f"❌ [ELEVENLABS/VONAGE] Nie udało się wykolejkować EndFrame po zamknięciu przez ElevenLabs: {e}"
+            )
 
     async def _disconnect(self):
         if self._reader_task:
             self._reader_task.cancel()
             self._reader_task = None
         if self._ws is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
             self._ws = None
 
 
-async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_phone: str, called_number: str, call_sid: str):
+async def run_elevenlabs_vonage_bot(
+    websocket: WebSocket, tenant: dict, caller_phone: str, called_number: str, call_sid: str
+):
     """Rozmowa ElevenLabs na Vonage przez nasz most audio.
 
     Rozliczenie minut robi /vonage/events, a transkrypt i raport — webhook
@@ -301,25 +323,33 @@ async def run_elevenlabs_vonage_bot(websocket: WebSocket, tenant: dict, caller_p
     """
     agent_id = resolve_agent_id(tenant)
     if not ELEVENLABS_API_KEY or not agent_id:
-        logger.error(f"❌ [ELEVENLABS/VONAGE] ELEVENLABS_API_KEY lub agent_id nieskonfigurowane dla {tenant.get('name')} — zamykam")
+        logger.error(
+            f"❌ [ELEVENLABS/VONAGE] ELEVENLABS_API_KEY lub agent_id nieskonfigurowane dla {tenant.get('name')} — zamykam"
+        )
         await websocket.close()
         return
 
     transport = create_transport(websocket, "vonage")
     task_box: dict = {"task": None}  # uzupełniany po utworzeniu PipelineTask — patrz ElevenLabsRealtimeService
     elevenlabs_service = ElevenLabsRealtimeService(
-        tenant=tenant, caller_phone=caller_phone, called_number=called_number,
-        call_sid=call_sid or "", agent_id=agent_id, api_key=ELEVENLABS_API_KEY,
+        tenant=tenant,
+        caller_phone=caller_phone,
+        called_number=called_number,
+        call_sid=call_sid or "",
+        agent_id=agent_id,
+        api_key=ELEVENLABS_API_KEY,
         task_box=task_box,
     )
-    pipeline = Pipeline([
-        transport.input(),
-        # Lokalny VAD przerywa bota natychmiast, gdy klient zaczyna mówić — zdarzenie
-        # "interruption" z ElevenLabs przychodzi ze sporym opóźnieniem sieciowym.
-        create_local_vad(),
-        elevenlabs_service,
-        transport.output(),
-    ])
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            # Lokalny VAD przerywa bota natychmiast, gdy klient zaczyna mówić — zdarzenie
+            # "interruption" z ElevenLabs przychodzi ze sporym opóźnieniem sieciowym.
+            create_local_vad(),
+            elevenlabs_service,
+            transport.output(),
+        ]
+    )
     task = PipelineTask(pipeline, params=call_pipeline_params("vonage"))
     task_box["task"] = task
 
@@ -344,4 +374,6 @@ async def elevenlabs_vonage_stream(websocket: WebSocket):
     if start is None:
         return
     logger.info(f"✅ [ELEVENLABS/VONAGE] Tenant: {start.tenant.get('name')}")
-    await run_elevenlabs_vonage_bot(websocket, start.tenant, start.caller_phone, start.tenant_phone, start.call_sid or "")
+    await run_elevenlabs_vonage_bot(
+        websocket, start.tenant, start.caller_phone, start.tenant_phone, start.call_sid or ""
+    )

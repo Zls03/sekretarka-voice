@@ -1,6 +1,5 @@
 """Konfiguracja usługi Gemini Live (model, głos, język, thinking)."""
 
-
 from google.genai.types import ThinkingConfig
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -80,7 +79,9 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     dosłowne say_exactly przy rezerwacji, wybór właściwej funkcji kontaktowej) rozważyć
     podniesienie do "low"."""
     resolved_voice = voice or "Kore"
-    logger.info(f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, voice={resolved_voice}, tools={[t.name for t in (tools or [])]}")
+    logger.info(
+        f"🧠 Gemini Live, model={GEMINI_LIVE_MODEL}, voice={resolved_voice}, tools={[t.name for t in (tools or [])]}"
+    )
     llm = GeminiLiveLLMService(
         api_key=settings.google_api_key,
         settings=GeminiLiveLLMService.Settings(
@@ -95,9 +96,7 @@ def build_gemini_live_llm(system_prompt: str, tools: list | None = None, voice: 
     # realtime_service_mode=True — patrz docstring GeminiLiveLLMService: usługa nie
     # emituje UserStarted/StoppedSpeakingFrame, więc zapisy do kontekstu muszą iść
     # w trybie "trailing" (tak samo jak dla OpenAI Realtime w bot_openai_realtime.py).
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context, realtime_service_mode=True
-    )
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context, realtime_service_mode=True)
     # context zwracany osobno — ten sam powód co w build_realtime_llm (raport rozmowy
     # + transkrypt czytają context.get_messages() po zakończeniu połączenia).
     return llm, user_aggregator, assistant_aggregator, context

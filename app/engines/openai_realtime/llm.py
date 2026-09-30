@@ -44,7 +44,9 @@ def build_realtime_llm(
     pozwala docelowo wybierać głos/tempo w panelu per-firma, tak jak już działa dla
     cascade, zamiast na sztywno w kodzie/zmiennej środowiskowej dla całego serwisu)."""
     resolved_voice = voice or OPENAI_REALTIME_VOICE
-    logger.info(f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={resolved_voice}, speed={speed or 'domyślne API'}")
+    logger.info(
+        f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={resolved_voice}, speed={speed or 'domyślne API'}"
+    )
     llm = OpenAIRealtimeLLMService(
         api_key=settings.openai_api_key,
         settings=OpenAIRealtimeLLMService.Settings(
@@ -67,7 +69,7 @@ def build_realtime_llm(
                     # language="pl" wymuszony, bo auto-detekcja na krótkich,
                     # telefonicznych próbkach potrafi rozpoznać zupełnie inny język.
                     input=AudioInput(transcription=InputAudioTranscription(language="pl")),
-                )
+                ),
             ),
         ),
     )
@@ -75,9 +77,7 @@ def build_realtime_llm(
     context = LLMContext(tools=tools or [])
     # realtime_service_mode=True: usługa realtime emituje inaczej UserStarted/StoppedSpeakingFrame,
     # więc zapisy do kontekstu muszą iść w trybie "trailing" zamiast czekać na te ramki.
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context, realtime_service_mode=True
-    )
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context, realtime_service_mode=True)
     # context zwracany też osobno — potrzebny na końcu rozmowy do raportu
     # (realtime_tools.py::maybe_send_call_summary czyta context.get_messages()).
     return llm, user_aggregator, assistant_aggregator, context
@@ -98,9 +98,15 @@ async def apply_crm_when_ready(
     """
     client_profile = await client_profile_task
     if client_profile:
-        logger.info(f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})")
+        logger.info(
+            f"👤 [REALTIME TEST] CRM (spóźniony): {client_profile.get('name')} (wizyty: {client_profile.get('visit_count', 0)})"
+        )
         updated_prompt = await build_call_prompt(
-            tenant, caller_phone, features, client_profile=client_profile, include_greeting=False,
+            tenant,
+            caller_phone,
+            features,
+            client_profile=client_profile,
+            include_greeting=False,
         )
         await llm.send_client_event(SessionUpdateEvent(session=SessionProperties(instructions=updated_prompt)))
     return client_profile

@@ -14,9 +14,7 @@ ADMIN_PANEL_API_URL = settings.admin_panel_api_url
 PANEL_SLUG = settings.panel_slug
 
 
-async def get_available_slots_from_api(
-    tenant: dict, staff: dict, service: dict, date: datetime
-) -> list[str]:
+async def get_available_slots_from_api(tenant: dict, staff: dict, service: dict, date: datetime) -> list[str]:
     """
     Pobiera wolne sloty z API panelu (Google Calendar) - BEZ CACHE.
     Zwraca świeże dane bezpośrednio z API.
@@ -37,7 +35,7 @@ async def get_available_slots_from_api(
         async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
                 f"{base_url}/api/panel/{slug}/calendar/slots",
-                params={"staffId": staff_id, "serviceId": service_id, "date": date_str}
+                params={"staffId": staff_id, "serviceId": service_id, "date": date_str},
             )
 
             if response.status_code == 200:
@@ -70,8 +68,14 @@ async def get_available_slots_from_api(
 
 
 async def _save_booking_via_api(
-    tenant: dict, staff: dict, service: dict,
-    date: datetime, time_str: str, customer_name: str, customer_phone: str, notes: str = "",
+    tenant: dict,
+    staff: dict,
+    service: dict,
+    date: datetime,
+    time_str: str,
+    customer_name: str,
+    customer_phone: str,
+    notes: str = "",
 ) -> tuple[str, dict]:
     """POST /api/panel/{slug}/bookings. 409 (nowy unique index w bizvoice-panel na
     staff_id+booking_date+booking_time, dodany w tej samej sesji) NIE jest retry'owany —

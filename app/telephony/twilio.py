@@ -46,8 +46,11 @@ async def twilio_incoming_call(request: Request):
 
     ws_path = ENGINE_STREAM_PATHS["openai" if engine == "openai" else "gemini"]
     return twiml_media_stream(
-        request.headers.get("host", "localhost"), ws_path,
-        call_sid=call_sid, tenant_phone=tenant["phone_number"], caller_phone=caller,
+        request.headers.get("host", "localhost"),
+        ws_path,
+        call_sid=call_sid,
+        tenant_phone=tenant["phone_number"],
+        caller_phone=caller,
     )
 
 

@@ -32,34 +32,34 @@ def make_gemini_state() -> dict:
         "ended": False,
         "greeted": False,  # patrz komentarz przy tym samym polu w make_call_state() wyżej
         "awaiting_model_response_since": None,  # not None = czekamy na odpowiedź MODELU po
-                                                 # tym jak klient realnie coś powiedział (patrz
-                                                 # GeminiUserMonitor — TYLKO realne tury klienta,
-                                                 # nasze własne komunikaty idą przez speak_directly()
-                                                 # niezależnym silnikiem TTS, więc nie czekają na
-                                                 # Gemini w ogóle). Czyszczone w GeminiBotMonitor
-                                                 # na pierwszym dowodzie życia modelu. Jeśli
-                                                 # zostaje ustawione dłużej niż SILENT_HANG_TIMEOUT
-                                                 # — sesja Gemini Live ucichła bez błędu/wyjątku
-                                                 # (potwierdzony na żywym telefonie 16.08.2026,
-                                                 # znany problem community — WebSocket zostaje
-                                                 # otwarty, ale server_content przestaje przychodzić).
-                                                 # Pipecat 1.4.0 reconnectuje TYLKO na wyjątek w
-                                                 # pętli odbiorczej (sprawdzone w źródle), więc ten
-                                                 # przypadek nigdy by się sam nie naprawił.
-        "silent_hang_reconnect_used": False,    # Reconnect po cichym zawieszeniu próbujemy TYLKO
-                                                 # RAZ na całe połączenie, nie w kółko — złapane na
-                                                 # żywym telefonie 16.08.2026: druga próba, wysłana
-                                                 # zaraz po pierwszym reconnect, sama trafiła w tę
-                                                 # samą ścianę ciszy (bo _reconnect() zwraca się
-                                                 # zanim sesja jest faktycznie w pełni gotowa), co
-                                                 # dawało dwa reconnecty pod rząd zamiast czystego
-                                                 # rozłączenia. Jeśli sesja ucichnie DRUGI raz mimo
-                                                 # reconnectu — kończymy połączenie, tak jak przy
-                                                 # zwykłej długiej ciszy klienta, zamiast prób w
-                                                 # nieskończoność. Reset na False po pierwszej
-                                                 # udanej odpowiedzi modelu (GeminiBotMonitor) —
-                                                 # jeden przejściowy hiccup w długiej rozmowie nie
-                                                 # powinien "zużywać" jedynej próby na stałe.
+        # tym jak klient realnie coś powiedział (patrz
+        # GeminiUserMonitor — TYLKO realne tury klienta,
+        # nasze własne komunikaty idą przez speak_directly()
+        # niezależnym silnikiem TTS, więc nie czekają na
+        # Gemini w ogóle). Czyszczone w GeminiBotMonitor
+        # na pierwszym dowodzie życia modelu. Jeśli
+        # zostaje ustawione dłużej niż SILENT_HANG_TIMEOUT
+        # — sesja Gemini Live ucichła bez błędu/wyjątku
+        # (potwierdzony na żywym telefonie 16.08.2026,
+        # znany problem community — WebSocket zostaje
+        # otwarty, ale server_content przestaje przychodzić).
+        # Pipecat 1.4.0 reconnectuje TYLKO na wyjątek w
+        # pętli odbiorczej (sprawdzone w źródle), więc ten
+        # przypadek nigdy by się sam nie naprawił.
+        "silent_hang_reconnect_used": False,  # Reconnect po cichym zawieszeniu próbujemy TYLKO
+        # RAZ na całe połączenie, nie w kółko — złapane na
+        # żywym telefonie 16.08.2026: druga próba, wysłana
+        # zaraz po pierwszym reconnect, sama trafiła w tę
+        # samą ścianę ciszy (bo _reconnect() zwraca się
+        # zanim sesja jest faktycznie w pełni gotowa), co
+        # dawało dwa reconnecty pod rząd zamiast czystego
+        # rozłączenia. Jeśli sesja ucichnie DRUGI raz mimo
+        # reconnectu — kończymy połączenie, tak jak przy
+        # zwykłej długiej ciszy klienta, zamiast prób w
+        # nieskończoność. Reset na False po pierwszej
+        # udanej odpowiedzi modelu (GeminiBotMonitor) —
+        # jeden przejściowy hiccup w długiej rozmowie nie
+        # powinien "zużywać" jedynej próby na stałe.
     }
 
 
@@ -158,9 +158,8 @@ class GeminiBotMonitor(FrameProcessor):
             # na wypadek gdyby ucichła ZNOWU później w tej samej, długiej rozmowie.
             self._state["silent_hang_reconnect_used"] = False
 
-        if isinstance(frame, TTSStartedFrame):
-            if not self._state.get("suppress_idle_reset"):
-                self._state["idle_since"] = time.time()
+        if isinstance(frame, TTSStartedFrame) and not self._state.get("suppress_idle_reset"):
+            self._state["idle_since"] = time.time()
 
         if isinstance(frame, TTSAudioRawFrame):
             self._state["greeted"] = True

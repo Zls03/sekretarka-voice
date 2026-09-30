@@ -50,6 +50,7 @@ def _generate_vonage_jwt() -> str | None:
     # zamiast prawdziwych złamań linii trzeba odtworzyć, inaczej podpis RS256 nie zweryfikuje się.
     private_key = private_key.replace("\\n", "\n")
     import jwt as pyjwt
+
     now = int(time.time())
     payload = {
         "iat": now,
@@ -61,8 +62,12 @@ def _generate_vonage_jwt() -> str | None:
 
 
 async def transfer_vonage_call(
-    call_uuid: str, destination_number: str, from_number: str, announce_text: str,
-    api_base: str | None = None, fallback_url: str | None = None,
+    call_uuid: str,
+    destination_number: str,
+    from_number: str,
+    announce_text: str,
+    api_base: str | None = None,
+    fallback_url: str | None = None,
 ) -> bool:
     """PUT /v1/calls/{uuid} — podmienia NCCO trwającego połączenia. `announce_text`
     leci jako "talk" ZANIM Vonage podłączy telefon właściciela (natywny mechanizm
@@ -114,6 +119,7 @@ async def transfer_vonage_call(
     logger.info(f"📞 [TRANSFER] Wysyłam do Vonage ({base}): uuid={call_uuid} body={body}")
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.put(
                 f"{base}/v1/calls/{call_uuid}",
@@ -139,6 +145,7 @@ async def _download_vonage_recording(recording_url: str) -> bytes | None:
         return None
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 recording_url,

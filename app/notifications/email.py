@@ -1,6 +1,5 @@
 """E-maile do właściciela firmy (Resend): wiadomość od klienta, raport z rozmowy, nieodebrany transfer."""
 
-
 from loguru import logger
 
 from app.config import settings
@@ -35,6 +34,7 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
     """
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.resend.com/emails",
@@ -58,7 +58,11 @@ async def send_message_email(tenant: dict, customer_name: str, message: str, pho
 
 
 async def send_call_summary_email(
-    tenant: dict, caller_phone: str, summary: str, to_email: str, pending_message: dict | None = None,
+    tenant: dict,
+    caller_phone: str,
+    summary: str,
+    to_email: str,
+    pending_message: dict | None = None,
     transcript_lines: list[str] | None = None,
 ) -> bool:
     """Email z raportem PO KAŻDEJ rozmowie. Jedyny mechanizm "zgłoszeniowy" od 2026-09-03
@@ -99,8 +103,7 @@ async def send_call_summary_email(
             speaker = "Klient" if is_client else "Asystent"
             text = _html.escape(line.split(":", 1)[1].strip() if ":" in line else line)
             bg, border, label_color, indent = (
-                ("#e8f4fd", "#2196F3", "#1565c0", "24px") if is_client
-                else ("#f2f2f2", "#9e9e9e", "#616161", "0")
+                ("#e8f4fd", "#2196F3", "#1565c0", "24px") if is_client else ("#f2f2f2", "#9e9e9e", "#616161", "0")
             )
             turns_html += f"""
             <div style="background: {bg}; border-left: 3px solid {border}; border-radius: 6px; padding: 8px 12px; margin: 6px 0; margin-left: {indent}; font-size: 13px; line-height: 1.5;">
@@ -147,6 +150,7 @@ async def send_call_summary_email(
     """
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.resend.com/emails",
@@ -196,6 +200,7 @@ async def send_missed_transfer_email(business_name: str, caller_phone: str, to_e
     """
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.resend.com/emails",
