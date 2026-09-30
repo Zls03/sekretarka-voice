@@ -9,7 +9,7 @@ from app.config import settings
 from app.db import saas_db
 
 
-async def _send_push_notifications(tenant: dict, title: str, body: str, url: str = "/crm") -> None:
+async def send_push_notifications(tenant: dict, title: str, body: str, url: str = "/crm") -> None:
     """Web push do wszystkich subskrypcji portalu /crm tej firmy (crm_push_subscriptions —
     zapisywane przez bizvoice-panel po zgodzie właściciela w przeglądarce, patrz
     src/app/crm/(dashboard)/PushNotifications.tsx). Wołana WYŁĄCZNIE dla rozmów z realną

@@ -7,12 +7,12 @@ from urllib.parse import quote
 
 from loguru import logger
 
-from app.call_logs import _ensure_call_logs_columns
+from app.call_logs import ensure_call_logs_columns
 from app.config import settings
 from app.db import saas_db
-from app.notifications.push import _send_push_notifications
-from app.post_call.summary import _parse_summary_fields, summarize_conversation_lines
-from app.telephony.vonage_api import _download_vonage_recording
+from app.notifications.push import send_push_notifications
+from app.post_call.summary import parse_summary_fields, summarize_conversation_lines
+from app.telephony.vonage_api import download_vonage_recording
 
 
 async def build_human_first_ncco(
@@ -159,8 +159,8 @@ async def _save_human_first_call_log(
     if not tenant_id.startswith("firm_"):
         return  # portal /crm dotyczy tylko firm_ (SaaS) — admin DB nie ma tej zakładki
     try:
-        await _ensure_call_logs_columns()
-        priority = _parse_summary_fields(summary).get("Priorytet") or ""
+        await ensure_call_logs_columns()
+        priority = parse_summary_fields(summary).get("Priorytet") or ""
         call_id = f"call_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         await saas_db.execute(
             """INSERT INTO call_logs
@@ -181,7 +181,7 @@ async def _save_human_first_call_log(
             if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
             else "numer zastrzeżony"
         )
-        await _send_push_notifications(
+        await send_push_notifications(
             tenant,
             title="📞 Odebrałeś osobiście",
             body=f"{caller_display}: {summary}",
@@ -202,7 +202,7 @@ async def process_human_first_recording(
     /vonage/human-first-recording w bot_gemini_test.py — Vonage dostaje szybkie potwierdzenie,
     a przetwarzanie (kilka-kilkanaście sekund: pobranie + Deepgram + GPT) dzieje się w tle."""
     try:
-        audio_bytes = await _download_vonage_recording(recording_url)
+        audio_bytes = await download_vonage_recording(recording_url)
         if not audio_bytes:
             return
         lines = await _transcribe_recording_deepgram(audio_bytes)

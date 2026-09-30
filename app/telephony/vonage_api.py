@@ -137,7 +137,7 @@ async def transfer_vonage_call(
         return False
 
 
-async def _download_vonage_recording(recording_url: str) -> bytes | None:
+async def download_vonage_recording(recording_url: str) -> bytes | None:
     """Pobiera nagranie z Vonage — wymaga JWT (te same poświadczenia co REST API/transfer,
     _generate_vonage_jwt), sam recording_url z webhooka NIE jest publicznie dostępny."""
     token = _generate_vonage_jwt()

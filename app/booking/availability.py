@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from app.booking.panel_api import get_available_slots_from_api
-from app.booking.parsing import _normalize_time
+from app.booking.parsing import normalize_time
 from app.polish.formatting import format_date_polish, format_hour_polish
 
 
@@ -261,7 +261,7 @@ async def get_next_available_days(
     return results
 
 
-def _slots_summary(slots: list[str]) -> str:
+def slots_summary(slots: list[str]) -> str:
     """Podsumowanie slotów: max 2 przykłady (voice-friendly)"""
     if not slots:
         return "brak wolnych terminów"
@@ -296,8 +296,8 @@ async def validate_slot_available(
         logger.error(f"❌ [BOOKING] API error during validation: {e}")
         current_slots = await get_available_slots(tenant, staff, service, date)
 
-    time_normalized = _normalize_time(time_str)
-    slots_normalized = [_normalize_time(s) for s in current_slots]
+    time_normalized = normalize_time(time_str)
+    slots_normalized = [normalize_time(s) for s in current_slots]
     is_available = time_normalized in slots_normalized
 
     if is_available:

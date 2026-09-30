@@ -226,7 +226,7 @@ def _contains_unverified_contact_details(summary: str, source_text: str) -> bool
 _SUMMARY_FIELD_LABELS = ["Priorytet", "Kto dzwonił", "Firma", "Powód kontaktu", "Szczegóły", "Wynik rozmowy"]
 
 
-def _parse_summary_fields(summary: str) -> dict:
+def parse_summary_fields(summary: str) -> dict:
     """Wyciąga pojedyncze pola (Powód kontaktu/Szczegóły/Wynik rozmowy/Kto dzwonił) z
     tekstu streszczenia — WYŁĄCZNIE do wzbogacenia CRM (osobne pola zamiast jednego
     bloku tekstu). Celowo parsuje istniejący tekst zamiast zmieniać prompt w

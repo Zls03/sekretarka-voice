@@ -3,7 +3,7 @@
 from app.polish.formatting import POLISH_DAYS
 
 
-def _assistant_gender(assistant_name: str) -> dict:
+def assistant_gender_forms(assistant_name: str) -> dict:
     """
     Zwraca słownik z formami gramatycznymi na podstawie imienia asystenta.
     Imiona kończące się na 'a' = żeńskie, z wyjątkami dla imion męskich (Kuba, Barnaba...).

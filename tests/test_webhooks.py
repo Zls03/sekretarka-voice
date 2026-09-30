@@ -398,7 +398,7 @@ def test_elevenlabs_post_call(client, tenants, fake_db, monkeypatch):
         "send_call_summary_email": Recorder(result=True),
         "persist_call_summary": Recorder(),
         "maybe_send_to_crm": Recorder(),
-        "_send_push_notifications": Recorder(),
+        "send_push_notifications": Recorder(),
         "send_message_email": Recorder(result=True),
     }
     for name, recorder in recorders.items():
@@ -450,7 +450,7 @@ def test_elevenlabs_post_call(client, tenants, fake_db, monkeypatch):
 def test_elevenlabs_booking_tools_delegate(client, tenants, monkeypatch, tool):
     tenants[TENANT_PHONE] = make_booking_tenant()
     handler = Recorder(result={"status": "ask", "say": "Na jaką usługę?"})
-    patch_everywhere(monkeypatch, f"_handle_{tool}", handler)
+    patch_everywhere(monkeypatch, f"{tool}_step", handler)
     patch_everywhere(monkeypatch, "_elevenlabs_call_states", {})
     resp = client.post(
         f"/elevenlabs/tools/{tool}",

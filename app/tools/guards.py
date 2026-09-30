@@ -13,7 +13,7 @@ _VAGUE_MESSAGE_STARTS = (
 )
 
 
-def _looks_like_vague_meta_message(message: str) -> bool:
+def looks_like_vague_meta_message(message: str) -> bool:
     """Wykrywa dwa warianty śmieciowej wiadomości: (1) GPT pisze O kliencie w trzeciej
     osobie zamiast treści OD klienta (meta-opis), (2) wiadomość jest za krótka/pusta
     żeby cokolwiek znaczyć. Nie jest to dowód matematyczny — heurystyka, tak jak
@@ -21,7 +21,7 @@ def _looks_like_vague_meta_message(message: str) -> bool:
 
     ⚠️ TYLKO dla contact_owner (pole `message` = treść DO przekazania). NIE używać dla
     submit_lead (`problem` = opis SPRAWY klienta, gdzie "Klient chce X" jest normalną,
-    poprawną frazą, nie oznaką pustki) — patrz _looks_too_short() niżej. Pomylenie tych
+    poprawną frazą, nie oznaką pustki) — patrz looks_too_short() niżej. Pomylenie tych
     dwóch odrzucało w praktyce poprawne, konkretne zgłoszenia (obserwowane na żywym
     telefonie: "Klient chce pomocy w sprawie legalizacji pobytu, dotyczącej wizy."
     zostało odrzucone tylko dlatego że zaczynało się od "Klient chce").
@@ -43,7 +43,7 @@ def _looks_like_vague_meta_message(message: str) -> bool:
     return False
 
 
-def _looks_too_short(text: str) -> bool:
+def looks_too_short(text: str) -> bool:
     """Łagodniejszy filtr dla submit_lead::problem — tylko długość, bez czarnej listy
     fraz (te są legalne we frazowaniu opisu sprawy w trzeciej osobie)."""
     return len((text or "").strip()) < 10
@@ -63,6 +63,6 @@ _SCRIPTED_BOT_PHRASES = (
 )
 
 
-def _is_scripted_bot_phrase(text: str) -> bool:
+def is_scripted_bot_phrase(text: str) -> bool:
     t = (text or "").lower().strip()
     return any(p in t for p in _SCRIPTED_BOT_PHRASES)

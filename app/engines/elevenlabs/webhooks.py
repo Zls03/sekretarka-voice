@@ -8,8 +8,8 @@ from loguru import logger
 
 from app.background import spawn
 from app.billing import is_call_allowed
-from app.booking.book_appointment import _handle_book_appointment
-from app.booking.manage_booking import _handle_manage_booking
+from app.booking.book_appointment import book_appointment_step
+from app.booking.manage_booking import manage_booking_step
 from app.call_logs import persist_call_summary
 from app.crm_contacts import maybe_save_contact_name
 from app.db import db, saas_db
@@ -18,11 +18,11 @@ from app.engines.elevenlabs.config import (
 )
 from app.engines.elevenlabs.conversation import build_agent_override
 from app.notifications.email import send_call_summary_email, send_message_email
-from app.notifications.push import _send_push_notifications
-from app.post_call.crm_sync import _is_crm_test_tenant, maybe_send_to_crm
+from app.notifications.push import send_push_notifications
+from app.post_call.crm_sync import is_crm_test_tenant, maybe_send_to_crm
 from app.post_call.summary import summarize_conversation_lines
 from app.tenants import get_tenant_by_phone
-from app.tools.guards import _looks_like_vague_meta_message, _looks_too_short
+from app.tools.guards import looks_like_vague_meta_message, looks_too_short
 
 router = APIRouter()
 
@@ -118,7 +118,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
 
     if not customer_name or not message:
         return {"status": "error", "reason": "missing_fields"}
-    if _looks_too_short(message) or _looks_like_vague_meta_message(message):
+    if looks_too_short(message) or looks_like_vague_meta_message(message):
         return {"status": "error", "reason": "message_too_vague"}
 
     tenant = await get_tenant_by_phone(called_number) if called_number else None
@@ -179,7 +179,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
 async def elevenlabs_tool_book_appointment(request: Request):
     """Webhook narzędzia rezerwacji — port pod ElevenLabs, patrz docstring
     _elevenlabs_call_states wyżej po wyjaśnienie mechanizmu stanu między turami.
-    Reużywa 1:1 _handle_book_appointment z realtime_booking.py (ta sama funkcja co
+    Reużywa 1:1 book_appointment_step z realtime_booking.py (ta sama funkcja co
     Gemini Live/OpenAI Realtime), zero duplikacji logiki biznesowej/walidacji terminów."""
     if not _check_shared_secret(request):
         return {"status": "error", "reason": "unauthorized"}
@@ -211,14 +211,14 @@ async def elevenlabs_tool_book_appointment(request: Request):
         "question": body.get("question"),
         "notes": body.get("notes"),
     }
-    result = await _handle_book_appointment(args, tenant, caller_phone, call_state, {"context": None}, channel=channel)
+    result = await book_appointment_step(args, tenant, caller_phone, call_state, {"context": None}, channel=channel)
     return result
 
 
 @router.post("/elevenlabs/tools/manage_booking")
 async def elevenlabs_tool_manage_booking(request: Request):
     """Webhook odwoływania/przekładania wcześniej umówionej wizyty — analogicznie do
-    elevenlabs_tool_book_appointment wyżej, reużywa _handle_manage_booking 1:1."""
+    elevenlabs_tool_book_appointment wyżej, reużywa manage_booking_step 1:1."""
     if not _check_shared_secret(request):
         return {"status": "error", "reason": "unauthorized"}
 
@@ -244,7 +244,7 @@ async def elevenlabs_tool_manage_booking(request: Request):
         "confirmation": body.get("confirmation", "none"),
         "which_visit": body.get("which_visit"),
     }
-    result = await _handle_manage_booking(args, tenant, caller_phone, call_state)
+    result = await manage_booking_step(args, tenant, caller_phone, call_state)
     return result
 
 
@@ -462,7 +462,7 @@ async def elevenlabs_post_call(request: Request):
             transcript_lines=conversation_lines if int(tenant.get("transcript_email_enabled") or 0) else None,
         )
         logger.info(f"📧 [ELEVENLABS AGENT] Raport z rozmowy: {'wysłany' if ok else 'błąd wysyłki'} do {to_email}")
-    if summary and _is_crm_test_tenant(tenant):
+    if summary and is_crm_test_tenant(tenant):
         # Patrz CLAUDE.md "CRM Integration" i identyczny hook w
         # realtime_tools.py::maybe_send_call_summary — POC ograniczony do numeru
         # demo BizVoice, niezależny od lead_email_enabled.
@@ -488,7 +488,7 @@ async def elevenlabs_post_call(request: Request):
             if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
             else "numer zastrzeżony"
         )
-        await _send_push_notifications(
+        await send_push_notifications(
             tenant,
             title="📞 Nowe zgłoszenie",
             body=f"{caller_display}: {summary}",

@@ -3,7 +3,7 @@
 from loguru import logger
 
 from app.config import settings
-from app.post_call.summary import _parse_summary_fields
+from app.post_call.summary import parse_summary_fields
 
 # CRM Integration (n8n + dowolny CRM klienta) — patrz CLAUDE.md, sekcja "CRM Integration".
 # 2026-09-13: POC ograniczony wyłącznie do numeru demo/sprzedażowego BizVoice
@@ -17,7 +17,7 @@ _CRM_TEST_PHONE_NUMBERS = {"+48459050542"}
 N8N_CRM_WEBHOOK_URL = settings.n8n_crm_webhook_url
 
 
-def _is_crm_test_tenant(tenant: dict) -> bool:
+def is_crm_test_tenant(tenant: dict) -> bool:
     """Nazwa zostaje z czasów POC (patrz komentarz wyżej) żeby nie zmieniać nazwy w
     wywołaniach w bot_elevenlabs_agent.py/realtime_tools.py — dziś sprawdza realny
     przełącznik per-firma, nie tylko testowy numer."""
@@ -74,12 +74,12 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
     dojdzie kolejny klient z własnym Pipedrive/Bitrix24 (patrz CLAUDE.md).
 
     2026-09-14 — dodane pola reason/details/outcome (parsowane z summary, patrz
-    _parse_summary_fields) i estimated_value (patrz estimate_deal_value, tylko dla
+    parse_summary_fields) i estimated_value (patrz estimate_deal_value, tylko dla
     🔥 GORĄCY LEAD) — dają n8n materiał do ustawienia osobnych pól w Pipedrive (Deal
     custom fields + Deal.value) zamiast tylko jednego bloku tekstu w notatce.
 
     2026-09-17 — dodane pole `priority` (parsowane z linii "Priorytet: <emoji> <etykieta>"
-    w summary, patrz _parse_summary_fields). WAŻNE: priorytet w summary NIE jest na
+    w summary, patrz parse_summary_fields). WAŻNE: priorytet w summary NIE jest na
     początku całego tekstu — to jeden z wypunktowań w środku ("- Priorytet: 🔥 GORĄCY
     LEAD\n- Kto dzwonił: ...", patrz prompt w summarize_conversation_lines()). Test na
     żywym telefonie (2026-09-17) pokazał że zarówno ten hook, jak i n8n Code node,
@@ -95,7 +95,7 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
     opcjonalny punkt do streszczenia używanego też przez mail, ale GPT pomija go gdy
     brak danych, więc raporty innych firm wyglądają tak jak wcześniej."""
     try:
-        fields = _parse_summary_fields(summary)
+        fields = parse_summary_fields(summary)
         priority = fields.get("Priorytet") or ""
         estimated_value = None
         if "🔥" in priority:
@@ -113,7 +113,7 @@ async def maybe_send_to_crm(tenant: dict, caller_phone: str, summary: str) -> No
                     # ensureColumns() w bizvoice-panel/api/firms/[id]/route.ts) — n8n routuje po
                     # crm_provider i używa TEGO klucza/domeny zamiast sztywnego credentiala.
                     # Puste dla starego testowego tenanta (fallback po numerze w
-                    # _is_crm_test_tenant) — n8n dla niego dalej używa własnego, zapisanego
+                    # is_crm_test_tenant) — n8n dla niego dalej używa własnego, zapisanego
                     # credentiala Pipedrive dopóki nie zostanie przełączony w panelu.
                     "crm_provider": tenant.get("crm_provider") or "",
                     "crm_domain": tenant.get("crm_domain") or "",

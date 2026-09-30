@@ -10,7 +10,7 @@ from pipecat.services.llm_service import FunctionCallParams
 from app.background import spawn
 from app.crm_contacts import maybe_save_contact_name
 from app.notifications.email import send_message_email
-from app.tools.guards import _is_scripted_bot_phrase, _looks_like_vague_meta_message
+from app.tools.guards import is_scripted_bot_phrase, looks_like_vague_meta_message
 
 
 def build_contact_owner_tool(
@@ -53,13 +53,13 @@ def build_contact_owner_tool(
         if not message:
             await params.result_callback({"status": "error", "reason": "empty_message"})
             return
-        if _is_scripted_bot_phrase(message):
+        if is_scripted_bot_phrase(message):
             logger.warning(
                 f"📞 [REALTIME TEST] contact_owner: treść to zaszyta wypowiedź bota (nie klienta), odrzucam: {message[:60]!r}"
             )
             await params.result_callback({"status": "error", "reason": "message_too_vague"})
             return
-        if _looks_like_vague_meta_message(message):
+        if looks_like_vague_meta_message(message):
             # Model czasem zamiast prawdziwej treści wpisuje własny, pokrętny opis sytuacji
             # (np. "Proszę o kontakt z Pawłem, bo ktoś nie skontaktował się" — bez sensu jako
             # wiadomość). 1:1 zabezpieczenie z cascade (flows_contact.py::handle_set_contact_message)

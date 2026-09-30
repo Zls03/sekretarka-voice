@@ -67,7 +67,7 @@ async def get_available_slots_from_api(tenant: dict, staff: dict, service: dict,
     return []
 
 
-async def _save_booking_via_api(
+async def save_booking_in_panel(
     tenant: dict,
     staff: dict,
     service: dict,
@@ -123,7 +123,7 @@ async def _save_booking_via_api(
     return ("error", {})
 
 
-async def _cancel_booking_via_api(tenant: dict, booking_id: str) -> bool:
+async def cancel_booking_in_panel(tenant: dict, booking_id: str) -> bool:
     slug = tenant.get("slug") or PANEL_SLUG
     if not slug or not booking_id:
         return False
@@ -137,7 +137,7 @@ async def _cancel_booking_via_api(tenant: dict, booking_id: str) -> bool:
         return False
 
 
-async def _reschedule_booking_via_api(tenant: dict, booking_id: str, date: datetime, time_str: str) -> bool:
+async def reschedule_booking_in_panel(tenant: dict, booking_id: str, date: datetime, time_str: str) -> bool:
     slug = tenant.get("slug") or PANEL_SLUG
     if not slug or not booking_id:
         return False

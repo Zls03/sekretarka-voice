@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from app.polish.formatting import POLISH_DAYS
 from app.polish.grammar import detect_gender, normalize_polish_text, odmien_imie, vocative_imie
-from app.prompt.business_context import _assistant_gender, build_business_context
+from app.prompt.business_context import assistant_gender_forms, build_business_context
 
 
 def build_greeting_message(tenant: dict, client_profile: dict | None = None) -> str:
@@ -152,7 +152,7 @@ def build_role_prompt(tenant: dict, client_profile: dict | None = None) -> str:
     booking_enabled = tenant.get("booking_enabled", 1) == 1
     assistant_name = tenant.get("assistant_name", "Ania")
     industry = tenant.get("industry", "").strip()
-    g = _assistant_gender(assistant_name)
+    g = assistant_gender_forms(assistant_name)
     tone_line = (
         f"- Dopasuj ton do branży ({industry}): salon urody/fryzjer → ciepło i swobodnie, "
         f"klinika/gabinet/lekarz → spokojnie i profesjonalnie, siłownia/gym/fitness → energicznie i motywująco"

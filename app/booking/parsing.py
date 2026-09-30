@@ -56,7 +56,7 @@ def preprocess_date_text(date_text: str) -> str:
     return text.strip()
 
 
-def _parse_time(text: str) -> str | None:
+def parse_time(text: str) -> str | None:
     """Parsuje godzinę z tekstu polskiego"""
     if not text:
         return None
@@ -140,7 +140,7 @@ def _parse_time(text: str) -> str | None:
     return None
 
 
-def _normalize_time(time_val) -> str:
+def normalize_time(time_val) -> str:
     """Normalizuje czas do formatu H:MM dla porównań"""
     if isinstance(time_val, str):
         if ":" in time_val:
@@ -170,5 +170,5 @@ def _normalize_time(time_val) -> str:
 # telefon. Fallback na "brak wizyty" gdy get_client_profile nie widzi nic z booking_id
 # (np. wizyta wpisana ręcznie do CRM bez odpowiadającego rekordu w `bookings`, albo panel
 # offline) — wtedy model ma w opisie narzędzia instrukcję żeby zaproponować contact_owner.
-def _parse_iso_dt(iso: str) -> datetime:
+def parse_iso_datetime(iso: str) -> datetime:
     return datetime.fromisoformat(iso)

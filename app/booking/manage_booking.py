@@ -8,17 +8,23 @@ from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.services.llm_service import FunctionCallParams
 
-from app.booking.availability import _slots_summary
-from app.booking.panel_api import _cancel_booking_via_api, _reschedule_booking_via_api, get_available_slots_from_api
-from app.booking.parsing import DATEPARSER_SETTINGS, _normalize_time, _parse_iso_dt, _parse_time, preprocess_date_text
-from app.booking.replies import _closing_question
+from app.booking.availability import slots_summary
+from app.booking.panel_api import cancel_booking_in_panel, get_available_slots_from_api, reschedule_booking_in_panel
+from app.booking.parsing import (
+    DATEPARSER_SETTINGS,
+    normalize_time,
+    parse_iso_datetime,
+    parse_time,
+    preprocess_date_text,
+)
+from app.booking.replies import closing_question
 from app.panel_client import get_client_profile
 from app.polish.formatting import format_date_polish, format_hour_polish, natural_list
 from app.polish.grammar import detect_gender, odmien_imie
 
 
 def _describe_booking(b: dict) -> str:
-    dt = _parse_iso_dt(b["scheduled_at"])
+    dt = parse_iso_datetime(b["scheduled_at"])
     staff_part = f" u {odmien_imie(b['staff'])}" if b.get("staff") else ""
     return f"{b.get('service') or 'wizyta'}{staff_part}, {format_date_polish(dt)} o {format_hour_polish(dt.strftime('%H:%M'))}"
 
@@ -31,7 +37,7 @@ def _match_booking_by_text(bookings: list[dict], text: str) -> int | None:
     if not parsed:
         return None
     for i, b in enumerate(bookings):
-        if _parse_iso_dt(b["scheduled_at"]).date() == parsed.date():
+        if parse_iso_datetime(b["scheduled_at"]).date() == parsed.date():
             return i
     return None
 
@@ -46,7 +52,7 @@ def _finish_mgmt(call_state: dict, text: str, status: str) -> dict:
     return {"status": status, "say_exactly": text, "done": True}
 
 
-async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, call_state: dict) -> dict:
+async def manage_booking_step(args: dict, tenant: dict, caller_phone: str, call_state: dict) -> dict:
     action = args.get("action")
     new_date_text = args.get("date_text")
     new_time_text = args.get("time_text")
@@ -120,9 +126,9 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         if confirmation != "yes":
             state["pending_action"] = "cancel"
             return _ask_mgmt(call_state, state, f"Potwierdzam odwołanie wizyty — {booking_desc}. Zgadza się?")
-        ok = await _cancel_booking_via_api(tenant, booking["booking_id"])
+        ok = await cancel_booking_in_panel(tenant, booking["booking_id"])
         if ok:
-            return _finish_mgmt(call_state, f"Gotowe, wizyta została odwołana. {_closing_question()}", "cancelled")
+            return _finish_mgmt(call_state, f"Gotowe, wizyta została odwołana. {closing_question()}", "cancelled")
         return _finish_mgmt(
             call_state,
             "Nie udało się automatycznie odwołać wizyty — przekażę to właścicielowi. Proszę powiedzieć, czego dotyczy sprawa.",
@@ -186,13 +192,13 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
             return _ask_mgmt(
                 call_state,
                 state,
-                f"{format_date_polish(parsed_date).capitalize()} wolne są: {_slots_summary(slots)}. Którą godzinę?",
+                f"{format_date_polish(parsed_date).capitalize()} wolne są: {slots_summary(slots)}. Którą godzinę?",
             )
 
-    parsed_time = _parse_time(new_time_text)
-    slots_normalized = [_normalize_time(s) for s in slots]
-    if not parsed_time or _normalize_time(parsed_time) not in slots_normalized:
-        return _ask_mgmt(call_state, state, f"Ta godzina jest zajęta. Wolne są: {_slots_summary(slots)}. Którą wybrać?")
+    parsed_time = parse_time(new_time_text)
+    slots_normalized = [normalize_time(s) for s in slots]
+    if not parsed_time or normalize_time(parsed_time) not in slots_normalized:
+        return _ask_mgmt(call_state, state, f"Ta godzina jest zajęta. Wolne są: {slots_summary(slots)}. Którą wybrać?")
 
     if confirmation != "yes":
         state["_new_time"] = parsed_time
@@ -206,11 +212,11 @@ async def _handle_manage_booking(args: dict, tenant: dict, caller_phone: str, ca
         )
 
     new_date_obj = datetime.strptime(state["_new_date"], "%Y-%m-%d")
-    ok = await _reschedule_booking_via_api(tenant, booking["booking_id"], new_date_obj, parsed_time)
+    ok = await reschedule_booking_in_panel(tenant, booking["booking_id"], new_date_obj, parsed_time)
     if ok:
         return _finish_mgmt(
             call_state,
-            f"Gotowe. Wizyta przełożona na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}. {_closing_question()}",
+            f"Gotowe. Wizyta przełożona na {format_date_polish(new_date_obj)} o {format_hour_polish(parsed_time)}. {closing_question()}",
             "rescheduled",
         )
     return _finish_mgmt(
@@ -227,7 +233,7 @@ def build_manage_booking_tool(tenant: dict, caller_phone: str, call_state: dict)
     (analogicznie do "booking" dla book_appointment) — oba mogą współistnieć w jednej rozmowie."""
 
     async def handle_manage_booking(params: FunctionCallParams):
-        result = await _handle_manage_booking(params.arguments, tenant, caller_phone, call_state)
+        result = await manage_booking_step(params.arguments, tenant, caller_phone, call_state)
         await params.result_callback(result)
 
     return FunctionSchema(

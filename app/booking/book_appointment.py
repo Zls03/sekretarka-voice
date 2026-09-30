@@ -10,24 +10,24 @@ from pipecat.services.llm_service import FunctionCallParams
 
 from app.background import spawn
 from app.booking.availability import (
-    _slots_summary,
     format_availability_message,
     get_next_available_days,
     get_opening_hours,
     get_staff_working_hours,
+    slots_summary,
     staff_can_do_service,
     validate_max_days_ahead,
     validate_min_advance_hours,
     validate_slot_available,
 )
-from app.booking.panel_api import _save_booking_via_api, get_available_slots_from_api
-from app.booking.parsing import DATEPARSER_SETTINGS, _normalize_time, _parse_time, preprocess_date_text
-from app.booking.replies import _closing_question
+from app.booking.panel_api import get_available_slots_from_api, save_booking_in_panel
+from app.booking.parsing import DATEPARSER_SETTINGS, normalize_time, parse_time, preprocess_date_text
+from app.booking.replies import closing_question
 from app.booking.sms import increment_sms_count, send_booking_sms, send_booking_sms_vonage
 from app.panel_client import save_client_visit
 from app.polish.formatting import POLISH_DAYS, format_date_polish, format_hour_polish, natural_list
 from app.polish.grammar import detect_gender, odmien_imie
-from app.prompt.business_context import _assistant_gender, build_business_context
+from app.prompt.business_context import assistant_gender_forms, build_business_context
 
 
 def _get_next_step(state: dict, staff_list: list) -> str:
@@ -42,7 +42,7 @@ def _get_next_step(state: dict, staff_list: list) -> str:
         staff_name = odmien_imie(state["staff"]["name"])
         return f"Na jaki dzień do {staff_name}?"
     elif "time" not in state:
-        slots_text = _slots_summary(state.get("available_slots", []))
+        slots_text = slots_summary(state.get("available_slots", []))
         return f"Którą godzinę? Wolne są: {slots_text}."
     elif "name" not in state:
         return "Na jakie imię zapisać wizytę?"
@@ -101,7 +101,7 @@ ZASADY:
 - Odpowiedz TYLKO na pytanie
 - Użyj DOKŁADNYCH danych z powyższych informacji
 - NIE WYMYŚLAJ informacji których nie masz
-- Mów {_assistant_gender(tenant.get("assistant_name", "Ania"))["gender_short"]}
+- Mów {assistant_gender_forms(tenant.get("assistant_name", "Ania"))["gender_short"]}
 - NIGDY nie pisz "Pan/Pani" ze slashem — TTS czyta to dosłownie
 - Używaj formy bezpłciowej dopóki nie znasz płci klienta
 - Gdy klient poda imię → używaj odpowiednio "Pan" lub "Pani"
@@ -120,7 +120,7 @@ ZASADY:
         return "Nie mam tej informacji."
 
 
-async def _handle_book_appointment(
+async def book_appointment_step(
     args: dict, tenant: dict, caller_phone: str, call_state: dict, context_box: dict, channel: str = "twilio"
 ) -> dict:
     service_text = args.get("service")
@@ -494,7 +494,7 @@ async def _handle_book_appointment(
         state.pop("_pending_time")
 
     time_just_set = False
-    if time_text and ("time" not in state or _normalize_time(time_text) != _normalize_time(state.get("time", ""))):
+    if time_text and ("time" not in state or normalize_time(time_text) != normalize_time(state.get("time", ""))):
         state.pop("time", None)
         time_lower = time_text.lower().strip()
 
@@ -517,20 +517,20 @@ async def _handle_book_appointment(
             if "date" not in state:
                 return _ask(call_state, state, f"Rozumiem, szukamy terminu {range_name}. Na jaki dzień?")
             if filtered:
-                slots_text = _slots_summary(filtered)
+                slots_text = slots_summary(filtered)
                 return _ask(call_state, state, f"Tak, {range_name} wolne są: {slots_text}. Którą godzinę wybrać?")
             else:
                 all_slots = natural_list([format_hour_polish(s) for s in state.get("available_slots", [])[:6]])
                 return _ask(call_state, state, f"{range_name.capitalize()} zajęte. Dostępne: {all_slots}.")
 
-        parsed_time = _parse_time(time_text)
+        parsed_time = parse_time(time_text)
 
         if parsed_time:
             _h, _m = (int(x) for x in parsed_time.split(":"))
             requested_datetime = state["date"].replace(hour=_h, minute=_m, second=0, microsecond=0)
             is_advance_valid, advance_msg = validate_min_advance_hours(requested_datetime, tenant, state["staff"])
             if not is_advance_valid:
-                slots_text = _slots_summary(state.get("available_slots", []))
+                slots_text = slots_summary(state.get("available_slots", []))
                 return _ask(call_state, state, f"{advance_msg} Wolne są: {slots_text}.")
 
             is_available, current_slots = await validate_slot_available(
@@ -555,21 +555,21 @@ async def _handle_book_appointment(
                     if staff_hours:
                         open_h, close_h = staff_hours
                         if requested_h < open_h or (requested_h == open_h and requested_m < 0):
-                            slots_text = _slots_summary(current_slots)
+                            slots_text = slots_summary(current_slots)
                             return _ask(
                                 call_state,
                                 state,
                                 f"W tym dniu pracujemy od {format_hour_polish(f'{open_h}:00')}. Wolne są: {slots_text}.",
                             )
                         elif requested_h >= close_h:
-                            slots_text = _slots_summary(current_slots)
+                            slots_text = slots_summary(current_slots)
                             return _ask(
                                 call_state,
                                 state,
                                 f"W tym dniu pracujemy do {format_hour_polish(f'{close_h}:00')}. Wolne są: {slots_text}.",
                             )
 
-                    slots_text = _slots_summary(current_slots)
+                    slots_text = slots_summary(current_slots)
                     return _ask(
                         call_state, state, f"Godzina {format_hour_polish(parsed_time)} zajęta. Wolne: {slots_text}."
                     )
@@ -596,13 +596,13 @@ async def _handle_book_appointment(
             if state["_retry_time"] >= 3:
                 for k in ("time", "_pending_time", "_retry_time"):
                     state.pop(k, None)
-                slots_text = _slots_summary(state.get("available_slots", []))
+                slots_text = slots_summary(state.get("available_slots", []))
                 return _ask(call_state, state, f"Przepraszam za kłopot. Dostępne godziny: {slots_text}. Którą wybrać?")
             slots_text = natural_list([format_hour_polish(s) for s in state["available_slots"][:6]])
             return _ask(call_state, state, f"Nie rozumiem godziny. Dostępne są: {slots_text}.")
 
     if "time" not in state:
-        slots_text = _slots_summary(state["available_slots"])
+        slots_text = slots_summary(state["available_slots"])
         return _ask(
             call_state,
             state,
@@ -621,7 +621,7 @@ async def _handle_book_appointment(
             state["name"] = name.title()
             name_just_collected = True
         else:
-            gender_msg = _assistant_gender(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
+            gender_msg = assistant_gender_forms(tenant.get("assistant_name", "Ania"))["nie_dosłyszałam"]
             return _ask(call_state, state, f"{gender_msg} imienia. Na jakie imię zapisać wizytę?")
 
     if "name" not in state:
@@ -683,7 +683,7 @@ async def _save_booking(
     state: dict, tenant: dict, caller_phone: str, call_state: dict, channel: str = "twilio"
 ) -> dict:
     """Zapisuje rezerwację do API — z PODWÓJNĄ walidacją. 1:1 z _save_booking() w cascade,
-    plus obsługa 409 slot_taken (patrz _save_booking_via_api)."""
+    plus obsługa 409 slot_taken (patrz save_booking_in_panel)."""
     logger.info("💾 [BOOKING] SAVING BOOKING...")
 
     try:
@@ -696,14 +696,14 @@ async def _save_booking(
             if current_slots:
                 state.pop("time", None)
                 state["available_slots"] = current_slots
-                slots_text = _slots_summary(current_slots)
+                slots_text = slots_summary(current_slots)
                 return _ask(call_state, state, f"Ta godzina właśnie zniknęła. Zostały: {slots_text}. Którą?")
             else:
                 state.pop("date", None)
                 state.pop("time", None)
                 return _ask(call_state, state, "Ten dzień właśnie się zapełnił. Który inny?")
 
-        outcome, result = await _save_booking_via_api(
+        outcome, result = await save_booking_in_panel(
             tenant,
             state["staff"],
             state["service"],
@@ -723,7 +723,7 @@ async def _save_booking(
             if fresh_slots:
                 state.pop("time", None)
                 state["available_slots"] = fresh_slots
-                slots_text = _slots_summary(fresh_slots)
+                slots_text = slots_summary(fresh_slots)
                 return _ask(call_state, state, f"Ta godzina właśnie została zajęta. Zostały: {slots_text}. Którą?")
             else:
                 state.pop("date", None)
@@ -784,7 +784,7 @@ async def _save_booking(
         final_text = (
             f"Gotowe. {state['service']['name']} u {staff_name}, "
             f"{format_date_polish(state['date'])} o {format_hour_polish(state['time'])}."
-            f"{notes_confirm}{sms_info} {_closing_question()}"
+            f"{notes_confirm}{sms_info} {closing_question()}"
         )
         return _finish(call_state, final_text, "booked")
 
@@ -811,9 +811,7 @@ def build_book_appointment_tool(
     staff_names = [s["name"] for s in staff_list] + ["dowolny"]
 
     async def handle_book_appointment(params: FunctionCallParams):
-        result = await _handle_book_appointment(
-            params.arguments, tenant, caller_phone, call_state, context_box, channel
-        )
+        result = await book_appointment_step(params.arguments, tenant, caller_phone, call_state, context_box, channel)
         await params.result_callback(result)
 
     return FunctionSchema(

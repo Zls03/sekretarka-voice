@@ -8,7 +8,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from app.billing import apply_call_charge
 from app.db import db, saas_db
-from app.post_call.summary import _parse_summary_fields
+from app.post_call.summary import parse_summary_fields
 
 #
 # 1:1 z cascade (bot.py::save_call_log + bot.py::apply_call_charge) — te same tabele
@@ -27,7 +27,7 @@ from app.post_call.summary import _parse_summary_fields
 _call_logs_columns_ensured = False
 
 
-async def _ensure_call_logs_columns() -> None:
+async def ensure_call_logs_columns() -> None:
     """Jednorazowo (per proces/cold start) dokłada kolumny summary/priority/seen do call_logs
     w SaaS DB — te same rozmowy co dziś idą do maila teraz zasilają też portal /crm (bizvoice-panel).
     Wzorzec identyczny jak ensureColumns() w bizvoice-panel/api/firms/[id]/route.ts (ALTER w
@@ -69,8 +69,8 @@ async def persist_call_summary(tenant: dict, call_sid: str, summary: str) -> Non
     if not tenant_id.startswith("firm_") or not call_sid:
         return
     try:
-        priority = _parse_summary_fields(summary).get("Priorytet") or ""
-        await _ensure_call_logs_columns()
+        priority = parse_summary_fields(summary).get("Priorytet") or ""
+        await ensure_call_logs_columns()
         await saas_db.execute(
             "UPDATE call_logs SET summary = ?, priority = ? WHERE call_sid = ?",
             [summary, priority, call_sid],

@@ -4,8 +4,8 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from app.call_logs import persist_call_summary
 from app.notifications.email import send_call_summary_email
-from app.notifications.push import _send_push_notifications
-from app.post_call.crm_sync import _is_crm_test_tenant, maybe_send_to_crm
+from app.notifications.push import send_push_notifications
+from app.post_call.crm_sync import is_crm_test_tenant, maybe_send_to_crm
 from app.post_call.summary import extract_conversation_lines, generate_conversation_summary
 
 
@@ -33,7 +33,7 @@ async def maybe_send_call_summary(
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     pending = (call_state or {}).get("pending_contact_owner")
-    crm_enabled = _is_crm_test_tenant(tenant)
+    crm_enabled = is_crm_test_tenant(tenant)
     # 2026-09-23 — USUNIĘTE: wczesny return gdy ani lead_email_enabled ani crm_enabled (Pipedrive
     # test tenant) nie są włączone. Streszczenie zasila teraz TEŻ portal /crm (call_logs.summary/
     # priority) niezależnie od tych dwóch przełączników, więc musi liczyć się zawsze — koszt
@@ -84,7 +84,7 @@ async def maybe_send_call_summary(
             if caller_phone and caller_phone.lower() not in ("nieznany", "unknown", "")
             else "numer zastrzeżony"
         )
-        await _send_push_notifications(
+        await send_push_notifications(
             tenant,
             title="📞 Nowe zgłoszenie",
             body=f"{caller_display}: {summary}",
