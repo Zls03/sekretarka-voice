@@ -17,7 +17,7 @@ def build_contact_owner_tool(
     tenant: dict, caller_phone: str, task_box: dict, call_state: dict, has_transfer_tool: bool = False
 ) -> FunctionSchema:
     """FunctionSchema z handlerem przypiętym bezpośrednio — LLMContext rejestruje go
-    automatycznie (patrz bot_gemini_test.py::build_realtime_llm), bez osobnego
+    automatycznie (patrz engines/openai_realtime/llm.py::build_realtime_llm), bez osobnego
     register_function.
 
     has_transfer_tool: True gdy w TEJ SAMEJ rozmowie jest też zarejestrowane
@@ -34,7 +34,7 @@ def build_contact_owner_tool(
     llm) `task` jeszcze nie istnieje. Handler czyta task_box["task"] dopiero przy
     faktycznym wywołaniu (w trakcie żywej rozmowy), więc do tego czasu jest już ustawiony.
 
-    call_state: to samo co w bot_gemini_test.py::make_call_state() — TU ustawiamy
+    call_state: to samo co w engines/openai_realtime/monitors.py::make_call_state() — TU ustawiamy
     call_state["ended"]=True od razu po udanym wysłaniu, żeby monitor_call_health
     przestał liczyć ciszę na kończącym się połączeniu. Bez tego (bug znaleziony na
     żywym telefonie): po EndFrame z tej funkcji monitor dalej działał, nie wiedział że
@@ -62,7 +62,7 @@ def build_contact_owner_tool(
         if looks_like_vague_meta_message(message):
             # Model czasem zamiast prawdziwej treści wpisuje własny, pokrętny opis sytuacji
             # (np. "Proszę o kontakt z Pawłem, bo ktoś nie skontaktował się" — bez sensu jako
-            # wiadomość). 1:1 zabezpieczenie z cascade (flows_contact.py::handle_set_contact_message)
+            # wiadomość). 1:1 zabezpieczenie z cascade (cascade::handle_set_contact_message)
             # — odrzuć i każ dopytać, zamiast wysyłać śmieciowego emaila.
             logger.warning(f"📞 [REALTIME TEST] contact_owner: mętna wiadomość, odrzucam: {message[:60]!r}")
             await params.result_callback({"status": "error", "reason": "message_too_vague"})
@@ -106,9 +106,8 @@ def build_contact_owner_tool(
         if sent:
             call_state["ended"] = True
 
-            # Zaplanuj rozłączenie po TTS — ta sama logika co bot.py::save_and_confirm_message
-            # (sleep + EndFrame — nie czekamy na realny koniec audio, patrz komentarz przy say_now
-            # w bot_gemini_test.py).
+            # Rozłączenie po potwierdzeniu: stałe opóźnienie zamiast czekania na koniec audio
+            # (usługi realtime nie sygnalizują go w porę).
             async def auto_hangup():
                 await asyncio.sleep(6.0)  # dłużej niż w say_now — tu bot jeszcze SAM formułuje potwierdzenie
                 try:

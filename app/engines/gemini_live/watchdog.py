@@ -20,23 +20,12 @@ SILENT_HANG_TIMEOUT = 5
 
 
 async def speak_directly(task: PipelineTask, call_state: dict, text: str):
-    """Wypowiada DOKŁADNY tekst przez `fallback_tts`, z całkowitym pominięciem Gemini
-    Live — wstrzykuje TTSSpeakFrame prosto do kolejki pipeline'u. Gemini mówi zawsze
-    własnym głosem (modalities=AUDIO); `fallback_tts` siedzi w osobnej gałęzi
-    ParallelPipeline wyłącznie pod TTSSpeakFrame (idle-nudge, patrz komentarz przy
-    budowie pipeline'u) — tam TTSService ma zdefiniowaną obsługę
-    TTSSpeakFrame jako niezależnej, doraźnej wypowiedzi (patrz źródło pipecat
-    tts_service.py) — działa tak samo, gdy Gemini akurat też coś streamuje.
+    """Wypowiada dokładnie `text` zapasowym TTS, z pominięciem Gemini.
 
-    PO CO: poprzednia wersja (gemini_say_now) prosiła o to SAM MODEL — działało
-    tylko gdy sesja Gemini Live żyje. Złapane na żywym telefonie 16.08.2026: gdy
-    sesja cicho się zawiesza, prośba wysłana DO modelu nie daje efektu. Rozwiązanie
-    z cascade to TTSSpeakFrame idący prosto do TTS z pominięciem LLM — tu robimy to
-    samo dla Realtime/Gemini Live.
-
-    Dlatego NIE ustawia "awaiting_model_response_since" — nie czekamy tu na Gemini,
-    to pole zostaje zarezerwowane wyłącznie dla wykrywania braku odpowiedzi na
-    REALNE pytania klienta (ustawiane w GeminiUserMonitor)."""
+    Prośba skierowana do modelu nie zadziała, gdy jego sesja właśnie ucichła — a to
+    wtedy najbardziej potrzebujemy się odezwać. Nie ustawia awaiting_model_response_since:
+    to pole dotyczy wyłącznie odpowiedzi modelu na wypowiedzi klienta.
+    """
     call_state["suppress_idle_reset"] = True
     await task.queue_frame(TTSSpeakFrame(text=text))
 
@@ -44,14 +33,11 @@ async def speak_directly(task: PipelineTask, call_state: dict, text: str):
 
 
 async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=None):
-    """Odpowiednik monitor_call_health() (bot_openai_realtime.py) dla Gemini
-    Live — ta sama logika progów (IDLE_WARNING_SECONDS/IDLE_HANGUP_SECONDS/MAX_CALL_DURATION,
-    stałe zduplikowane celowo w obu plikach z tymi samymi wartościami, patrz komentarz
-    przy ich definicji wyżej w tym pliku), tylko wywołuje speak_directly() zamiast say_now().
+    """Pętla nadzoru rozmowy (co 2 s): zawieszenie modelu, cisza klienta, limit czasu.
 
-    `llm`: instancja GeminiLiveLLMService — potrzebna do wymuszenia reconnectu przy cichym
-    zawieszeniu sesji (patrz SILENT_HANG_TIMEOUT). Opcjonalna (None) dla wstecznej zgodności,
-    ale bez niej watchdog tylko zaloguje problem, nie naprawi go."""
+    `llm` (GeminiLiveLLMService) jest potrzebny do reconnectu po cichym zawieszeniu —
+    bez niego problem zostanie tylko zalogowany.
+    """
     call_start = time.time()
     call_state["idle_since"] = call_start
     idle_warning_given = False
@@ -67,10 +53,8 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
         elapsed = time.time() - call_start
         silence = time.time() - call_state["idle_since"]
 
-        # Cichy hang sesji: klient realnie coś powiedział (GeminiUserMonitor)
-        # i minęło SILENT_HANG_TIMEOUT bez ŻADNEJ reakcji — ani audio, ani tekstu. To NIE jest
-        # zwykła cisza klienta (ta jest obsłużona niżej przez IDLE_*), tylko martwa sesja Gemini
-        # Live bez wyjątku po stronie WebSocketu — pipecat sam tego nie wykryje (patrz stała).
+        # Ciche zawieszenie: klient coś powiedział, a model nie reaguje (pipecat sam
+        # reconnectuje tylko po wyjątku, a tu wyjątku nie ma).
         awaiting_since = call_state.get("awaiting_model_response_since")
         if awaiting_since and (time.time() - awaiting_since) > SILENT_HANG_TIMEOUT:
             hang_s = time.time() - awaiting_since
@@ -78,14 +62,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             call_state["suppress_idle_reset"] = False
 
             if call_state.get("silent_hang_reconnect_used"):
-                # Reconnect już raz próbowaliśmy w tej rozmowie i sesja mimo to ucichła
-                # DRUGI raz — złapane na żywym telefonie 16.08.2026: druga próba, wysłana
-                # zaraz po pierwszym reconnect, sama trafiła w tę samą ścianę ciszy (bo
-                # _reconnect() zwraca się zanim sesja jest faktycznie w pełni gotowa), co
-                # dawało dwa reconnecty pod rząd zamiast czystego rozłączenia. Traktujemy to
-                # teraz tak jak zwykłą długą ciszę klienta — kończymy połączenie, bez próby
-                # mówienia pożegnania (ten kanał już dwa razy zawiódł, nie ma sensu próbować
-                # trzeci raz).
+                # Drugie zawieszenie mimo reconnectu — kończymy zamiast reconnectować w kółko.
                 logger.warning(
                     f"🧟 [GEMINI LIVE TEST] Model nie odpowiedział {hang_s:.0f}s po wysłaniu, "
                     "PO RAZ DRUGI mimo reconnectu — kończę połączenie zamiast próbować dalej"
@@ -107,34 +84,15 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
                     logger.info("🔄 [GEMINI LIVE TEST] Reconnect po cichym zawieszeniu wykonany")
                 except Exception as e:
                     logger.error(f"🔄 [GEMINI LIVE TEST] Reconnect po cichym zawieszeniu NIEUDANY: {e}")
-            # Po reconnect dajemy modelowi świeży zegar ciszy zamiast od razu liczyć dalej —
-            # inaczej mogłoby natychmiast wystrzelić IDLE_HANGUP poniżej na starym idle_since.
+            # Świeży zegar ciszy — inaczej od razu zadziałałoby rozłączenie z powodu ciszy.
             call_state["idle_since"] = time.time()
             if reconnect_ok:
-                # KRYTYCZNE dla UX: bez tego klient słyszy martwą ciszę aż do NASTĘPNEGO
-                # normalnego cyklu IDLE_WARNING_SECONDS (do 10s więcej) — sesja jest już
-                # naprawiona, ale nikt mu tego nie mówi. Odzywamy się od razu po reconnect.
-                # Jeśli TA wiadomość też przepadnie (sesja jeszcze się nie rozgrzała) —
-                # kolejne wykrycie trafi w gałąź "już próbowaliśmy" powyżej i po prostu
-                # się rozłączy, zamiast reconnectować w kółko.
-                #
-                # POPRAWKA 2026-08-23: było to samo zdanie co przy zwykłej ciszy klienta
-                # ("czy nadal jesteśmy połączeni?") — mylące, bo tu to NIE klient milczał,
-                # tylko model nie odpowiedział na coś co klient realnie powiedział (stąd w
-                # ogóle SILENT_HANG_TIMEOUT/reconnect, patrz gałąź wyżej). Złapane na żywym
-                # telefonie 23.08.2026: klient zadał pytanie, sesja ucichła, po reconnect
-                # usłyszał "czy nadal jesteśmy połączeni?" i pomyślał że to on nie został
-                # usłyszany od początku — musiał powtarzać pytanie od nowa. Nowy tekst prosi
-                # wprost o powtórzenie, zamiast sugerować że to klient zamilkł. Celowo BEZ
-                # "mogłabym"/"mogłabym" itp. (forma żeńska) — to zdanie leci sztywno przez TTS
-                # dla KAŻDEGO tenanta, niezależnie od głosu (żeński/męski), więc musi być
-                # tak samo neutralne jak reszta scripted-utterance w tym pliku (bezokolicznik
-                # po "proszę", zero odmiany przez rodzaj).
+                # Odzywamy się od razu i prosimy o powtórzenie — to model nie usłyszał,
+                # a nie klient zamilkł. Zdanie neutralne rodzajowo (ten sam tekst dla każdego głosu).
                 await speak_directly(task, call_state, "Przepraszam, proszę powtórzyć pytanie.")
             continue
 
-        # Patrz komentarz przy tej samej gałęzi w monitor_call_health() (sekcja OpenAI
-        # Realtime) — dopóki bot nie wypowiedział choćby powitania, nie liczymy ciszy.
+        # Dopóki nie padło powitanie, nie liczymy ciszy — ale nie czekamy na nie w nieskończoność.
         if not call_state.get("greeted"):
             if elapsed > IDLE_HANGUP_SECONDS * 2:
                 logger.warning(f"🔇 [GEMINI LIVE TEST] Powitanie nie nadeszło po {elapsed:.0f}s — kończę połączenie")
@@ -144,20 +102,8 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             continue
 
         if silence > IDLE_HANGUP_SECONDS:
-            # ⚠️ Race złapany na żywym telefonie (16.08.2026, ta sama sesja co sample_rate/
-            # idle-nudge fixy wyżej): transkrypcja Gemini ma opóźnienie ~1-2s względem
-            # faktycznej mowy klienta. Gdy klient zaczął odpowiadać dosłownie w tej samej
-            # sekundzie w której ten warunek się spełnił, jego transkrypcja (i reset idle_since
-            # w GeminiUserMonitor) potrafiła dotrzeć KILKASET MS PO TYM jak już zdążyliśmy
-            # zakolejkować pożegnanie — efekt zaobserwowany na żywo: prawdziwa odpowiedź
-            # Gemini ("Najtańszy pakiet, czyli Starter...") i nasze "Nie słyszę odpowiedzi..."
-            # zaczęły grać JEDNOCZEŚNIE (dwie niezależne gałęzie audio w ParallelPipeline), a
-            # samo rozłączenie i tak się odwlokło aż do końca tej realnej odpowiedzi
-            # (GeminiLiveLLMService sam odkłada EndFrame do końca tury bota — "Deferring
-            # handling EndFrame until bot turn is finished"). Fix: krótka dogrywka na
-            # dogonienie STT tuż PRZED nieodwracalnym rozłączeniem — jeśli w tym oknie
-            # idle_since jednak się odświeżył (klient naprawdę coś powiedział), odpuszczamy
-            # TĘ próbę zamiast mówić na raz z prawdziwą odpowiedzią.
+            # Transkrypcja Gemini spóźnia się 1-2 s względem mowy — dajemy chwilę, żeby nie
+            # pożegnać klienta, który właśnie zaczął odpowiadać.
             await asyncio.sleep(1.5)
             silence = time.time() - call_state["idle_since"]
             if call_state.get("ended") or silence <= IDLE_HANGUP_SECONDS:
@@ -168,16 +114,7 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
             goodbye_started_at = time.time()
             await speak_directly(task, call_state, "Nie słyszę odpowiedzi. Dziękuję za kontakt, do widzenia!")
             await asyncio.sleep(3.0)
-            # ⚠️ DRUGA linia obrony (16.08.2026, kolejny test tej samej sesji): 1.5s dogrywka
-            # wyżej nie zawsze wystarcza — transkrypcja Gemini potrafi spóźnić się bardziej
-            # (złapane na żywo: ~2.2s). Jeśli klient JEDNAK zdążył odpowiedzieć W TRAKCIE
-            # mówienia pożegnania lub tego sleep(3.0) — GeminiUserMonitor już zdążył odświeżyć
-            # idle_since na TranscriptionFrame (nie licząc scripted-utterance resetów, te są
-            # wyłączone przez suppress_idle_reset od commitu 6f5e4ca) — cofamy rozłączenie
-            # zamiast ucinać rozmowę EndFrame'em w środku realnej odpowiedzi Gemini na to,
-            # co klient właśnie powiedział. Pojedyncze nałożenie się audio (pożegnanie +
-            # zaczynająca się odpowiedź Gemini) może się zdarzyć — akceptowalne, priorytetem
-            # jest żeby rozmowa się NIE URYWAŁA gdy klient jednak coś powiedział.
+            # Klient jednak odpowiedział w trakcie pożegnania — nie urywamy rozmowy.
             if call_state["idle_since"] > goodbye_started_at:
                 logger.info(
                     "↩️ [GEMINI LIVE TEST] Klient jednak odpowiedział w trakcie pożegnania — anuluję rozłączenie"
@@ -189,19 +126,8 @@ async def monitor_gemini_call_health(task: PipelineTask, call_state: dict, llm=N
 
         if silence > IDLE_WARNING_SECONDS and not idle_warning_given:
             if call_state.get("waiting_for_bot_audio"):
-                # POPRAWKA 2026-08-31: złapane na żywym telefonie — klient zadał dłuższe
-                # pytanie, lokalny VAD poprawnie zarejestrował koniec jego wypowiedzi
-                # (waiting_for_bot_audio=True), ale Gemini tym razem potrzebował >6s na
-                # odpowiedź (zaobserwowane TTFB do 7.7s w tej samej rozmowie — normalna
-                # zmienność, nie zawieszenie). idle_since nie ma jak się odświeżyć w tym
-                # oknie (nic nowego nie leci ani od klienta, ani od bota), więc licznik
-                # ciszy rósł mimo że klient WŁAŚNIE skończył mówić — nudge "czy nadal
-                # jesteśmy połączeni?" (fallback_tts) wystartował i zagrał RÓWNOLEGLE z
-                # prawdziwą odpowiedzią Gemini, gdy ta w końcu nadeszła sekundę później.
-                # Fix: dopóki lokalnie wiemy że czekamy na odpowiedź po realnej wypowiedzi
-                # klienta, nie traktuj tego jak ciszy — pomiń TEN cykl ostrzeżenia.
-                # IDLE_HANGUP_SECONDS niżej (znacznie dłuższy próg) i tak zabezpiecza przed
-                # realnym zawieszeniem sesji niezależnie od tej flagi.
+                # Klient skończył mówić, model jeszcze myśli (bywa >6 s) — to nie cisza.
+                # Przed prawdziwym zawieszeniem chroni i tak dłuższy próg IDLE_HANGUP_SECONDS.
                 pass
             else:
                 logger.warning(f"🔇 [GEMINI LIVE TEST] Cisza {silence:.0f}s — dopytuję czy słyszy")

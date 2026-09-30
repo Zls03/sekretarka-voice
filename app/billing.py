@@ -4,13 +4,13 @@ from loguru import logger
 
 from app.db import db, saas_db
 
-PRICE_PER_MINUTE = 0.39  # zł/min — MUSI być zsynchronizowane z bot.py::PRICE_PER_MINUTE
+PRICE_PER_MINUTE = 0.39  # zł/min — stawka rozliczeniowa kredytów SaaS
 
 
 async def apply_call_charge(
     tenant_id: str, is_saas_tenant: bool, call_sid: str, call_status: str, duration: int
 ) -> None:
-    """Nalicza minuty/kredyty za zakończoną rozmowę. 1:1 port bot.py::apply_call_charge
+    """Nalicza minuty/kredyty za zakończoną rozmowę. 1:1 port cascade::apply_call_charge
     (sama logika finansowa, bez zmian) — wołane z /vonage/events poniżej."""
     duration_minutes = duration / 60.0
 
@@ -84,12 +84,12 @@ async def apply_call_charge(
 
 
 async def is_call_allowed(tenant: dict) -> bool:
-    """Pre-call guard, 1:1 z bot.py (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
+    """Pre-call guard, jak w usuniętym silniku cascade (sprawdzane PRZED startem pipeline'u, w /twilio/incoming-gemini-test
     i /vonage/answer poniżej). Bez tego zablokowany/bez-środków tenant i tak dostawałby pełne, płatne
     połączenie z OpenAI Realtime — apply_call_charge() ustawia is_blocked DOPIERO PO zakończonej rozmowie,
     więc to jedyne miejsce które faktycznie zapobiega rozpoczęciu kosztownej sesji.
 
-    Dla SaaS get_tenant_by_phone() i tak już filtruje is_blocked=0 w SQL (patrz helpers.py), więc ten
+    Dla SaaS get_tenant_by_phone() i tak już filtruje is_blocked=0 w SQL (patrz tenants.py), więc ten
     check tu to głównie: (1) obrona przed niespójnością (is_blocked jeszcze nie ustawione, a saldo już
     zeszło poniżej progu), (2) jedyny check dla tenantów admina, gdzie SQL filtruje tylko is_active."""
     if tenant.get("is_blocked"):

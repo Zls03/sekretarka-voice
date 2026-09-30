@@ -11,7 +11,7 @@ from app.db import db, saas_db
 from app.post_call.summary import parse_summary_fields
 
 #
-# 1:1 z cascade (bot.py::save_call_log + bot.py::apply_call_charge) — te same tabele
+# 1:1 z cascade (cascade::save_call_log + cascade::apply_call_charge) — te same tabele
 # (call_logs, call_transcripts), te same kolumny, ta sama logika naliczania. Dzięki temu
 # zakładka "Logi połączeń" w panelu pokazuje rozmowy Realtime BEZ ŻADNYCH zmian w UI —
 # panel nie wie i nie musi wiedzieć że to inny silnik pod spodem.
@@ -85,7 +85,7 @@ async def persist_call_summary(tenant: dict, call_sid: str, summary: str) -> Non
 
 async def save_call_transcript(tenant: dict, call_sid: str, caller_phone: str, context: LLMContext) -> None:
     """Zapisuje wiersz call_logs (in_progress) + transkrypt do call_transcripts.
-    1:1 z bot.py::save_call_log, tylko czyta LLMContext zamiast flow_manager.get_current_context()."""
+    1:1 z cascade::save_call_log, tylko czyta LLMContext zamiast flow_manager.get_current_context()."""
     if not call_sid:
         logger.warning("📊 [REALTIME TEST] Brak call_sid — pomijam zapis transkryptu/logu")
         return

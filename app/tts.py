@@ -135,7 +135,7 @@ def create_tts_service(tenant: dict, sample_rate: int | None = None):
 
     sample_rate: opcjonalne nadpisanie częstotliwości audio (domyślnie None —
     każdy provider używa swojej dotychczasowej wartości dobranej pod telefonię
-    w kaskadzie). Używane m.in. przez trasy Gemini Live (bot_gemini_test.py),
+    w kaskadzie). Używane m.in. przez trasy Gemini Live (telephony/twilio.py),
     gdzie fallback_tts musi generować audio na TEJ SAMEJ częstotliwości co
     Gemini Live (24000 Hz) — output transport ma jeden, współdzielony, stanowy
     resampler (SOXRStreamAudioResampler), który rzuca wyjątkiem przy drugiej,

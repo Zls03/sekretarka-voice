@@ -72,7 +72,7 @@ def _finish(call_state: dict, text: str, status: str) -> dict:
 async def _answer_general_question(question: str, tenant: dict, context_box: dict) -> str:
     """Odpowiada na pytanie klienta niezwiązane bezpośrednio z krokiem rezerwacji — 1:1 z
     _answer_and_continue() w cascade, tylko historia rozmowy czytana z LLMContext
-    (context_box["context"], ten sam wzorzec co realtime_tools.py::generate_conversation_summary)
+    (context_box["context"], ten sam wzorzec co post_call/summary.py::generate_conversation_summary)
     zamiast flow_manager.task.get_context_messages(). To JEDYNE miejsce w tym pliku gdzie
     tekst do powiedzenia pochodzi z osobnego wywołania LLM, nie z czystej logiki Pythona —
     dokładnie jak w cascade (tam też osobne wywołanie gpt-4.1-mini), więc to nie regresja."""
@@ -790,10 +790,10 @@ def _record_visit_in_crm(state: dict, tenant: dict, caller_phone: str) -> None:
 def build_book_appointment_tool(
     tenant: dict, caller_phone: str, call_state: dict, context_box: dict, channel: str = "twilio"
 ) -> FunctionSchema:
-    """FunctionSchema dla rezerwacji — WARUNKOWO dołączane z bot_gemini_test.py tylko gdy
+    """FunctionSchema dla rezerwacji — WARUNKOWO dołączane w engines/common.py::build_call_tools tylko gdy
     tenant.get("booking_enabled")==1 (nazwa pola do potwierdzenia przy podpinaniu).
 
-    call_state: ten sam call_state/gemini_state dict co reszta realtime_tools.py — trzyma
+    call_state: ten sam call_state/gemini_state dict co pozostałe narzędzia — trzyma
     stan bookingu w call_state["booking"] (dict, pusty gdy nic w toku).
 
     context_box: {"context": None}, ten sam wzorzec co w build_contact_owner_tool — LLMContext

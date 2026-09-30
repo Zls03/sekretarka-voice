@@ -87,7 +87,7 @@ async def build_human_first_ncco(
 
 async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
     """Transkrypcja nagrania rozmowy odebranej osobiście przez właściciela (Deepgram,
-    tryb prerecorded — INNY endpoint niż live streaming w bot.py/cascade). multichannel
+    tryb prerecorded — INNY endpoint niż live streaming w usuniętym silniku cascade). multichannel
     rozdziela oba kanały (patrz split="conversation" w build_human_first_ncco) na osobne
     transkrypty, utterances=true grupuje słowa w zdania z czasem startu — łączymy oba
     kanały w jedną chronologiczną listę "Klient: .../Właściciel: ..." pod
@@ -99,7 +99,7 @@ async def _transcribe_recording_deepgram(audio_bytes: bytes) -> list[str]:
     try:
         import httpx
 
-        # nova-3 + language=pl — TEN SAM model co bot.py/cascade (DeepgramSTTService,
+        # nova-3 + language=pl — TEN SAM model co usuniętym silniku cascade (DeepgramSTTService,
         # live_options) używa dla polskiego na żywo od dawna, sprawdzony na produkcji.
         # DEEPGRAM_BASE_URL (opcjonalny, "api.eu.deepgram.com") — ten sam env var co
         # cascade, żeby oba tory trzymały się tego samego regionu gdy ktoś go ustawi.
@@ -199,7 +199,7 @@ async def process_human_first_recording(
 ) -> None:
     """Orkiestruje całość: pobranie nagrania -> Deepgram -> podsumowanie (ten sam GPT-4.1-mini
     co dla AI) -> zapis do CRM. Wołane jako osobny task (fire-and-forget) z webhooka
-    /vonage/human-first-recording w bot_gemini_test.py — Vonage dostaje szybkie potwierdzenie,
+    /vonage/human-first-recording (telephony/vonage.py) — Vonage dostaje szybkie potwierdzenie,
     a przetwarzanie (kilka-kilkanaście sekund: pobranie + Deepgram + GPT) dzieje się w tle."""
     try:
         audio_bytes = await download_vonage_recording(recording_url)

@@ -36,7 +36,7 @@ async def get_crm_contact_name(firm_id: str, phone: str) -> str:
 async def maybe_save_contact_name(firm_id: str, phone: str, name: str) -> None:
     """Zapisuje imię do crm_contacts TYLKO gdy dla tego numeru jeszcze nie ma żadnego
     imienia — nigdy nie nadpisuje tego co właściciel już ręcznie wpisał w portalu /crm.
-    Wołane po udanym contact_owner (patrz realtime_tools.py/bot_elevenlabs_agent.py) —
+    Wołane po udanym contact_owner (tools/contact_owner.py, engines/elevenlabs/webhooks.py) —
     tam customer_name to coś co klient SAM wprost podał (model musiał o to zapytać, żeby
     w ogóle wypełnić ten parametr narzędzia), nie zgadywanie z transkryptu, więc ryzyko
     zapisania złego imienia jest niskie. Błędy połykane — to poboczny, nieblokujący zapis,

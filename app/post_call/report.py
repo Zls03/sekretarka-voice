@@ -27,9 +27,9 @@ async def maybe_send_call_summary(
     bez odłożonej wiadomości — zachowanie identyczne jak wcześniej.
 
     call_sid: 2026-09-23 — gdy podane, streszczenie + priorytet zapisują się też do wiersza
-    call_logs (portal /crm dla klienta, patrz helpers.py::persist_call_summary) — WYMAGA żeby
+    call_logs (portal /crm dla klienta, patrz call_logs.py::persist_call_summary) — WYMAGA żeby
     save_call_transcript() (tworzy wiersz call_logs) wykonało się PRZED tym wywołaniem, inaczej
-    UPDATE trafia w pustkę (patrz kolejność w bot_gemini_test.py/bot_openai_realtime.py)."""
+    UPDATE trafia w pustkę (patrz kolejność w engines/common.py::finalize_call)."""
     lead_email_enabled = int(tenant.get("lead_email_enabled") or 0)
     to_email = tenant.get("lead_email") or tenant.get("notification_email") or tenant.get("email")
     pending = (call_state or {}).get("pending_contact_owner")

@@ -33,12 +33,12 @@ def extract_conversation_lines(context: LLMContext) -> list[str]:
 
 async def generate_conversation_summary(context: LLMContext, tenant: dict | None = None) -> str:
     """Streszcza rozmowę przez szybkie wywołanie GPT. Ten sam pomysł co
-    flows.py::generate_conversation_summary, tylko czyta uniwersalny LLMContext
+    cascade::generate_conversation_summary, tylko czyta uniwersalny LLMContext
     (context.get_messages(), format OpenAI: {"role": ..., "content": ...}) zamiast
     flow_manager.get_current_context() z pipecat_flows.
 
     Ekstrakcja z LLMContext -> lista "Klient: .../Asystent: ..." (extract_conversation_lines)
-    -> delegacja do summarize_conversation_lines() (wspólnej z bot_elevenlabs_agent.py, patrz tam)."""
+    -> delegacja do summarize_conversation_lines() (wspólnej z engines/elevenlabs/webhooks.py, patrz tam)."""
     conversation = extract_conversation_lines(context)
     return await summarize_conversation_lines(conversation, tenant)
 
@@ -49,7 +49,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
     transkrypt w zupełnie innym formacie, data.transcript[] z rolami "agent"/"user",
     nie LLMContext) mógł korzystać z DOKŁADNIE tej samej logiki podsumowania/ekstrakcji
     zamiast polegać na wbudowanym streszczeniu ElevenLabs (analysis.transcript_summary)
-    — patrz bot_elevenlabs_agent.py::elevenlabs_post_call, gdzie transkrypt jest
+    — patrz engines/elevenlabs/webhooks.py::elevenlabs_post_call, gdzie transkrypt jest
     konwertowany do tego samego formatu list stringów "Klient: .../Asystent: ..."
     przed wywołaniem tej funkcji.
 
@@ -178,7 +178,7 @@ async def summarize_conversation_lines(conversation: list[str], tenant: dict | N
 
         client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
-            model="gpt-4.1-mini",  # ten sam model co flows.py::send_message_email w cascade
+            model="gpt-4.1-mini",  # ten sam model co cascade::send_message_email w cascade
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": conversation_text},

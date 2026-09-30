@@ -611,3 +611,10 @@ i te same 3 narzędzia webhook — wszystkie ID poniżej to ID z NOWEGO konta, s
 nieaktualne. ELEVENLABS_API_KEY/ELEVENLABS_AGENT_ID (Railway env) podmienione razem z tym
 pushem, żeby nie było okna gdzie kod i env wskazują na różne konta.
 ```
+
+## Pełne komentarze sprzed skrócenia (2026-09-30)
+
+W modułach silników (`app/engines/gemini_live/`, `app/engines/openai_realtime/`) komentarze
+opisujące przebieg debugowania na żywych rozmowach (daty, objawy, kolejne próby) zastąpiono
+zwięzłym „dlaczego”. Pełne wersje: `git show da31d86:app/engines/gemini_live/monitors.py`
+(analogicznie `llm.py`, `watchdog.py` oraz `openai_realtime/*`).

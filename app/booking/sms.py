@@ -89,7 +89,7 @@ async def send_booking_sms_vonage(
     dla tenantów obsługiwanych przez Vonage (numer firmy NIE jest numerem Twilio, więc
     send_booking_sms() zwróci błąd Twilio 21659 "not a Twilio phone number"). Wymaga
     VONAGE_API_KEY/VONAGE_API_SECRET (klasyczny klucz/sekret, INNE poświadczenie niż
-    VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY używane do transferu połączeń w realtime_tools.py —
+    VONAGE_APPLICATION_ID/VONAGE_PRIVATE_KEY używane do transferu połączeń (telephony/vonage_api.py) —
     to osobny produkt Vonage, trzeba go włączyć/skonfigurować osobno w panelu Vonage)."""
     vonage_key = settings.vonage_api_key
     vonage_secret = settings.vonage_api_secret

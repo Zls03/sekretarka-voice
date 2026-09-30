@@ -159,12 +159,12 @@ def normalize_time(time_val) -> str:
 # W przeciwieństwie do book_appointment (rezerwacja W TOKU tej rozmowy, trzymana w
 # call_state["booking"]) ten tool operuje na wizytach zapisanych WCZEŚNIEJ, w innych
 # rozmowach — znalezionych po numerze dzwoniącego przez panel CRM (ten sam
-# get_client_profile() co karmi CRM hint w system prompcie, patrz realtime_prompt.py).
+# get_client_profile() co karmi CRM hint w system prompcie, patrz prompt/instructions.py).
 # Klient NIE podaje kodu wizyty — identyfikacja jest wyłącznie po caller_phone, dokładnie
 # jak przy book_appointment (klient też nie zna żadnych wewnętrznych ID).
 #
 # Realny automatyczny cancel/reschedule (nie "zostawię wiadomość właścicielowi" jak w
-# cascade — patrz flows.py::handle_manage_booking) jest możliwy bo panel ma już gotowe
+# cascade — patrz cascade::handle_manage_booking) jest możliwy bo panel ma już gotowe
 # PATCH/DELETE /api/panel/{slug}/bookings/{id} (usuwa/odtwarza wydarzenie w Google
 # Calendar, wysyła maila do pracownika) — tylko nikt wcześniej nie podłączył tego pod
 # telefon. Fallback na "brak wizyty" gdy get_client_profile nie widzi nic z booking_id

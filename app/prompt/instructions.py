@@ -11,7 +11,7 @@ from app.prompt.business_context import assistant_gender_forms, build_business_c
 
 def build_greeting_message(tenant: dict, client_profile: dict | None = None) -> str:
     """Powitanie + personalizacja dla powracającego klienta.
-    1:1 logika z flows.py::create_initial_node (dedup imienia w powitaniu firmy)."""
+    1:1 logika z cascade::create_initial_node (dedup imienia w powitaniu firmy)."""
     business_name = tenant.get("name", "salon")
     base_greeting = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
 
@@ -31,7 +31,7 @@ def build_greeting_message(tenant: dict, client_profile: dict | None = None) -> 
 
 
 def _build_crm_hint(client_profile: dict) -> str:
-    """CRM hint — nadchodzące wizyty i historia. 1:1 logika z flows.py::create_initial_node."""
+    """CRM hint — nadchodzące wizyty i historia. 1:1 logika z cascade::create_initial_node."""
     if not client_profile:
         return ""
 
@@ -146,7 +146,7 @@ Jeśli klient pyta "kiedy byłem ostatnio?", "kiedy ostatnia wizyta?", "ile razy
 
 
 def build_role_prompt(tenant: dict, client_profile: dict | None = None) -> str:
-    """Tożsamość + styl + kontekst biznesowy + CRM. 1:1 treść z flows.py::create_initial_node's
+    """Tożsamość + styl + kontekst biznesowy + CRM. 1:1 treść z cascade::create_initial_node's
     role_messages (bez functions/task_messages — te są specyficzne dla FlowManagera)."""
     business_name = tenant.get("name", "salon")
     booking_enabled = tenant.get("booking_enabled", 1) == 1
@@ -312,12 +312,12 @@ def build_realtime_instructions(
     blok promptu na sztywno mówił "połączenie na żywo jeszcze w budowie" NIEZALEŻNIE od
     tego czy transfer_to_owner był akurat dostępny — model więc odmawiał przekierowania
     nawet gdy klient wprost o nie poprosił i narzędzie realnie istniało (sprzeczność z
-    opisem samego narzędzia w realtime_tools.py::build_contact_owner_tool).
+    opisem samego narzędzia w tools/contact_owner.py::build_contact_owner_tool).
 
     has_contact_owner: False gdy tenant świadomie wyłączył zbieranie/przekazywanie wiadomości
     właścicielowi (panel: "Zbieranie wiadomości dla właściciela" = off, pole
     contact_owner_enabled=0) — narzędzie contact_owner wtedy w ogóle NIE jest rejestrowane
-    (patrz bot_gemini_test.py/bot_openai_realtime.py), więc model i tak nie mógłby go wywołać;
+    (patrz engines/common.py::build_call_tools), więc model i tak nie mógłby go wywołać;
     ten blok tylko dopilnowuje żeby nie próbował OBIECAĆ przekazania wiadomości ani zbierać
     imienia/treści na darmo. Case zgłoszony 2026-09-01: tenant chce, żeby przy prośbie o
     kontakt z lekarzem/właścicielem model po prostu podał sposób kontaktu opisany w
@@ -543,7 +543,7 @@ pożegnanie, nie dwa. Bez wywołania tej funkcji rozmowa NIE ROZŁĄCZY SIĘ sam
 def append_known_caller_hint(prompt: str, known_name: str, has_contact_owner: bool = True) -> str:
     """Dokleja krótki blok informujący model, że dzwoniący to znany kontakt z portalu
     /crm (zakładka Klienci — imię wpisane ręcznie przez właściciela, albo zapisane
-    automatycznie po wcześniejszym contact_owner, patrz helpers.py::maybe_save_contact_name).
+    automatycznie po wcześniejszym contact_owner, patrz crm_contacts.py::maybe_save_contact_name).
 
     Świadomie NIEZALEŻNE od client_profile/_build_crm_hint wyżej (to osobny system —
     booking CRM przez internal API panelu, tylko dla firm z booking_enabled i historią

@@ -19,11 +19,7 @@ from app.config import settings
 from app.engines.common import CallFeatures, build_call_prompt
 
 OPENAI_REALTIME_MODEL = settings.openai_realtime_model
-
-
-# OpenAI Realtime nie ma osobnych głosów per-język (jak Google pl-PL-...) — to
-# uniwersalne persony głosowe, które mówią w języku z tekstu/instrukcji. "marin" to
-# obecnie flagowy, najbardziej naturalny głos OpenAI Realtime (stan na moją wiedzę).
+# Głosy OpenAI są wielojęzyczne — mówią w języku instrukcji; firma może wybrać własny.
 OPENAI_REALTIME_VOICE = settings.openai_realtime_voice
 
 
@@ -33,16 +29,12 @@ def build_realtime_llm(
     voice: str | None = None,
     speed: float | None = None,
 ):
-    """Buduje OpenAIRealtimeLLMService + parę context aggregatorów.
+    """Usługa OpenAI Realtime + para agregatorów kontekstu.
 
-    tools: lista FunctionSchema (z handler ustawionym na schemacie — LLMService
-    rejestruje je automatycznie z LLMContext, bez osobnego register_function).
-
-    voice/speed: per-tenant, NIE globalne — patrz wywołanie w websocket handlerach
-    (czytane z tenant.get("realtime_voice")/tenant.get("speaking_rate"), z fallbackiem
-    na OPENAI_REALTIME_VOICE/domyślne API gdy tenant jeszcze nic nie ustawił — to
-    pozwala docelowo wybierać głos/tempo w panelu per-firma, tak jak już działa dla
-    cascade, zamiast na sztywno w kodzie/zmiennej środowiskowej dla całego serwisu)."""
+    Narzędzia rejestrują się same z kontekstu (handler jest w FunctionSchema).
+    Głos i tempo są ustawieniami firmy; brak wartości = domyślny głos i tempo API.
+    Kontekst jest zwracany osobno — po rozmowie czytają go transkrypt i podsumowanie.
+    """
     resolved_voice = voice or OPENAI_REALTIME_VOICE
     logger.info(
         f"🧠 OpenAI Realtime, model={OPENAI_REALTIME_MODEL}, voice={resolved_voice}, speed={speed or 'domyślne API'}"
@@ -79,7 +71,7 @@ def build_realtime_llm(
     # więc zapisy do kontekstu muszą iść w trybie "trailing" zamiast czekać na te ramki.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context, realtime_service_mode=True)
     # context zwracany też osobno — potrzebny na końcu rozmowy do raportu
-    # (realtime_tools.py::maybe_send_call_summary czyta context.get_messages()).
+    # (post_call/report.py::maybe_send_call_summary czyta context.get_messages()).
     return llm, user_aggregator, assistant_aggregator, context
 
 

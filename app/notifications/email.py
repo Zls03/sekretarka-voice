@@ -7,7 +7,7 @@ from app.telephony.vonage_api import TRANSFER_RING_TIMEOUT
 
 
 async def send_message_email(tenant: dict, customer_name: str, message: str, phone: str, to_email: str) -> bool:
-    """Wyślij email z wiadomością do właściciela. Uproszczona kopia flows.py::send_message_email
+    """Wyślij email z wiadomością do właściciela. Uproszczona kopia cascade::send_message_email
     (bez GPT-streszczenia kontekstu rozmowy — bonus, nie rdzeń funkcji)."""
     resend_api_key = settings.resend_api_key
     if not resend_api_key:
@@ -175,7 +175,7 @@ async def send_call_summary_email(
 
 async def send_missed_transfer_email(business_name: str, caller_phone: str, to_email: str) -> bool:
     """Email gdy próba żywego przekierowania (transfer_to_owner) skończyła się timeout/busy/
-    rejected/failed/unanswered — patrz /vonage/transfer-fallback w bot_gemini_test.py, które
+    rejected/failed/unanswered — patrz /vonage/transfer-fallback (telephony/vonage.py), które
     woła tę funkcję. Klient w tym samym momencie słyszy zapowiedź (NCCO zwrócone z tego
     webhooka) że wiadomość zostanie przekazana — to jest ta wiadomość, więc właściciel i tak
     się dowiaduje mimo nieodebrania. Przyjmuje same stringi (nie tenant dict) — webhook nie ma

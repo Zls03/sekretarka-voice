@@ -107,7 +107,7 @@ async def manage_booking_step(args: dict, tenant: dict, caller_phone: str, call_
         # Klient mógł tylko zapytać "czy mam wizytę" bez chęci zmiany czegokolwiek — informuj,
         # nie zakładaj z góry akcji. Bez "Pan/Pani" ze slashem (TTS czyta to dosłownie jako
         # "pan ukośnik pani" — złapane na żywym telefonie), zdanie bezpłciowe jak wszędzie
-        # indziej w prompcie (patrz FORMA ZWRACANIA SIĘ w realtime_prompt.py).
+        # indziej w prompcie (patrz FORMA ZWRACANIA SIĘ w prompt/instructions.py).
         # Imię z SAMEJ rezerwacji (customer_name), nie z ogólnego profilu klienta — może się
         # różnić (ktoś dzwoni z domowego numeru i pyta o wizytę innego domownika). Tylko tutaj,
         # NIE w liście do rozróżnienia kilku wizyt (_describe_booking) — tam ten sam dzwoniący
@@ -229,7 +229,7 @@ async def manage_booking_step(args: dict, tenant: dict, caller_phone: str, call_
 def build_manage_booking_tool(tenant: dict, caller_phone: str, call_state: dict) -> FunctionSchema:
     """FunctionSchema do odwoływania/przekładania wizyty umówionej WCZEŚNIEJ (inna rozmowa) —
     warunkowo dołączane tak samo jak book_appointment (ten sam booking_enabled + staff gate,
-    patrz bot_gemini_test.py). Nie wymaga osobnego call_state klucza poza "manage_booking"
+    patrz engines/common.py). Nie wymaga osobnego call_state klucza poza "manage_booking"
     (analogicznie do "booking" dla book_appointment) — oba mogą współistnieć w jednej rozmowie."""
 
     async def handle_manage_booking(params: FunctionCallParams):

@@ -38,7 +38,7 @@ router = APIRouter()
 # Dla Vonage nie ma takiego skrótu: ElevenLabs ma oficjalną integrację (patrz
 # elevenlabs.io/docs/conversational-ai/phone-numbers/telephony/vonage), ale w formie
 # SAMODZIELNIE HOSTOWANEGO mostu WebSocket — dokładnie tej samej roli co już pełni
-# bot_gemini_test.py dla Gemini Live/OpenAI Realtime na Vonage. Więc budujemy go tu,
+# silniki Pipecat (Gemini Live/OpenAI Realtime) na Vonage. Więc budujemy go tu,
 # reużywając ten sam transport (FastAPIWebsocketTransport+VonageFrameSerializer,
 # audio L16/16kHz) i ten sam wzorzec lokalnego VAD dla przerwań (VADProcessor —
 # transport.output() sam czyści bufor audio na wykryte lokalnie mówienie klienta,
@@ -115,7 +115,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
         # w ciszy przez 7+ sekund po pożegnaniu bota, aż sam się rozłączył ręcznie.
         self._we_disconnected = False
         # Pomiar TTFB "user->bot audio", kotwiczony o lokalny VAD-stop — dokładnie ten sam
-        # wzorzec co GeminiUserMonitor/GeminiBotMonitor w bot_gemini_test.py (patrz tam pełny
+        # wzorzec co GeminiUserMonitor/GeminiBotMonitor (engines/gemini_live/monitors.py) (patrz tam pełny
         # docstring), żeby liczby były porównywalne 1:1 między silnikami/transportami.
         self._last_user_stop = None
         self._waiting_for_bot_audio = False
@@ -287,7 +287,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
     async def _hangup_after_elevenlabs_closed(self):
         logger.info("👋 [ELEVENLABS/VONAGE] ElevenLabs zakończył rozmowę — rozłączam Vonage")
         # Krótki odstęp na dogranie ewentualnego ogona audio już w buforze transportu
-        # (ten sam rząd wielkości co auto_hangup dla end_conversation w realtime_tools.py,
+        # (ten sam rząd wielkości co auto_hangup w tools/end_conversation.py,
         # tam 3.0s — tu krócej, bo pożegnanie ElevenLabs już w całości poleciało zanim
         # zamknęli WebSocket, w odróżnieniu od tamtej ścieżki gdzie EndFrame leci od razu
         # po samym WYWOŁANIU narzędzia, przed wypowiedzeniem pożegnania).

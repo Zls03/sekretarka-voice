@@ -49,7 +49,7 @@ def looks_too_short(text: str) -> bool:
     return len((text or "").strip()) < 10
 
 
-# Wymuszone, zaszyte w kodzie wypowiedzi bota (patrz bot_gemini_test.py::say_now) — dopytanie
+# Wymuszone, zaszyte w kodzie wypowiedzi bota (patrz engines/openai_realtime/watchdog.py::say_now) — dopytanie
 # o ciszę, ostrzeżenie o limicie czasu, pożegnania. Zaobserwowany na żywym telefonie bug:
 # jedna z tych wypowiedzi wylądowała jako `message`/`problem` w contact_owner (model wywołał
 # funkcję z DOKŁADNIE tym tekstem, zamiast treścią od klienta), wysyłając śmieciowy email do

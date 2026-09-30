@@ -28,7 +28,7 @@ async def ensure_elevenlabs_sip_number(phone_number: str, agent_id: str) -> bool
     Zwraca True gdy numer jest gotowy do bezpośredniego SIP (import się udał LUB
     numer był już zaimportowany), False przy jakimkolwiek błędzie — wołający MUSI
     wtedy spaść na stary most WebSocket, żeby klient nigdy nie został bez żadnej
-    ścieżki połączenia (patrz użycie w bot_gemini_test.py::vonage_answer_gemini_live)."""
+    ścieżki połączenia (patrz użycie w telephony/vonage.py::vonage_answer)."""
     if not ELEVENLABS_API_KEY or not phone_number or not agent_id:
         return False
     e164 = phone_number if phone_number.startswith("+") else f"+{phone_number}"

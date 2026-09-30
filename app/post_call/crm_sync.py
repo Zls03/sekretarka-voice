@@ -19,7 +19,7 @@ N8N_CRM_WEBHOOK_URL = settings.n8n_crm_webhook_url
 
 def is_crm_test_tenant(tenant: dict) -> bool:
     """Nazwa zostaje z czasów POC (patrz komentarz wyżej) żeby nie zmieniać nazwy w
-    wywołaniach w bot_elevenlabs_agent.py/realtime_tools.py — dziś sprawdza realny
+    wywołaniach w engines/elevenlabs/webhooks.py i post_call/report.py — dziś sprawdza realny
     przełącznik per-firma, nie tylko testowy numer."""
     if int(tenant.get("crm_enabled") or 0) == 1 and (tenant.get("crm_api_key") or "").strip():
         return True

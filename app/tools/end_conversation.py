@@ -11,7 +11,7 @@ from app.background import spawn
 
 
 def build_end_conversation_tool(task_box: dict, call_state: dict) -> FunctionSchema:
-    """Global-function odpowiednik end_conversation_function() z cascade (flows.py) —
+    """Global-function odpowiednik end_conversation_function() z usuniętego silnika cascade —
     tam było zawsze dostępne niezależnie od node'a. Bez tego bot nie miał ŻADNEGO
     sposobu żeby rozpoznać koniec rozmowy inaczej niż przez ciszę (10s/20s) — klient
     mówiący "dziękuję, to wszystko" po prostu wisiał w rozmowie aż zadziałał idle timeout.

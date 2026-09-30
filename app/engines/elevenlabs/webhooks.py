@@ -129,7 +129,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
         return {"status": "error", "reason": "tenant_not_found"}
 
     # Auto-zapis imienia do portalu /crm (zakładka Klienci) — 1:1 z handle_contact_owner w
-    # realtime_tools.py (Gemini Live/OpenAI Realtime): TYLKO gdy dla tego numeru jeszcze nie
+    # tools/contact_owner.py (Gemini Live/OpenAI Realtime): TYLKO gdy dla tego numeru jeszcze nie
     # ma żadnego imienia, i tylko gdy klient sam wprost je podał (nie "Nieznany"/puste).
     if customer_name and customer_name != "Nieznany":
         spawn(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
@@ -137,7 +137,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
     if tenant.get("contact_owner_enabled", 1) != 1:
         # Twardy blok — narzędzie w ElevenLabs jest statycznie przypięte do agenta
         # (nie da się go usunąć per-rozmowa jak w Gemini Live/OpenAI Realtime, patrz
-        # has_contact_owner w realtime_prompt.py), więc nawet gdy model je i tak wywoła
+        # has_contact_owner w prompt/instructions.py), więc nawet gdy model je i tak wywoła
         # wbrew instrukcji w prompcie, tu odmawiamy wysyłki — to jedyne miejsce gdzie
         # ustawienie tenanta jest faktycznie wymuszone, nie tylko sugerowane tekstem.
         logger.warning(
@@ -149,7 +149,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
     if not to_email:
         return {"status": "error", "reason": "no_notification_email"}
 
-    # 2026-09-09 — 1:1 z handle_contact_owner w realtime_tools.py: gdy ta sama firma ma TEŻ
+    # 2026-09-09 — 1:1 z handle_contact_owner w tools/contact_owner.py: gdy ta sama firma ma TEŻ
     # raport z rozmowy (lead_email_enabled) na TEN SAM adres, odkładamy wiadomość do
     # _elevenlabs_call_states (ten sam mechanizm co booking, patrz wyżej) zamiast wysyłać
     # osobny mail teraz — elevenlabs_post_call skleja ją z podsumowaniem w JEDEN mail. Bez
@@ -182,7 +182,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
 async def elevenlabs_tool_book_appointment(request: Request):
     """Webhook narzędzia rezerwacji — port pod ElevenLabs, patrz docstring
     _elevenlabs_call_states wyżej po wyjaśnienie mechanizmu stanu między turami.
-    Reużywa 1:1 book_appointment_step z realtime_booking.py (ta sama funkcja co
+    Reużywa 1:1 book_appointment_step z booking/book_appointment.py (ta sama funkcja co
     Gemini Live/OpenAI Realtime), zero duplikacji logiki biznesowej/walidacji terminów."""
     if not _check_shared_secret(request):
         return {"status": "error", "reason": "unauthorized"}
@@ -252,7 +252,7 @@ async def elevenlabs_tool_manage_booking(request: Request):
 
 
 async def save_elevenlabs_transcript(tenant: dict, call_sid: str, transcript: list, analysis: dict) -> int:
-    """1:1 wzorzec z realtime_tools.py::save_call_transcript (Gemini Live/OpenAI
+    """1:1 wzorzec z call_logs.py::save_call_transcript (Gemini Live/OpenAI
     Realtime), ale czyta ElevenLabs data.transcript[] zamiast LLMContext.get_messages() —
     role tam to "agent"/"user", u nas w call_transcripts zawsze "assistant"/"user" (patrz
     save_call_transcript), więc mapujemy "agent"->"assistant". NIE tworzy wiersza

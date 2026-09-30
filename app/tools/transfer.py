@@ -13,7 +13,7 @@ def _format_transfer_number(raw: str) -> str:
     """Normalizacja numeru pod Vonage connect/phone endpoint.
 
     Bug znaleziony na żywym telefonie: pierwsza wersja kopiowała 1:1 normalizację z
-    flows_contact.py (cascade, Twilio transfer), która KOŃCZY numer znakiem "+"
+    usunięty silnik cascade (transfer Twilio), która KOŃCZY numer znakiem "+"
     (+48XXXXXXXXX) — bo tego wymaga Twilio. Vonage wymaga czegoś innego: sprawdzone
     wprost w dokumentacji NCCO (developer.vonage.com/en/voice/voice-api/ncco-reference,
     akcja connect/phone) — przykład tam to "447700900001", BEZ znaku "+". Ten sam "+"
@@ -34,7 +34,7 @@ def build_transfer_tool(
     caller_phone: str = "",
     host: str | None = None,
 ) -> FunctionSchema:
-    """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane z bot_gemini_test.py
+    """FunctionSchema dla żywego przekierowania — WARUNKOWO dołączane w engines/common.py::build_call_tools
     tylko gdy tenant.get("transfer_enabled")==1 I połączenie idzie przez Vonage (call_sid
     to wtedy prawdziwy Vonage call uuid, przechwycony w /vonage/answer-gemini-live, patrz
     tam). Ten sam checkbox/pole co dla Twilio (transfer_number) — bez nowej konfiguracji
@@ -52,7 +52,7 @@ def build_transfer_tool(
     async def handle_transfer(params: FunctionCallParams):
         if call_state.get("suppress_idle_reset"):
             # Okno wymuszonej wypowiedzi (gemini_say_now — dopytanie o ciszę/limit czasu/pożegnanie,
-            # patrz bot_gemini_test.py). W odróżnieniu od OpenAI Realtime (say_now ma tool_choice="none"),
+            # patrz engines/common.py). W odróżnieniu od OpenAI Realtime (say_now ma tool_choice="none"),
             # Gemini Live NIE MA odpowiednika — potwierdzone czytaniem źródła pipecat 1.4.0
             # (_create_single_response wysyła przez send_client_content bez żadnej opcji per-turn
             # wyłączającej narzędzia). contact_owner/submit_lead łapią to przez is_scripted_bot_phrase

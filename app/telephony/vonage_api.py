@@ -8,11 +8,7 @@ from loguru import logger
 from app.config import settings
 
 #
-# Twilio ma OSOBNY, już istniejący mechanizm (transfer_requests table + TwiML <Dial>
-# w /twilio/after-stream, patrz flows_contact.py) — ten kod go NIE zastępuje ani nie
-# dotyka, jest wyłącznie dla Vonage, który (w odróżnieniu od Twilio) nie ma
-# dwuetapowego triku dostępnego w tym serwisie (brak /twilio/after-stream w
-# bot_gemini_test.py — patrz CLAUDE.md, ta granica była tam już wcześniej opisana).
+# Transfer rozmowy działa tylko na Vonage — dla Twilio ten backend nie ma odpowiednika.
 #
 # Mechanizm: Vonage Voice REST API, PUT /v1/calls/{call_uuid} z action="transfer" +
 # nowe NCCO — to PODMIENIA bieżący "leg" połączenia (który dotąd był podłączony do
