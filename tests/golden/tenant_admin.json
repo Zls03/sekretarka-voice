@@ -1,0 +1,84 @@
+{
+  "db": [
+    {
+      "args": [
+        "%111222333"
+      ],
+      "db": "admin",
+      "sql": "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1"
+    },
+    {
+      "args": [
+        "t_1"
+      ],
+      "db": "admin",
+      "sql": "SELECT id, name, duration_minutes, price, description FROM services WHERE tenant_id = ? AND is_active = 1"
+    },
+    {
+      "args": [
+        "t_1"
+      ],
+      "db": "admin",
+      "sql": "SELECT day_of_week, open_time, close_time FROM working_hours WHERE tenant_id = ?"
+    },
+    {
+      "args": [
+        "t_1"
+      ],
+      "db": "admin",
+      "sql": "SELECT question, answer FROM tenant_faq WHERE tenant_id = ? ORDER BY sort_order"
+    },
+    {
+      "args": [
+        "t_1"
+      ],
+      "db": "admin",
+      "sql": "SELECT name, price, description FROM info_services WHERE tenant_id = ? ORDER BY sort_order"
+    }
+  ],
+  "tenant": {
+    "additional_info": "",
+    "azure_voice_id": "pl-PL-AgnieszkaNeural",
+    "booking_enabled": 1,
+    "business_name": "Gabinet",
+    "faq": [],
+    "first_message": "Dzień dobry, w czym mogę pomóc?",
+    "id": "t_1",
+    "industry": "",
+    "info_services": [],
+    "is_active": "1",
+    "is_blocked": 0,
+    "lead_collection": "",
+    "lead_email": "",
+    "lead_email_enabled": 0,
+    "lead_mode": 0,
+    "lead_triggers": "",
+    "lead_urgency_mode": 0,
+    "lead_urgency_text": "",
+    "minutes_limit": 200,
+    "minutes_used": 0.0,
+    "name": "Gabinet",
+    "notification_email": "",
+    "phone_number": "+48111222333",
+    "recording_enabled": 0,
+    "services": [
+      {
+        "description": "",
+        "duration_minutes": "30",
+        "id": "s1",
+        "name": "Wizyta",
+        "price": "150"
+      }
+    ],
+    "source": "admin",
+    "transfer_enabled": 0,
+    "transfer_number": "",
+    "working_hours": [
+      {
+        "close_time": "16:00",
+        "day_of_week": 2,
+        "open_time": "08:00"
+      }
+    ]
+  }
+}

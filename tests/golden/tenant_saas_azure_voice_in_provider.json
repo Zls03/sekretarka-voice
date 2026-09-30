@@ -1,0 +1,169 @@
+{
+  "db": [
+    {
+      "args": [
+        "%111222333"
+      ],
+      "db": "admin",
+      "sql": "SELECT * FROM tenants WHERE phone_number LIKE ? AND is_active = 1"
+    },
+    {
+      "args": [
+        "%111222333"
+      ],
+      "db": "saas",
+      "sql": "SELECT * FROM firms WHERE REPLACE(REPLACE(phone_number, ' ', ''), '-', '') LIKE ? AND is_active = 1 AND is_blocked = 0"
+    },
+    {
+      "args": [
+        "firm_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT id, name, duration_minutes, price, description, price_text, duration_text FROM services WHERE firm_id = ?"
+    },
+    {
+      "args": [
+        "firm_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT day_of_week, open_time, close_time FROM working_hours WHERE firm_id = ?"
+    },
+    {
+      "args": [
+        "firm_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT question, answer FROM faqs WHERE firm_id = ? ORDER BY created_at"
+    },
+    {
+      "args": [
+        "firm_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT * FROM staff WHERE firm_id = ?"
+    },
+    {
+      "args": [
+        "staff_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT srv.id, srv.name, srv.duration_minutes, srv.price FROM services srv JOIN staff_services ss ON srv.id = ss.service_id WHERE ss.staff_id = ?"
+    },
+    {
+      "args": [
+        "user_1"
+      ],
+      "db": "saas",
+      "sql": "SELECT twilio_account_sid, twilio_auth_token FROM users WHERE id = ?"
+    }
+  ],
+  "tenant": {
+    "additional_info": "",
+    "address": "ul. Testowa 1",
+    "assistant_name": "Ania",
+    "azure_voice_id": "pl-PL-ZofiaNeural",
+    "booking_enabled": 1,
+    "business_name": "Salon Testowy",
+    "contact_owner_closing_line": "",
+    "contact_owner_enabled": 1,
+    "crm_api_key": "",
+    "crm_domain": "",
+    "crm_enabled": 0,
+    "crm_provider": "",
+    "custom_report_format": 0,
+    "elevenlabs_agent_voice_id": "",
+    "elevenlabs_tts_similarity_boost": null,
+    "elevenlabs_tts_speed": null,
+    "elevenlabs_tts_stability": null,
+    "elevenlabs_voice_id": null,
+    "email": "owner@example.com",
+    "faq": [
+      {
+        "answer": "Tak",
+        "question": "Parking?"
+      }
+    ],
+    "first_message": "Dzień dobry, w czym mogę pomóc?",
+    "gemini_native_voice_enabled": 0,
+    "gemini_voice": "",
+    "human_first_enabled": 0,
+    "human_first_timeout_seconds": 15,
+    "id": "firm_1",
+    "industry": "fryzjer",
+    "info_services": [
+      {
+        "description": "",
+        "duration_minutes": "60",
+        "duration_text": "",
+        "id": "svc_1",
+        "name": "Strzyżenie",
+        "price": "100",
+        "price_text": ""
+      }
+    ],
+    "is_active": 1,
+    "is_blocked": 0,
+    "lead_collection": "",
+    "lead_email": "",
+    "lead_email_enabled": 0,
+    "lead_mode": 0,
+    "lead_triggers": "",
+    "lead_urgency_mode": 0,
+    "lead_urgency_text": "",
+    "llm_model": "",
+    "llm_provider": "groq",
+    "minutes_limit": 100,
+    "minutes_used": 0.0,
+    "name": "Salon Testowy",
+    "notification_email": "owner@example.com",
+    "phone_number": "+48 111-222-333",
+    "realtime_engine": "gemini",
+    "realtime_voice": "",
+    "recording_enabled": 0,
+    "report_empty_calls": 0,
+    "services": [
+      {
+        "description": "",
+        "duration_minutes": "60",
+        "duration_text": "",
+        "id": "svc_1",
+        "name": "Strzyżenie",
+        "price": "100",
+        "price_text": ""
+      }
+    ],
+    "siperb_sip_username": "",
+    "slug": "firm_1",
+    "source": "saas",
+    "speaking_rate": 1.06,
+    "staff": [
+      {
+        "description": "",
+        "id": "staff_1",
+        "name": "Kasia",
+        "services": [
+          {
+            "duration_minutes": "60",
+            "id": "svc_1",
+            "name": "Strzyżenie",
+            "price": "100"
+          }
+        ]
+      }
+    ],
+    "transcript_email_enabled": 0,
+    "transfer_enabled": 0,
+    "transfer_number": "",
+    "tts_provider": "azure",
+    "twilio_account_sid": "AC_user",
+    "twilio_auth_token": "",
+    "user_id": "user_1",
+    "working_hours": [
+      {
+        "close_time": "17:00",
+        "day_of_week": 1,
+        "open_time": "09:00"
+      }
+    ]
+  }
+}
