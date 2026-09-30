@@ -23,6 +23,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameProcessor
 
+from app.background import spawn
 from app.engines.common import accept_vonage_stream, call_pipeline_params, create_local_vad, create_transport
 from app.engines.elevenlabs.config import ELEVENLABS_API_KEY, _resolve_agent_id
 from app.engines.elevenlabs.conversation import build_conversation_config_override
@@ -261,7 +262,7 @@ class ElevenLabsRealtimeService(FrameProcessor):
                 # ElevenLabs zamknął stronę PIERWSZY — patrz komentarz przy
                 # self._we_disconnected w __init__ po pełne wyjaśnienie różnicy względem
                 # Twilio. My musimy teraz sami zainicjować koniec połączenia Vonage.
-                asyncio.create_task(self._hangup_after_elevenlabs_closed())
+                spawn(self._hangup_after_elevenlabs_closed())
 
     async def _hangup_after_elevenlabs_closed(self):
         logger.info("👋 [ELEVENLABS/VONAGE] ElevenLabs zakończył rozmowę — rozłączam Vonage")

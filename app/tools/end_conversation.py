@@ -7,6 +7,8 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import EndFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from app.background import spawn
+
 
 def build_end_conversation_tool(task_box: dict, call_state: dict) -> FunctionSchema:
     """Global-function odpowiednik end_conversation_function() z cascade (flows.py) —
@@ -32,7 +34,7 @@ def build_end_conversation_tool(task_box: dict, call_state: dict) -> FunctionSch
             except Exception as e:
                 logger.error(f"[REALTIME TEST] EndFrame po end_conversation error: {e}")
 
-        asyncio.create_task(auto_hangup())
+        spawn(auto_hangup())
 
     return FunctionSchema(
         name="end_conversation",

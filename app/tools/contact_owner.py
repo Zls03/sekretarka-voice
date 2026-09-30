@@ -7,6 +7,7 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import EndFrame
 from pipecat.services.llm_service import FunctionCallParams
 
+from app.background import spawn
 from app.crm_contacts import maybe_save_contact_name
 from app.notifications.email import send_message_email
 from app.tools.guards import _is_scripted_bot_phrase, _looks_like_vague_meta_message
@@ -71,7 +72,7 @@ def build_contact_owner_tool(
         # nie zgadywanie z transkryptu, więc bezpieczne do auto-zapisu. Poboczny, nieblokujący
         # zapis — błąd nie może wywrócić wysyłki wiadomości do właściciela.
         if customer_name != "Nieznany":
-            asyncio.create_task(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
+            spawn(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
 
         # 2026-09-09 — jeśli ta sama firma MA TEŻ włączony raport z rozmowy (lead_email_enabled)
         # na TEN SAM adres — nie wysyłaj osobnego maila teraz. Zamiast tego odłóż treść do
@@ -112,7 +113,7 @@ def build_contact_owner_tool(
                         logger.info("🔚 [REALTIME TEST] EndFrame po contact_owner")
                 except Exception as e:
                     logger.error(f"[REALTIME TEST] EndFrame po contact_owner error: {e}")
-            asyncio.create_task(auto_hangup())
+            spawn(auto_hangup())
 
     if has_transfer_tool:
         trigger_block = """Klient chce KONTAKTU z właścicielem/firmą. Masz DWA sposoby: ta funkcja

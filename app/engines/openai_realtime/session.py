@@ -13,6 +13,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 
+from app.background import spawn
 from app.engines.common import (
     CallFeatures,
     Channel,
@@ -86,8 +87,8 @@ async def run_openai_realtime_call(
         # zignorować tekst powitania z promptu i zacząć np. od cennika.
         logger.info(f"🎤 [{log_tag}] Klient połączony — wybudzam Realtime do przywitania")
         await say_now(llm, call_state, build_greeting_message(tenant, None))
-        asyncio.create_task(monitor_call_health(task, llm, call_state))
-        asyncio.create_task(apply_crm_when_ready(llm, tenant, client_profile_task, caller_phone, features))
+        spawn(monitor_call_health(task, llm, call_state))
+        spawn(apply_crm_when_ready(llm, tenant, client_profile_task, caller_phone, features))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

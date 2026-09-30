@@ -1,12 +1,12 @@
 """Webhooki wołane przez ElevenLabs: personalizacja, narzędzia w trakcie rozmowy, post-call."""
 
-import asyncio
 import json
 import uuid
 
 from fastapi import APIRouter, Request
 from loguru import logger
 
+from app.background import spawn
 from app.billing import is_call_allowed
 from app.booking.book_appointment import _handle_book_appointment
 from app.booking.manage_booking import _handle_manage_booking
@@ -129,7 +129,7 @@ async def elevenlabs_tool_contact_owner(request: Request):
     # realtime_tools.py (Gemini Live/OpenAI Realtime): TYLKO gdy dla tego numeru jeszcze nie
     # ma żadnego imienia, i tylko gdy klient sam wprost je podał (nie "Nieznany"/puste).
     if customer_name and customer_name != "Nieznany":
-        asyncio.create_task(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
+        spawn(maybe_save_contact_name(tenant.get("id", ""), caller_phone, customer_name))
 
     if tenant.get("contact_owner_enabled", 1) != 1:
         # Twardy blok — narzędzie w ElevenLabs jest statycznie przypięte do agenta

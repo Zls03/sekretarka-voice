@@ -1,6 +1,5 @@
 """Narzędzie book_appointment — wieloetapowa rezerwacja wizyty z walidacją po stronie serwera."""
 
-import asyncio
 import re
 from datetime import datetime
 
@@ -9,6 +8,7 @@ from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.services.llm_service import FunctionCallParams
 
+from app.background import spawn
 from app.booking.availability import (
     _slots_summary,
     format_availability_message,
@@ -619,7 +619,7 @@ async def _save_booking(state: dict, tenant: dict, caller_phone: str, call_state
         try:
             time_padded = state["time"].zfill(5)
             scheduled_at = f"{state['date'].strftime('%Y-%m-%d')}T{time_padded}:00"
-            asyncio.create_task(save_client_visit(
+            spawn(save_client_visit(
                 firm_id=tenant.get("id", ""), phone=caller_phone, name=state.get("name", ""),
                 service=state["service"]["name"], staff=state["staff"]["name"],
                 scheduled_at=scheduled_at, notes=state.get("notes", ""),

@@ -12,6 +12,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
 
+from app.background import spawn
 from app.engines.common import (
     CallFeatures,
     Channel,
@@ -99,7 +100,7 @@ async def run_gemini_live_call(
             )
         ])
         logger.info(f"🎤 [{log_tag}] Kick startowy wysłany")
-        asyncio.create_task(monitor_gemini_call_health(task, gemini_state, llm))
+        spawn(monitor_gemini_call_health(task, gemini_state, llm))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

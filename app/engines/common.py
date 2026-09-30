@@ -24,6 +24,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.serializers.vonage import VonageFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
+from app.background import spawn
 from app.booking.book_appointment import build_book_appointment_tool
 from app.booking.manage_booking import build_manage_booking_tool
 from app.call_logs import save_call_transcript
@@ -290,4 +291,4 @@ def schedule_idle_reset_release(call_state: dict) -> None:
         await asyncio.sleep(SCRIPTED_UTTERANCE_SUPPRESS_SECONDS)
         call_state["suppress_idle_reset"] = False
 
-    asyncio.create_task(_release())
+    spawn(_release())

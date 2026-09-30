@@ -4,13 +4,13 @@ Vonage nie ma webhooka na numerze — numer jest przypięty do "Application" (Vo
 która ma Answer URL (zwracamy NCCO) i Event URL (statusy połączenia).
 """
 
-import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
 
+from app.background import spawn
 from app.billing import is_call_allowed
 from app.call_logs import record_call_status
 from app.notifications.email import send_missed_transfer_email
@@ -138,7 +138,7 @@ async def vonage_transfer_fallback(request: Request):
     caller_phone = request.query_params.get("callerPhone", "")
     owner_email = request.query_params.get("ownerEmail", "")
     if owner_email:
-        asyncio.create_task(send_missed_transfer_email(business_name, caller_phone, owner_email))
+        spawn(send_missed_transfer_email(business_name, caller_phone, owner_email))
 
     return ncco_response(ncco_talk("Niestety nie udało się połączyć. Przekażę wiadomość, żeby ktoś oddzwonił."))
 
@@ -193,7 +193,7 @@ async def vonage_human_first_recording(request: Request):
     except Exception:
         pass
 
-    asyncio.create_task(process_human_first_recording(tenant, recording_url, from_number, call_uuid, duration_seconds))
+    spawn(process_human_first_recording(tenant, recording_url, from_number, call_uuid, duration_seconds))
     return JSONResponse({"status": "ok"})
 
 
