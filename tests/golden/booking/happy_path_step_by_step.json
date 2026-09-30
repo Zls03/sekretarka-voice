@@ -260,7 +260,7 @@
       },
       "result": {
         "done": false,
-        "say_exactly": "Godzina szesnastej zajęta. Wolne: dziewiątej, trzynastej i inne.",
+        "say_exactly": "Jutro wolne są: dziewiątej, trzynastej i inne. Którą godzinę?",
         "status": "ask"
       }
     },

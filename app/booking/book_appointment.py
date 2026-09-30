@@ -336,13 +336,22 @@ def _offer_slot(turn: _Turn, day: dict) -> None:
     """Zapamiętuje proponowany termin — samo "tak" klienta wystarczy, by go przyjąć."""
     turn.state["_pending_date"] = day["date"].strftime("%Y-%m-%d")
     turn.state["_pending_time"] = day["slots"][0]
+    turn.state["_offered_slot"] = True
 
 
 def _remember_offered_date_and_time(turn: _Turn) -> None:
-    """Data/godzina z tego wywołania nie może przepaść, gdy wcześniej zabraknie np. usługi."""
-    if turn.date_text and "date" not in turn.state and "_pending_date" not in turn.state:
+    """Data/godzina z tego wywołania nie może przepaść, gdy wcześniej zabraknie np. usługi.
+
+    Słowa klienta wygrywają z naszą propozycją terminu. Gdy klient wybiera inny dzień,
+    zaproponowana godzina przestaje obowiązywać (dotyczyła dnia z propozycji).
+    """
+    if turn.date_text and turn.state.pop("_offered_slot", False):
+        turn.state.pop("_pending_date", None)
+        if not turn.time_text:
+            turn.state.pop("_pending_time", None)
+    if turn.date_text and "date" not in turn.state:
         turn.state["_pending_date"] = turn.date_text
-    if turn.time_text and "time" not in turn.state and "_pending_time" not in turn.state:
+    if turn.time_text and "time" not in turn.state:
         turn.state["_pending_time"] = turn.time_text
 
 
@@ -417,7 +426,7 @@ async def _resolve_date(turn: _Turn) -> dict | None:
         pending = turn.state.pop("_pending_date", None)
         if pending:
             turn.date_text = pending
-            date_from_system = True
+            date_from_system = bool(turn.state.pop("_offered_slot", False))
     elif "_pending_date" in turn.state:
         turn.state.pop("_pending_date")
 
