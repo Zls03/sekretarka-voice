@@ -438,7 +438,8 @@
         ],
         "kwargs": {
           "body": "numer zastrzeżony: Streszczenie ElevenLabs",
-          "title": "📞 Nowe zgłoszenie"
+          "title": "📞 Nowe zgłoszenie",
+          "url": "/crm?rozmowa=uuid-x"
         }
       }
     ],

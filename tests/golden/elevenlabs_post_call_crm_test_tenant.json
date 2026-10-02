@@ -434,7 +434,8 @@
         ],
         "kwargs": {
           "body": "numer zastrzeżony: Priorytet: 🔥 GORĄCY LEAD",
-          "title": "📞 Nowe zgłoszenie"
+          "title": "📞 Nowe zgłoszenie",
+          "url": "/crm?rozmowa=uuid-x"
         }
       }
     ],

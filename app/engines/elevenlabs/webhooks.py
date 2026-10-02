@@ -21,7 +21,7 @@ from app.engines.elevenlabs.config import (
 )
 from app.engines.elevenlabs.conversation import build_agent_override
 from app.notifications.email import send_call_summary_email, send_message_email
-from app.notifications.push import send_push_notifications
+from app.notifications.push import crm_call_url, send_push_notifications
 from app.post_call.crm_sync import is_crm_test_tenant, maybe_send_to_crm
 from app.post_call.summary import summarize_conversation_lines
 from app.tenants import get_tenant_by_phone
@@ -493,5 +493,8 @@ async def _deliver_report(
             logger.warning("📧 [ELEVENLABS AGENT] pending_contact_owner: raport nie poleciał, wysłano awaryjnie osobno")
     if has_real_content and summary:
         await send_push_notifications(
-            tenant, title="📞 Nowe zgłoszenie", body=f"{_caller_display(payload.caller_phone)}: {summary}"
+            tenant,
+            title="📞 Nowe zgłoszenie",
+            body=f"{_caller_display(payload.caller_phone)}: {summary}",
+            url=crm_call_url(payload.call_sid),
         )

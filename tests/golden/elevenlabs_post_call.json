@@ -444,7 +444,8 @@
         ],
         "kwargs": {
           "body": "+48600700800: Priorytet: 🟡 STANDARDOWE\nKto dzwonił: Jan",
-          "title": "📞 Nowe zgłoszenie"
+          "title": "📞 Nowe zgłoszenie",
+          "url": "/crm?rozmowa=uuid-9"
         }
       }
     ],

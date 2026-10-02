@@ -436,7 +436,8 @@
         ],
         "kwargs": {
           "body": "numer zastrzeżony: Priorytet: —",
-          "title": "📞 Nowe zgłoszenie"
+          "title": "📞 Nowe zgłoszenie",
+          "url": "/crm?rozmowa=uuid-x"
         }
       }
     ],

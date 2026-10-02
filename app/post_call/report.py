@@ -4,7 +4,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from app.call_logs import persist_call_summary
 from app.notifications.email import send_call_summary_email
-from app.notifications.push import send_push_notifications
+from app.notifications.push import crm_call_url, send_push_notifications
 from app.post_call.crm_sync import is_crm_test_tenant, maybe_send_to_crm
 from app.post_call.summary import extract_conversation_lines, generate_conversation_summary
 
@@ -88,4 +88,5 @@ async def maybe_send_call_summary(
             tenant,
             title="📞 Nowe zgłoszenie",
             body=f"{caller_display}: {summary}",
+            url=crm_call_url(call_sid),
         )

@@ -2,11 +2,17 @@
 
 import contextlib
 import json
+from urllib.parse import quote
 
 from loguru import logger
 
 from app.config import settings
 from app.db import saas_db
+
+
+def crm_call_url(call_sid: str | None) -> str:
+    """Link z powiadomienia: portal /crm z otwartym zgłoszeniem tej rozmowy."""
+    return f"/crm?rozmowa={quote(call_sid, safe='')}" if call_sid else "/crm"
 
 
 async def send_push_notifications(tenant: dict, title: str, body: str, url: str = "/crm") -> None:

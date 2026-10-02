@@ -441,7 +441,8 @@
         ],
         "kwargs": {
           "body": "numer zastrzeżony: Streszczenie rozmowy niedostępne — szczegóły w zgłoszeniu powyżej.",
-          "title": "📞 Nowe zgłoszenie"
+          "title": "📞 Nowe zgłoszenie",
+          "url": "/crm?rozmowa=uuid-x"
         }
       }
     ],

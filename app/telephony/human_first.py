@@ -10,7 +10,7 @@ from loguru import logger
 from app.call_logs import ensure_call_logs_columns
 from app.config import settings
 from app.db import saas_db
-from app.notifications.push import send_push_notifications
+from app.notifications.push import crm_call_url, send_push_notifications
 from app.post_call.summary import parse_summary_fields, summarize_conversation_lines
 from app.telephony.vonage_api import download_vonage_recording
 
@@ -185,6 +185,7 @@ async def _save_human_first_call_log(
             tenant,
             title="📞 Odebrałeś osobiście",
             body=f"{caller_display}: {summary}",
+            url=crm_call_url(call_uuid),
         )
     except Exception as e:
         logger.error(f"📼 [HUMAN-FIRST/RECORDING] Zapis call_logs — wyjątek: {e}")
