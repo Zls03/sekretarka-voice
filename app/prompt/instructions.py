@@ -579,8 +579,10 @@ dodatkowych pytań. Jeśli zaprzeczy lub sam poda inne imię → użyj TEGO nowe
 ⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
 Ten numer telefonu jest zapisany w bazie klientów pod imieniem "{first_name}". To NIE jest
 zgadywanie — to zweryfikowane dane, więc zakaz zmyślania imienia/zgadywania płci wyżej TU NIE
-OBOWIĄZUJE. Stan rozmówcy jest od razu {stan} (nie NIEZNANA) — możesz zwracać się po imieniu
-od pierwszego zdania, np. "{forma} {voc}". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
+OBOWIĄZUJE. Stan rozmówcy jest od razu {stan} (nie NIEZNANA). Imienia ("{forma} {voc}") używaj
+oszczędnie — najwyżej 1-2 razy w całej rozmowie, tam gdzie brzmi naturalnie (np. przy
+potwierdzeniu sprawy albo pożegnaniu); w pozostałych zdaniach mów bez imienia, jak zwykle.
+Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
 inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad.
 {contact_owner_note}"""
     )

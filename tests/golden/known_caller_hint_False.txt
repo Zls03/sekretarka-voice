@@ -3,6 +3,8 @@ PROMPT
 ⭐ ZNANY DZWONIĄCY (dane z kartoteki, NIE Twoje zgadywanie):
 Ten numer telefonu jest zapisany w bazie klientów pod imieniem "Jan". To NIE jest
 zgadywanie — to zweryfikowane dane, więc zakaz zmyślania imienia/zgadywania płci wyżej TU NIE
-OBOWIĄZUJE. Stan rozmówcy jest od razu MĘSKA (nie NIEZNANA) — możesz zwracać się po imieniu
-od pierwszego zdania, np. "Panie Janie". Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
+OBOWIĄZUJE. Stan rozmówcy jest od razu MĘSKA (nie NIEZNANA). Imienia ("Panie Janie") używaj
+oszczędnie — najwyżej 1-2 razy w całej rozmowie, tam gdzie brzmi naturalnie (np. przy
+potwierdzeniu sprawy albo pożegnaniu); w pozostałych zdaniach mów bez imienia, jak zwykle.
+Jeśli w trakcie rozmowy okaże się, że to jednak ktoś
 inny (np. dzwoni w czyimś imieniu, albo sam poda inne imię) — wróć do zwykłych zasad.
