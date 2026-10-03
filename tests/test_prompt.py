@@ -67,11 +67,6 @@ def test_greeting_messages():
         {
             "default": module.build_greeting_message(make_tenant()),
             "no_first_message": module.build_greeting_message(make_tenant(first_message="")),
-            "returning_client": module.build_greeting_message(make_tenant(), CLIENT_PROFILE),
-            "greeting_already_has_name": module.build_greeting_message(
-                make_tenant(first_message="Dzień dobry Anno, w czym pomóc?"),
-                CLIENT_PROFILE,
-            ),
         },
     )
 

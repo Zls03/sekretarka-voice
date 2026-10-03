@@ -93,7 +93,7 @@ async def run_openai_realtime_call(
         # Powitanie wymuszamy dosłownie (say_now) — przy pustym kontekście model potrafił
         # zignorować tekst powitania z promptu i zacząć np. od cennika.
         logger.info(f"🎤 [{log_tag}] Klient połączony — wybudzam Realtime do przywitania")
-        await say_now(llm, call_state, build_greeting_message(tenant, None))
+        await say_now(llm, call_state, build_greeting_message(tenant))
         spawn(monitor_call_health(task, llm, call_state))
         spawn(apply_crm_when_ready(llm, tenant, client_profile_task, caller_phone, features))
 

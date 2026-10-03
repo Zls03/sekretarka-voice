@@ -5,29 +5,18 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.polish.formatting import POLISH_DAYS
-from app.polish.grammar import detect_gender, normalize_polish_text, odmien_imie, vocative_imie
+from app.polish.grammar import detect_gender, odmien_imie, vocative_imie
 from app.prompt.business_context import assistant_gender_forms, build_business_context
 
 
-def build_greeting_message(tenant: dict, client_profile: dict | None = None) -> str:
-    """Powitanie + personalizacja dla powracającego klienta.
-    1:1 logika z cascade::create_initial_node (dedup imienia w powitaniu firmy)."""
-    business_name = tenant.get("name", "salon")
-    base_greeting = tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
+def build_greeting_message(tenant: dict) -> str:
+    """Powitanie firmy — zawsze to samo dla każdego dzwoniącego, bez imienia klienta.
 
-    if client_profile and client_profile.get("visit_count", 0) > 0:
-        name = client_profile.get("name", "")
-        first_name = name.split()[0] if name else ""
-        already_personalized = bool(
-            first_name and normalize_polish_text(first_name).lower() in normalize_polish_text(base_greeting).lower()
-        )
-        if first_name and not already_personalized:
-            base_stripped = re.sub(r"^[Dd]zień dobry[,!.]?\s*", "", base_greeting).strip()
-            base_stripped = base_stripped[0].upper() + base_stripped[1:] if base_stripped else base_stripped
-            name_voc = vocative_imie(name)
-            return f"Dzień dobry {name_voc}. {base_stripped}"
-        return base_greeting
-    return base_greeting
+    Imienia w powitaniu świadomie nie używamy: z jednego numeru dzwonią różne osoby, a
+    "Dzień dobry Michale" do Moniki to gorsza wpadka niż użycie imienia w trakcie rozmowy
+    (tam model może je jeszcze potwierdzić, patrz append_known_caller_hint)."""
+    business_name = tenant.get("name", "salon")
+    return tenant.get("first_message") or f"Dzień dobry, tu {business_name}. W czym mogę pomóc?"
 
 
 def _build_crm_hint(client_profile: dict) -> str:
@@ -327,7 +316,7 @@ def build_realtime_instructions(
 
     greeting_block = ""
     if include_greeting:
-        greeting_text = build_greeting_message(tenant, client_profile)
+        greeting_text = build_greeting_message(tenant)
         greeting_block = f"""
 
 ROZPOCZĘCIE ROZMOWY:
@@ -336,12 +325,13 @@ Zacznij rozmowę od razu, mówiąc DOKŁADNIE I WYŁĄCZNIE: "{greeting_text}"
 - NIC nie dodawaj PO tym zdaniu — po powitaniu ZAMILKNIJ i czekaj na klienta. NIE kontynuuj
   z własnej inicjatywy o usługach, cenach, godzinach czy czymkolwiek innym, dopóki klient
   sam o to nie zapyta. Powitanie to CAŁA Twoja pierwsza wypowiedź, nic więcej.
-- Nie witaj się drugi raz później w rozmowie"""
+- Nie witaj się drugi raz — gdy klient odpowie "dzień dobry", nie mów drugi raz "Dzień dobry"
+  ani nie przedstawiaj firmy od nowa; przejdź od razu do jego sprawy (a jeśli powiedział samo
+  "dzień dobry" bez sprawy — zapytaj krótko, w czym możesz pomóc)"""
     else:
         # Powitanie wypowiada za model sam silnik (ElevenLabs first_message, OpenAI say_now) —
         # bez tej informacji model odpowiadał na "dzień dobry" klienta drugim "Dzień dobry".
-        # Silniki wypowiadają powitanie bez personalizacji, więc cytujemy dokładnie to.
-        greeting_text = build_greeting_message(tenant, None)
+        greeting_text = build_greeting_message(tenant)
         greeting_block = f"""
 
 POWITANIE JUŻ PADŁO:
