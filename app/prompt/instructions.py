@@ -337,6 +337,18 @@ Zacznij rozmowę od razu, mówiąc DOKŁADNIE I WYŁĄCZNIE: "{greeting_text}"
   z własnej inicjatywy o usługach, cenach, godzinach czy czymkolwiek innym, dopóki klient
   sam o to nie zapyta. Powitanie to CAŁA Twoja pierwsza wypowiedź, nic więcej.
 - Nie witaj się drugi raz później w rozmowie"""
+    else:
+        # Powitanie wypowiada za model sam silnik (ElevenLabs first_message, OpenAI say_now) —
+        # bez tej informacji model odpowiadał na "dzień dobry" klienta drugim "Dzień dobry".
+        # Silniki wypowiadają powitanie bez personalizacji, więc cytujemy dokładnie to.
+        greeting_text = build_greeting_message(tenant, None)
+        greeting_block = f"""
+
+POWITANIE JUŻ PADŁO:
+Na początku połączenia powiedziałaś już: "{greeting_text}"
+- NIE witaj się ponownie — nie mów drugi raz "Dzień dobry" ani nie przedstawiaj firmy od nowa,
+  nawet jeśli klient zaczyna od "dzień dobry". Przejdź od razu do jego sprawy.
+- Jeśli klient powiedział samo "dzień dobry" bez sprawy — zapytaj krótko, w czym możesz pomóc."""
 
     if not has_contact_owner:
         contact_block = """⚠️ KONTAKT Z WŁAŚCICIELEM/LEKARZEM — TYLKO INFORMACJA, NIC NIE ZBIERASZ:
